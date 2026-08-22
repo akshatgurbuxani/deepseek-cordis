@@ -33,4 +33,7 @@ Each spike README must state:
 - Do not promote code with unresolved resource ownership or irreversible side effects.
 - Prefer one narrow lifecycle invariant per spike over a miniature harness that proves nothing clearly.
 
-The first research program is documented in [`000-cordis-foundations/README.md`](000-cordis-foundations/README.md).
+## Experiments
+
+- [`000-cordis-foundations`](000-cordis-foundations/README.md) defines the research program and foundational invariants.
+- [`001-effect-stack`](001-effect-stack/README.md) tests effect ownership, reverse recovery, failure rollback, and nested scopes.
