@@ -27,7 +27,27 @@ Baseline inspected for this research spike:
 
 The upstream Cordis and DeepSeek-vendored Cordis source snapshots differ materially. Follow-up experiments must name which one supplies the expected behavior rather than referring to “Cordis” ambiguously.
 
-## Findings
+## Hypothesis
+
+The two composition claims can be tested without building a loader or agent harness first. An effect-only experiment, a dependency experiment, and an in-flight-transition experiment should be sufficient to expose the minimum ownership, ordering, and convergence rules. Isolation, declarative loading, HMR, and harness services can then be layered onto those proven rules.
+
+## Boundary
+
+This spike covers the semantics that a cooperative in-process component runtime can observe and coordinate: context-owned registrations, declared service requirements and provisions, fiber lifecycle, and author-supplied disposers. It does not claim to reverse an external network send or committed database write, validate behavioral compatibility between providers, or contain malicious host-language code.
+
+## Method
+
+This spike compares the paper's model with two pinned TypeScript implementations: independent upstream Cordis and the Cordis snapshot vendored by DeepSeek Harness. It extracts observable invariants and assigns each one to a narrow executable child spike. It intentionally implements no runtime code.
+
+## Acceptance criteria
+
+- Every foundational term has one project-local meaning and one observable consequence.
+- The provider-replacement trace states the required dependency ordering.
+- Each proposed mechanism points to pinned source and an executable child spike.
+- Differences between upstream and DeepSeek-vendored Cordis become test questions rather than accidental implementation choices.
+- The decision identifies the smallest next experiment and what evidence it must produce.
+
+## Result
 
 The paper's unit is a component with three parts: required coeffects, provided keys, and an effectful application function. At runtime, each instance is represented by a fiber. The fiber owns a child context, a committed view of its resolved dependencies, a lifecycle state, any transition currently in flight, and the inverse operations needed for cleanup.
 
@@ -41,6 +61,72 @@ The mechanisms are coupled in a specific order:
 
 That ordering is the heart of the architecture. A basic plugin registry with `load()` and `unload()` callbacks does not establish it.
 
+## Foundation model
+
+The shortest useful explanation of Cordis is: **a context is an ownership boundary and a dependency view at the same time**.
+
+- As an ownership boundary, it records everything a component must undo.
+- As a dependency view, it exposes only the service implementations committed to that component's current activation.
+- A fiber joins those responsibilities by deciding when the component may run and by retaining the disposer that returns its owned portion of the context to its prior state.
+
+This gives the foundational vocabulary below. The paper terms describe the model; the runtime terms name one TypeScript implementation of that model.
+
+| Term | Meaning in this project | Observable consequence |
+| --- | --- | --- |
+| Effect | A change made while applying a component | The change is attributed to the applying fiber. |
+| Revertible effect | An effect paired with an author-supplied inverse | Unloading invokes the inverse at most once. |
+| Coeffect | Something the component needs from its environment | The requirement participates in whether the component may activate. |
+| Reactive coeffect | A requirement whose resolution is tracked over time | Provider changes cause the consumer to converge on a new lifecycle state. |
+| Context | The combined effect owner, service view, and mediation surface | Calls made through `ctx` can be attributed, resolved, isolated, and intercepted. |
+| Component | Requirements, provisions, and an effectful `apply` operation | It can be composed without importing a concrete provider. |
+| Fiber | One live runtime instance of a component | Separate applications of the same component have separate state and cleanup. |
+| Committed dependency view | The exact provider identities visible to one activation | A consumer tears down against the old view before it starts against a new one. |
+| Inertia | The transition already in flight | A newer target waits for a safe boundary instead of cancelling teardown halfway through. |
+
+### One complete trace
+
+Assume a database component provides `database`, a repository component requires `database` and provides `repository`, and an API component requires `repository`. Replacing the database should produce this dependency-safe trace:
+
+```text
+mark old database unavailable for new resolutions
+  -> unload API
+  -> unload repository while its committed database view is still readable
+  -> recover the old database effects
+  -> activate the new database
+  -> activate repository with the new database identity
+  -> activate API with the new repository identity
+```
+
+This is not necessarily one globally serial execution. Independent cleanup may overlap. The required ordering is the dependency ordering: a provider must not recover the state a dependent still needs for its own teardown.
+
+### Foundation invariants
+
+The executable child spikes should make these statements precise:
+
+1. **Ownership:** disposing one fiber reclaims its effects and descendants without reclaiming sibling effects.
+2. **Single recovery:** every acquired reversible effect is recovered at most once, including explicit disposal followed by parent disposal.
+3. **Dependency safety:** an active consumer only observes providers in its committed dependency view.
+4. **Drain before recovery:** provider teardown waits for affected consumers to finish deactivating.
+5. **Transition convergence:** after lifecycle work settles, each fiber reflects the newest dependency target rather than an obsolete intermediate target.
+6. **Failure containment:** failed or partial activation leaves no completed acquisition without an owned recovery path.
+7. **Honest boundary:** the runtime promises coordination of declared inverses, not reversal of arbitrary external history.
+
+## Source-to-runtime map
+
+The pinned source inspection produced these concrete anchors:
+
+| Foundation concern | Upstream Cordis `4.0.0-rc.8` | DeepSeek-vendored Cordis `4.0.1` | Child spike |
+| --- | --- | --- | --- |
+| Context derivation, isolation, interception | [`context.ts`](https://github.com/cordiverse/cordis/blob/8cc9e33fab69e2d0476d126baaf2acb24e6a6ab4/packages/core/src/context.ts) | [`context.ts`](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/vendor/cordis/src/context.ts) | 004 |
+| Effect collection and disposal | [`fiber.ts`](https://github.com/cordiverse/cordis/blob/8cc9e33fab69e2d0476d126baaf2acb24e6a6ab4/packages/core/src/fiber.ts#L275-L340) | [`fiber.ts`](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/vendor/cordis/src/fiber.ts#L415-L560) | 001 |
+| Fiber state and transition inertia | [`fiber.ts`](https://github.com/cordiverse/cordis/blob/8cc9e33fab69e2d0476d126baaf2acb24e6a6ab4/packages/core/src/fiber.ts#L348-L458) | [`fiber.ts`](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/vendor/cordis/src/fiber.ts#L574-L696) | 002–003 |
+| Service provision and dependent draining | [`reflect.ts`](https://github.com/cordiverse/cordis/blob/8cc9e33fab69e2d0476d126baaf2acb24e6a6ab4/packages/core/src/reflect.ts#L175-L225) | [`reflect.ts`](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/vendor/cordis/src/reflect.ts) | 002–003 |
+| Component registration and declared injection | [`registry.ts`](https://github.com/cordiverse/cordis/blob/8cc9e33fab69e2d0476d126baaf2acb24e6a6ab4/packages/core/src/registry.ts) | [`registry.ts`](https://github.com/deepseek-ai/deepseek-harness/blob/b150a551b8d465e31e418e1b2eaf5e79bbb7d28e/vendor/cordis/src/registry.ts) | 002 |
+
+The snapshots share the same broad architecture but differ in lifecycle edge-case handling. For example, the DeepSeek snapshot adds setup barriers, reentrant-disposal handling, and stronger cleanup joining around `ctx.effect`. Those differences are evidence for comparison tests; they are not details to silently copy into an educational implementation.
+
+One teardown detail also needs an explicit experiment. A disposer group returned by a single `ctx.effect` is unwound sequentially in reverse order, while separate fiber-owned async effects are started in reverse registration order and awaited concurrently. “LIFO cleanup” therefore needs to specify whether it means start order, completion order, or strict serialization.
+
 ## Experiment sequence
 
 ### 001: Effect stack
@@ -49,7 +135,9 @@ Implement only effect acquisition and inverse accumulation.
 
 Acceptance criteria:
 
-- Disposers run in reverse acquisition order.
+- Synchronous disposers begin in reverse acquisition order.
+- Multiple disposers collected by one effect unwind sequentially in reverse order.
+- Separate async effects begin in reverse registration order but may overlap; the trace distinguishes start order from completion order.
 - Repeated disposal has no additional effect.
 - A partially completed asynchronous acquisition recovers only completed steps.
 - Disposing a parent recursively disposes child effects without touching a sibling.
