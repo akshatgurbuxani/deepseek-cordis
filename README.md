@@ -99,10 +99,12 @@ These are later consumers of the Cordis foundation, not the first implementation
     ├── README.md
     ├── 000-cordis-foundations/
     │   └── README.md
-    └── 001-effect-stack/
+    ├── 001-effect-stack/
         ├── README.md
         ├── src/
         └── test/
+    └── 002-dependency-activation/
+        └── README.md
 ```
 
 Planned directories are created only when their first accepted artifact exists:

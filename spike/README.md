@@ -37,3 +37,4 @@ Each spike README must state:
 
 - [`000-cordis-foundations`](000-cordis-foundations/README.md) defines the research program and foundational invariants.
 - [`001-effect-stack`](001-effect-stack/README.md) tests effect ownership, reverse recovery, failure rollback, and nested scopes.
+- [`002-dependency-activation`](002-dependency-activation/README.md) tests reactive service resolution and dependency-safe provider replacement.
