@@ -1,0 +1,24 @@
+{
+  "name": "deepseek-cordis",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "harness/protocol",
+    "harness/session",
+    "harness/model",
+    "harness/tools"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "tsc -b --clean",
+    "test": "npm run build --silent && node --test harness/*/test/*.test.ts",
+    "typecheck": "npm run build --silent && tsc -p tsconfig.tests.json --noEmit"
+  },
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "26.2.0",
+    "typescript": "7.0.2"
+  }
+}
