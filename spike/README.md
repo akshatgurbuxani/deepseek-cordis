@@ -41,3 +41,4 @@ Each spike README must state:
 - [`003-in-flight-transitions`](003-in-flight-transitions/README.md) tests stale-transition prevention and convergence under overlapping dependency mutations.
 - [`004-context-isolation`](004-context-isolation/README.md) tests realm-scoped resolution, interception, and mediated-access boundaries.
 - [`005-declarative-hmr`](005-declarative-hmr/README.md) tests stable manifest identity, selective reconciliation, and last-known-good rollback.
+- [`006-minimal-harness-slice`](006-minimal-harness-slice/README.md) plans a replayable session, model, tool, and agent-loop vertical slice.
