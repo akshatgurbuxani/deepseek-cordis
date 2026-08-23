@@ -180,10 +180,68 @@ temporal convergence.
 
 ## Result
 
-Pending implementation.
+Implemented realm-scoped service resolution on top of Spike 003's desired-state
+runtime. Published services are indexed by stable `ProviderSlot` identities
+rather than globally by key. A slot pairs a service key with the nearest realm
+that isolates it, or with the root when no isolation boundary exists.
+
+Two sibling agent realms each published `model` and activated against distinct
+provider identities. A descendant of one isolated realm shared its ancestor's
+slot and correctly triggered duplicate-provider validation. For an ordinary
+key, a child resolved the root provider; for an isolated key, the same root
+provider left the child pending until a local provider appeared.
+
+Replacing realm A's provider produced two activations in A and one cleanup for
+the old consumer plus one for its provider. Realm B observed one activation and
+zero cleanup. An in-flight replacement inside an isolated realm produced:
+
+```text
+v1:acquire
+sibling:active
+v1:recover
+v2:active
+consumer:v2
+```
+
+The stale V1 service was never published, while the sibling realm progressed
+independently.
+
+Interceptors run dynamically after committed-provider resolution. The chosen
+order is root-to-leaf and registration order within a realm. Updating or
+idempotently disposing a registration changed subsequent reads without
+reactivating the consumer. Requester-aware denial threw from `Context.get()`
+while both the provider and denied consumer remained active, proving that
+policy did not alter dependency satisfaction.
+
+Commands run with Node `26.7.0`, npm `11.19.0`, TypeScript `7.0.2`, and
+`@types/node` `26.2.0`:
+
+```sh
+npm install
+npm run typecheck
+npm test
+node --test --experimental-test-coverage test/*.test.ts
+```
+
+Observed result:
+
+- 9 tests passed; 0 failed, skipped, or cancelled.
+- TypeScript completed with no errors.
+- Native coverage reported 91.01% lines, 85.33% branches, and 93.33% functions
+  for `src/runtime.ts`.
+- Undeclared context access failed even when a provider existed.
+- A deliberately retained host-language reference bypassed context denial,
+  preserving the stated non-sandbox boundary.
 
 ## Decision
 
-Pending evidence. Do not begin declarative loading or HMR until isolated
-provider replacement and policy updates preserve the ownership and convergence
-invariants from Spikes 001 through 003.
+The provider-slot and post-resolution interceptor model is sufficient for this
+experiment. Keep immutable realm parentage and isolation declarations, stable
+slot identity, realm-aware duplicate validation, exact committed provider
+bindings, live root-to-leaf interception, requester metadata, and idempotent
+interceptor disposal.
+
+Proceed to Spike 005 for declarative reconciliation and transactional HMR. Do
+not promote the runtime into `harness/` yet: configuration identity, module
+loading, rollback to a last-known-good graph, cycle diagnostics, and a hostile
+plugin sandbox remain outside the evidence established here.
