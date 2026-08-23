@@ -1,0 +1,18 @@
+{
+  "name": "@deepseek-cordis/spike-007-runtime-architecture-decision",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "demo:openrouter": "node --env-file-if-exists=.env src/demo.ts",
+    "demo:replay": "node src/demo.ts --replay",
+    "test": "node --test test/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "cordis": "4.0.0-rc.8"
+  },
+  "devDependencies": {
+    "@types/node": "26.2.0",
+    "typescript": "7.0.2"
+  }
+}
