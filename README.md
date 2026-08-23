@@ -107,10 +107,12 @@ These are later consumers of the Cordis foundation, not the first implementation
     │   ├── README.md
     │   ├── src/
     │   └── test/
-    └── 003-in-flight-transitions/
-        ├── README.md
-        ├── src/
-        └── test/
+    ├── 003-in-flight-transitions/
+    │   ├── README.md
+    │   ├── src/
+    │   └── test/
+    └── 004-context-isolation/
+        └── README.md
 ```
 
 Planned directories are created only when their first accepted artifact exists:

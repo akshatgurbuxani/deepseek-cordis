@@ -39,3 +39,4 @@ Each spike README must state:
 - [`001-effect-stack`](001-effect-stack/README.md) tests effect ownership, reverse recovery, failure rollback, and nested scopes.
 - [`002-dependency-activation`](002-dependency-activation/README.md) tests reactive service resolution and dependency-safe provider replacement.
 - [`003-in-flight-transitions`](003-in-flight-transitions/README.md) tests stale-transition prevention and convergence under overlapping dependency mutations.
+- [`004-context-isolation`](004-context-isolation/README.md) plans realm-scoped resolution, interception, and mediated-access boundaries.
