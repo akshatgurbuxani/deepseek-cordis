@@ -6,5 +6,6 @@
     "declarationMap": false,
     "noEmit": true
   },
-  "include": ["harness/*/test/*.test.ts"]
+  "include": ["harness/*/test/*.test.ts"],
+  "exclude": ["harness/runtime-cordis/test/**/*.ts"]
 }

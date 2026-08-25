@@ -101,7 +101,8 @@ These are later consumers of the Cordis foundation, not the first implementation
 │   ├── session/
 │   ├── model/
 │   ├── tools/
-│   └── agent-loop/
+│   ├── agent-loop/
+│   └── runtime-cordis/
 └── spike/
     ├── README.md
     └── 000–007/
@@ -110,7 +111,9 @@ These are later consumers of the Cordis foundation, not the first implementation
 Directories are created only when their first accepted artifact exists:
 
 - `spike/`: disposable experiments, source notes, and measurements. Spikes may depend directly on upstream Cordis or implement a mechanism from scratch.
-- `harness/`: maintained production packages promoted from proven behavior. Capability contracts remain independent of Cordis; a later dedicated adapter package owns runtime integration.
+- `harness/`: maintained production packages promoted from proven behavior.
+  Capability contracts remain independent of Cordis; `runtime-cordis` alone
+  owns production runtime integration.
 - `docs/`: durable architecture decisions and paper notes that apply across implementations.
 - `examples/`: runnable compositions demonstrating provider swaps, failure recovery, and eventually a minimal agent.
 

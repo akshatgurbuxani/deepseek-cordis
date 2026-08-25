@@ -335,6 +335,37 @@ or last-known-good restoration.
 - `harness/runtime-cordis/src/README.md` explains the implementation beside the
   source in the same style as the earlier spike walkthroughs.
 
+#### PR 3 result
+
+Implemented `@deepseek-cordis/runtime-cordis` as the sole production Cordis
+integration boundary. Five narrow factories publish session, tool-registry,
+model, and stable agent-loop services or acquire an effect-owned tool
+registration. The adapter imports only public package entry points and contains
+no loader, reconciliation, rollback, network, persistence, or spike dependency.
+
+Seven lifecycle tests prove pending activation, a complete model/tool/model
+turn, exactly-once tool cleanup and replacement, model withdrawal and stable
+loop reconnection, isolated model realms, LIFO recovery, rejected activation,
+loop withdrawal, and full mounted-fiber cleanup. Together with PRs 1–2, all 29
+tests pass. Native coverage reports 100.00% lines, branches, and functions for
+the executable `runtime-cordis` module.
+
+The root lockfile pins `cordis@4.0.0-rc.8` with its published integrity. Cordis's
+current declaration compatibility overrides are isolated to the adapter build
+and its test typecheck; provider-neutral packages retain the shared NodeNext and
+`verbatimModuleSyntax` settings.
+
+Verified from the repository root:
+
+```sh
+npm install
+npm run clean
+npm run build
+npm run typecheck
+npm test
+node --test --experimental-test-coverage harness/runtime-cordis/test/runtime-cordis.test.ts
+```
+
 #### Explicitly deferred to PR 4
 
 `runtime-cordis` does not decide which configured plugin revision should be
