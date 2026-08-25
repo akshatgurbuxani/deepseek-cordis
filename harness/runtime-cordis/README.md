@@ -7,6 +7,10 @@ stable agent-loop facade as typed Cordis services. Tool registration and loop
 connection are Cordis-owned effects, so withdrawing their plugin fibers
 reclaims the underlying capability registration or connection.
 
+It also re-exports the public context, fiber, plugin, and pinned fiber-state
+vocabulary under `Runtime*` names. This gives `app-boot` a narrow lifecycle seam
+without adding a second direct Cordis import or duplicating Cordis abstractions.
+
 Only this production package imports `cordis`. It does not implement agent
 behavior, load configuration, reconcile manifests, or restore failed
 replacements; those responsibilities remain in the capability packages and

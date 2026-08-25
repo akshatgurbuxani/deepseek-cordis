@@ -11,6 +11,23 @@ import {
 } from '@deepseek-cordis/tools'
 import type { Plugin } from 'cordis'
 
+export {
+  Context as RuntimeContext,
+  type Fiber as RuntimeFiber,
+  type Plugin as RuntimePlugin,
+} from 'cordis'
+
+// Cordis publishes FiberState as an ambient const enum, so it has no reliable
+// runtime re-export. Keep the pinned public values available through the adapter.
+export const RuntimeFiberState = {
+  PENDING: 0,
+  LOADING: 1,
+  ACTIVE: 2,
+  FAILED: 3,
+  DISPOSED: 4,
+  UNLOADING: 5,
+} as const
+
 declare module 'cordis' {
   interface Context {
     sessions: SessionStore

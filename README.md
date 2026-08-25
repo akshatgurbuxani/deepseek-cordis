@@ -102,7 +102,8 @@ These are later consumers of the Cordis foundation, not the first implementation
 │   ├── model/
 │   ├── tools/
 │   ├── agent-loop/
-│   └── runtime-cordis/
+│   ├── runtime-cordis/
+│   └── app-boot/
 └── spike/
     ├── README.md
     └── 000–007/

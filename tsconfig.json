@@ -6,6 +6,7 @@
     { "path": "./harness/model" },
     { "path": "./harness/tools" },
     { "path": "./harness/agent-loop" },
-    { "path": "./harness/runtime-cordis" }
+    { "path": "./harness/runtime-cordis" },
+    { "path": "./harness/app-boot" }
   ]
 }

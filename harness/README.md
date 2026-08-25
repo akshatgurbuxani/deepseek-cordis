@@ -376,9 +376,49 @@ second plugin loader.
 
 ### PR 4: `feature/004-app-boot`
 
-Implement stable manifest entries, ordered reconciliation, model/tool
-replacement, and last-known-good restoration. The boot layer must prove that a
-failed candidate leaves the previous composition runnable.
+Add `@deepseek-cordis/app-boot`, a declarative transaction layer over
+`runtime-cordis`. Each entry has a stable ID, explicit revision, optional
+ownership parent and enabled flag, optional target context, and async plugin
+loader. Reconciliation must validate before loading, preload before mutation,
+preserve unchanged fibers, remove leaves before parents, mount parents before
+children, serialize concurrent submissions, and commit metadata only after the
+candidate graph settles.
+
+Loading failure must leave the exact live graph untouched. Activation failure
+must dispose candidate fibers and restore retired last-known-good plugins before
+rejecting. If restoration fails, preserve both failures in an `AggregateError`.
+The package owns no file watcher, configuration parser, ESM cache invalidation,
+network provider, CLI, or arbitrary private-state migration.
+
+#### PR 4 result
+
+Implemented stable manifest handles, revision and context diffing, inherited
+enablement, deterministic mounting and teardown, no-op rereads, queued
+transactions, preload isolation, compensating rollback, aggregate recovery
+errors, and awaitable full shutdown. `app-boot` imports its lifecycle vocabulary
+only through `runtime-cordis`; the adapter remains the sole direct production
+Cordis dependency.
+
+Eight app-boot tests exercise a dependency-ordered calculator boot, tool
+replacement with retained session history, failed model activation and restored
+runnability, load-failure identity, parent subtree disabling, validation,
+queued convergence, context movement, rollback failure reporting, and cleanup.
+Together with PRs 1–3, all 37 tests pass. Native coverage reports 97.19% lines,
+92.86% branches, and 91.67% functions for `app-boot`; the remaining paths are
+defensive invariant and recovery branches, including Cordis operations whose
+public implementation does not currently reject synchronously or during fiber
+disposal.
+
+Verified from the repository root:
+
+```sh
+npm install
+npm run clean
+npm run build
+npm run typecheck
+npm test
+node --test --experimental-test-coverage harness/app-boot/test/app-boot.test.ts
+```
 
 ### PR 5: `feature/005-openrouter-cli`
 

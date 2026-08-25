@@ -8,13 +8,14 @@
     "harness/model",
     "harness/tools",
     "harness/agent-loop",
-    "harness/runtime-cordis"
+    "harness/runtime-cordis",
+    "harness/app-boot"
   ],
   "scripts": {
     "build": "tsc -b",
     "clean": "tsc -b --clean",
     "test": "npm run build --silent && node --test harness/*/test/*.test.ts",
-    "typecheck": "npm run build --silent && tsc -p tsconfig.tests.json --noEmit && tsc -p harness/runtime-cordis/tsconfig.test.json --noEmit"
+    "typecheck": "npm run build --silent && tsc -p tsconfig.tests.json --noEmit && tsc -p harness/runtime-cordis/tsconfig.test.json --noEmit && tsc -p harness/app-boot/tsconfig.test.json --noEmit"
   },
   "engines": {
     "node": ">=22.18.0"

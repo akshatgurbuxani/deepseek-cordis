@@ -30,3 +30,9 @@ Applications must retain every fiber returned by `context.plugin()` and await
 its disposal. Cordis has no public root-context disposer. Manifest identity,
 replacement ordering, failed-candidate rollback, configuration loading, and
 HMR belong to the later `app-boot` package rather than this adapter.
+
+The public `RuntimeContext`, `RuntimeFiber`, and `RuntimePlugin` aliases expose
+Cordis's own lifecycle objects to that package without another direct Cordis
+import. `RuntimeFiberState` mirrors the numeric values from the exact Cordis
+pin because its published ambient `const enum` has no reliable JavaScript
+re-export.
