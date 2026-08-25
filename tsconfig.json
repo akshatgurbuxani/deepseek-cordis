@@ -4,6 +4,7 @@
     { "path": "./harness/protocol" },
     { "path": "./harness/session" },
     { "path": "./harness/model" },
-    { "path": "./harness/tools" }
+    { "path": "./harness/tools" },
+    { "path": "./harness/agent-loop" }
   ]
 }

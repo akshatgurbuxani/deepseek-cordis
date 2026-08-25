@@ -187,6 +187,24 @@ Implement the bounded loop against public capability contracts. Port the full
 Spike 006 turn trace, deterministic replay, live-schema refresh, concurrent-turn
 guard, model failure, missing/throwing tool, and step-limit tests.
 
+#### PR 2 result
+
+Implemented a stable, reconnectable `AgentLoop` facade using only public
+protocol, session, model, and tool imports. The loop records all turn and step
+facts, reconstructs each model request from session events, reads tool schemas
+at every step, executes calls in model order, and closes failures durably.
+
+Eleven agent-loop tests cover the complete tool round trip, deterministic
+replay, live schema removal, tool replacement, missing and throwing tools,
+model replacement through reconnection, Error and non-Error model failures,
+step limits, concurrent-turn exclusion, retryable disconnect, foreign sessions,
+and invalid limits. Together with PR 1, all 22 tests pass and native coverage
+reports 100.00% lines, branches, and functions for every executable production
+module.
+
+The package contains no Cordis, configuration, network, CLI, or persistence
+dependency. Those lifecycle and provider concerns remain in the following PRs.
+
 ### PR 3: `feature/003-cordis-runtime`
 
 Add the exact Cordis pin and plugin adapter. Port Spike 007 lifecycle parity:

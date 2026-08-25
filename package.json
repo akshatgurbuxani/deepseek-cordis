@@ -6,7 +6,8 @@
     "harness/protocol",
     "harness/session",
     "harness/model",
-    "harness/tools"
+    "harness/tools",
+    "harness/agent-loop"
   ],
   "scripts": {
     "build": "tsc -b",

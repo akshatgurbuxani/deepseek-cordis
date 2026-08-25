@@ -100,7 +100,8 @@ These are later consumers of the Cordis foundation, not the first implementation
 │   ├── protocol/
 │   ├── session/
 │   ├── model/
-│   └── tools/
+│   ├── tools/
+│   └── agent-loop/
 └── spike/
     ├── README.md
     └── 000–007/
