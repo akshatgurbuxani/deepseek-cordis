@@ -207,9 +207,141 @@ dependency. Those lifecycle and provider concerns remain in the following PRs.
 
 ### PR 3: `feature/003-cordis-runtime`
 
-Add the exact Cordis pin and plugin adapter. Port Spike 007 lifecycle parity:
-pending activation, effect-owned registrations, provider replacement, stable
-loop reconnection, isolated models, LIFO cleanup, and disposal.
+#### Outcome
+
+Add `@deepseek-cordis/runtime-cordis`, the only production package allowed to
+import Cordis. It adapts the provider-neutral session, tool, model, and agent
+loop capabilities from PRs 1–2 into Cordis services and plugins without moving
+domain behavior into the runtime layer.
+
+At the end of this PR, a public Cordis `Context` can compose an in-memory
+session store, tool registry, model adapter, tool definition, and stable
+`AgentLoop`. Cordis owns availability, dependency-driven activation, service
+withdrawal, and effect cleanup. The existing capability objects continue to
+own events, tool execution, model completion, and turn progression.
+
+#### Package and dependency changes
+
+Add exactly pinned `cordis@4.0.0-rc.8` to the root lockfile and create:
+
+```text
+harness/runtime-cordis/
+  README.md
+  package.json
+  tsconfig.json
+  src/
+    index.ts
+    README.md
+  test/
+    runtime-cordis.test.ts
+```
+
+The package depends on `agent-loop`, `session`, `model`, `tools`, and Cordis.
+No dependency edge points back from a capability package into
+`runtime-cordis`. Production code must not import any `spike/` source.
+
+Cordis's published declarations require `moduleResolution: "Bundler"` and do
+not support the repository's current `verbatimModuleSyntax` setting. Override
+those options only in the Cordis-facing build and test configuration; keep the
+stricter shared settings unchanged for all provider-neutral packages. Record
+the exception in the package README so a future Cordis upgrade can retest and
+remove it.
+
+#### Public adapter surface
+
+Use TypeScript declaration merging to add these typed services to Cordis
+`Context`:
+
+- `sessions: SessionStore`
+- `tools: ToolRegistry`
+- `model: ModelAdapter`
+- `agentLoop: AgentLoop`
+
+Expose narrow plugin factories for the production contracts:
+
+- a session-store provider plugin;
+- a tool-registry provider plugin;
+- a model-adapter provider plugin;
+- an effect-owned tool-registration plugin; and
+- an agent-loop plugin that requires all three providers, connects one stable
+  facade through `context.effect()`, and provides it as `agentLoop`.
+
+Factories may return the plugin together with the stable value they close over
+when callers or tests need that identity. Plugin names, `inject` declarations,
+and `provide` declarations must be explicit enough for lifecycle diagnostics.
+Do not expose a generic application container or duplicate Cordis's context,
+fiber, dependency, or effect abstractions.
+
+#### Lifecycle behavior to promote
+
+Port the behavioral evidence from Spike 007 against the production packages:
+
+1. Mount the loop before its dependencies and prove its fiber remains pending.
+2. Mount sessions and tools and prove the loop is still pending without a
+   model.
+3. Mount the model and prove the same fiber activates and runs a complete
+   model/tool/model turn.
+4. Register a tool through a Cordis-owned effect, dispose its fiber, and prove
+   its schema and handler are withdrawn exactly once.
+5. Replace that tool and prove a later turn observes the replacement without
+   replacing session history.
+6. Dispose and replace a model provider, then prove Cordis drains and
+   reconnects the same `AgentLoop` facade to the new adapter.
+7. Create two derived contexts that inherit sessions and tools while isolating
+   `model` and `agentLoop`; prove both realms resolve and run independently.
+8. Prove nested Cordis effects recover once in reverse acquisition order.
+9. Dispose the loop fiber and prove the `agentLoop` service is withdrawn and
+   the stable facade rejects later runs as disconnected.
+10. Dispose every mounted fiber and prove all registrations and connections
+    are reclaimed with no live capability left behind. Cordis does not expose
+    a public root-context disposer, so the application layer must retain and
+    dispose the fibers it mounts.
+
+The replacement tests in this PR exercise Cordis lifecycle behavior directly.
+They may use a small test-only mounting helper, but the production package must
+not introduce manifest identity, revision comparison, ordered reconciliation,
+or last-known-good restoration.
+
+#### Failure and cleanup rules
+
+- A consumer must not activate until every declared service exists.
+- Tool registration and loop connection must be acquired through
+  `context.effect()` so their existing idempotent disposers remain the cleanup
+  authority.
+- A model or registry withdrawal must deactivate the loop before the provider
+  is recovered.
+- Provider replacement must preserve the loop facade and session-store objects
+  when those providers were not themselves replaced.
+- Disposal must be awaitable and leave no published `agentLoop` service, tool
+  registration, or active connection.
+- Activation failures must remain visible through the rejected Cordis fiber.
+  Restoring a previous manifest after a failed candidate is deliberately not a
+  runtime-cordis responsibility.
+
+#### Acceptance criteria
+
+- `npm install`, `npm run clean`, `npm run build`, `npm run typecheck`, and
+  `npm test` succeed from the repository root.
+- The root lockfile records exactly `cordis@4.0.0-rc.8` and its integrity.
+- Tests consume only public production package exports and public Cordis APIs.
+- The package contains no copied educational runtime, private Cordis import,
+  loader, configuration, network, CLI, or persistence code.
+- Lifecycle tests cover pending activation, complete turn execution,
+  effect-owned tool cleanup, tool and model replacement, stable loop identity,
+  isolation, LIFO recovery, loop disposal, and full mounted-fiber cleanup.
+- Native coverage remains 100% for executable project-owned
+  `runtime-cordis` code; upstream Cordis code is not part of the coverage
+  target.
+- `harness/runtime-cordis/src/README.md` explains the implementation beside the
+  source in the same style as the earlier spike walkthroughs.
+
+#### Explicitly deferred to PR 4
+
+`runtime-cordis` does not decide which configured plugin revision should be
+active. Stable manifest IDs, ordered mounting, candidate replacement,
+last-known-good rollback, and reconciliation after failed activation belong to
+`app-boot`. This separation keeps Feature 3 a lifecycle adapter rather than a
+second plugin loader.
 
 ### PR 4: `feature/004-app-boot`
 
