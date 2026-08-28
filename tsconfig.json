@@ -7,6 +7,8 @@
     { "path": "./harness/tools" },
     { "path": "./harness/agent-loop" },
     { "path": "./harness/runtime-cordis" },
-    { "path": "./harness/app-boot" }
+    { "path": "./harness/app-boot" },
+    { "path": "./harness/model-openrouter" },
+    { "path": "./harness/cli" }
   ]
 }

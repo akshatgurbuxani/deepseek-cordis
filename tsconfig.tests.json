@@ -9,6 +9,7 @@
   "include": ["harness/*/test/*.test.ts"],
   "exclude": [
     "harness/runtime-cordis/test/**/*.ts",
-    "harness/app-boot/test/**/*.ts"
+    "harness/app-boot/test/**/*.ts",
+    "harness/cli/test/**/*.ts"
   ]
 }

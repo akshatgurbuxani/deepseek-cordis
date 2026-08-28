@@ -1,0 +1,256 @@
+import assert from 'node:assert/strict'
+import test from 'node:test'
+
+import {
+  OpenRouterHttpError,
+  OpenRouterModelAdapter,
+  OpenRouterRequestError,
+  OpenRouterResponseError,
+  type OpenRouterDiagnostics,
+} from '@deepseek-cordis/model-openrouter'
+import type { ModelRequest } from '@deepseek-cordis/protocol'
+
+const request: ModelRequest = {
+  sessionId: 'session-1',
+  turnId: 'session-1:turn:1',
+  step: 2,
+  messages: [
+    { role: 'user', content: 'add two numbers' },
+    {
+      role: 'assistant',
+      toolCalls: [{ id: 'previous', name: 'add', arguments: { a: 1, b: 2 } }],
+    },
+    { role: 'tool', callId: 'previous', name: 'add', ok: true, output: 3 },
+    { role: 'tool', callId: 'failed', name: 'missing', ok: false, error: 'not found' },
+  ],
+  tools: [{
+    name: 'add',
+    description: 'Add numbers',
+    inputSchema: { type: 'object' },
+  }],
+}
+
+test('maps complete history, tools, calls, attribution, usage, and routing metadata', async () => {
+  let receivedUrl: string | undefined
+  let receivedInit: RequestInit | undefined
+  let diagnostics: OpenRouterDiagnostics | undefined
+  const fakeFetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    receivedUrl = String(input)
+    receivedInit = init
+    return new Response(JSON.stringify({
+      model: 'provider/selected-model',
+      choices: [{
+        message: {
+          role: 'assistant',
+          content: null,
+          tool_calls: [{
+            id: 'next-call',
+            type: 'function',
+            function: { name: 'add', arguments: '{"a":20,"b":22}' },
+          }],
+        },
+      }],
+      usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+      openrouter_metadata: {
+        requested: 'openrouter/free',
+        strategy: 'free',
+        future_additive_field: { accepted: true },
+      },
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+  }) as typeof fetch
+  const adapter = new OpenRouterModelAdapter({
+    apiKey: 'test-secret',
+    model: 'openrouter/free',
+    endpoint: 'https://router.test/completions',
+    httpReferer: 'https://example.test',
+    appTitle: 'Harness test',
+    fetch: fakeFetch,
+    onDiagnostics: (value) => { diagnostics = value },
+  })
+
+  const result = await adapter.complete(request)
+  const headers = receivedInit?.headers as Record<string, string>
+  const body = JSON.parse(String(receivedInit?.body))
+
+  assert.equal(adapter.id, 'openrouter:openrouter/free')
+  assert.equal(receivedUrl, 'https://router.test/completions')
+  assert.equal(headers.Authorization, 'Bearer test-secret')
+  assert.equal(headers['X-OpenRouter-Metadata'], 'enabled')
+  assert.equal(headers['HTTP-Referer'], 'https://example.test')
+  assert.equal(headers['X-OpenRouter-Title'], 'Harness test')
+  assert.equal(JSON.stringify(body).includes('test-secret'), false)
+  assert.equal(body.session_id, 'session-1')
+  assert.deepEqual(body.messages, [
+    { role: 'user', content: 'add two numbers' },
+    {
+      role: 'assistant',
+      content: null,
+      tool_calls: [{
+        id: 'previous',
+        type: 'function',
+        function: { name: 'add', arguments: '{"a":1,"b":2}' },
+      }],
+    },
+    { role: 'tool', tool_call_id: 'previous', content: '3' },
+    { role: 'tool', tool_call_id: 'failed', content: '{"error":"not found"}' },
+  ])
+  assert.deepEqual(body.tools, [{
+    type: 'function',
+    function: {
+      name: 'add',
+      description: 'Add numbers',
+      parameters: { type: 'object' },
+    },
+  }])
+  assert.equal(body.tool_choice, 'auto')
+  assert.equal(body.parallel_tool_calls, false)
+  assert.deepEqual(result, {
+    type: 'tool_calls',
+    calls: [{ id: 'next-call', name: 'add', arguments: { a: 20, b: 22 } }],
+  })
+  assert.deepEqual(diagnostics, {
+    requestedModel: 'openrouter/free',
+    selectedModel: 'provider/selected-model',
+    promptTokens: 10,
+    completionTokens: 5,
+    totalTokens: 15,
+    routerMetadata: {
+      requested: 'openrouter/free',
+      strategy: 'free',
+      future_additive_field: { accepted: true },
+    },
+  })
+  assert.equal(Object.isFrozen(diagnostics), true)
+  assert.equal(Object.isFrozen(diagnostics?.routerMetadata), true)
+})
+
+test('accepts final text and omits tool fields and optional attribution', async () => {
+  let body: Record<string, unknown> | undefined
+  let headers: Record<string, string> | undefined
+  const fakeFetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+    body = JSON.parse(String(init?.body))
+    headers = init?.headers as Record<string, string>
+    return new Response(JSON.stringify({
+      choices: [{ message: { role: 'assistant', content: 'The answer is 42.' } }],
+    }), { status: 200 })
+  }) as typeof fetch
+  const adapter = new OpenRouterModelAdapter({ apiKey: 'test', fetch: fakeFetch })
+
+  assert.deepEqual(await adapter.complete({ ...request, tools: [] }), {
+    type: 'message',
+    content: 'The answer is 42.',
+  })
+  assert.equal(body?.model, 'openrouter/free')
+  assert.equal('tools' in (body ?? {}), false)
+  assert.equal('tool_choice' in (body ?? {}), false)
+  assert.equal(headers?.['HTTP-Referer'], undefined)
+  assert.equal(headers?.['X-OpenRouter-Title'], undefined)
+})
+
+test('normalizes missing keys, network failures, and HTTP failures without leaking secrets', async () => {
+  assert.throws(
+    () => new OpenRouterModelAdapter({ apiKey: '' }),
+    (error) => error instanceof OpenRouterRequestError && /API key is required/.test(error.message),
+  )
+
+  const networkAdapter = new OpenRouterModelAdapter({
+    apiKey: 'network-secret',
+    fetch: (async () => { throw new Error('socket closed') }) as typeof fetch,
+  })
+  await assert.rejects(networkAdapter.complete(request), (error) =>
+    error instanceof OpenRouterRequestError
+    && /network request failed: socket closed/.test(error.message)
+    && !error.message.includes('network-secret'))
+
+  const failedFetch = (async () => new Response('rate limited', {
+    status: 429,
+    statusText: 'Too Many Requests',
+  })) as typeof fetch
+  await assert.rejects(
+    new OpenRouterModelAdapter({ apiKey: 'http-secret', fetch: failedFetch }).complete(request),
+    (error) => error instanceof OpenRouterHttpError
+      && error.status === 429
+      && error.detail === 'rate limited'
+      && !error.message.includes('http-secret'),
+  )
+
+  const emptyFailure = (async () => new Response('', {
+    status: 503,
+    statusText: 'Unavailable',
+  })) as typeof fetch
+  await assert.rejects(
+    new OpenRouterModelAdapter({ apiKey: 'test', fetch: emptyFailure }).complete(request),
+    /OpenRouter request failed \(503\): Unavailable/,
+  )
+})
+
+test('rejects invalid JSON, completion envelopes, messages, and empty completions', async () => {
+  const adapterFor = (body: string) => new OpenRouterModelAdapter({
+    apiKey: 'test',
+    fetch: (async () => new Response(body, { status: 200 })) as typeof fetch,
+  })
+
+  await assert.rejects(adapterFor('{not json}').complete(request), (error) =>
+    error instanceof OpenRouterResponseError && /invalid JSON/.test(error.message))
+  await assert.rejects(adapterFor('{}').complete(request), /invalid completion response/)
+  await assert.rejects(
+    adapterFor('{"choices":[{}]}').complete(request),
+    /did not contain a message/,
+  )
+  await assert.rejects(
+    adapterFor('{"choices":[{"message":{"content":null}}]}').complete(request),
+    /neither text nor tool calls/,
+  )
+})
+
+test('rejects malformed tool-call envelopes, functions, and arguments', async () => {
+  const completeWithCall = async (call: unknown) => {
+    const fetch = (async () => new Response(JSON.stringify({
+      choices: [{ message: { tool_calls: [call] } }],
+    }), { status: 200 })) as typeof globalThis.fetch
+    return new OpenRouterModelAdapter({ apiKey: 'test', fetch }).complete(request)
+  }
+
+  await assert.rejects(
+    completeWithCall({ id: 'bad', type: 'other', function: {} }),
+    /invalid tool call/,
+  )
+  await assert.rejects(
+    completeWithCall({ id: 'bad', type: 'function', function: { name: 1, arguments: '{}' } }),
+    /invalid tool function/,
+  )
+  await assert.rejects(
+    completeWithCall({
+      id: 'bad',
+      type: 'function',
+      function: { name: 'add', arguments: '{not json}' },
+    }),
+    /invalid JSON arguments/,
+  )
+  await assert.rejects(
+    completeWithCall({
+      id: 'bad',
+      type: 'function',
+      function: { name: 'add', arguments: '1e400' },
+    }),
+    /non-JSON arguments/,
+  )
+})
+
+test('optional live completion returns text when explicitly enabled', {
+  skip: process.env.OPENROUTER_LIVE_TEST !== '1' || !process.env.OPENROUTER_API_KEY,
+}, async () => {
+  const adapter = new OpenRouterModelAdapter({
+    apiKey: process.env.OPENROUTER_API_KEY!,
+    ...(process.env.OPENROUTER_MODEL ? { model: process.env.OPENROUTER_MODEL } : {}),
+  })
+  const response = await adapter.complete({
+    sessionId: 'live-smoke',
+    turnId: 'live-smoke:turn:1',
+    step: 1,
+    messages: [{ role: 'user', content: 'Reply with exactly: live ok' }],
+    tools: [],
+  })
+  assert.equal(response.type, 'message')
+  assert.ok(response.type === 'message' && response.content.length > 0)
+})

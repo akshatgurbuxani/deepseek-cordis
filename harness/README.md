@@ -422,10 +422,58 @@ node --test --experimental-test-coverage harness/app-boot/test/app-boot.test.ts
 
 ### PR 5: `feature/005-openrouter-cli`
 
-Promote the OpenRouter wire adapter, routing diagnostics, tracing wrappers, and
-text CLI. Support `.env`, `OPENROUTER_MODEL`, replay mode, and one calculator
-tool. Run network tests only when a key is present; deterministic tests remain
-the required CI gate.
+Add two packages. `model-openrouter` implements only the provider-neutral model
+contract: current chat-completion wire mapping, tool schema and history
+translation, strict response normalization, explicit provider errors, token
+usage, and permissively decoded router metadata. `cli` owns argument and
+environment input, trace formatting, the calculator composition, final output,
+and process exit behavior.
+
+The required path is deterministic replay with no credential or network. Live
+mode uses Node's built-in `.env` loading, requires `OPENROUTER_API_KEY`, defaults
+`OPENROUTER_MODEL` to `openrouter/free`, and accepts optional app-attribution
+values. Live tests are opt-in; injected-fetch tests remain the CI gate.
+
+The command must build its providers and consumer through an `AppBoot` manifest,
+record the complete immutable turn, print a visible trace and final answer, and
+reconcile to an empty manifest in `finally`. Credentials must never enter a
+model request, session event, diagnostic, trace, fixture, error message, or
+commit.
+
+#### PR 5 result
+
+Implemented the provider-neutral OpenRouter adapter against the current
+official chat-completions, local tool-calling, app-attribution, free-router, and
+router-metadata contracts. It uses the current `X-OpenRouter-Title` header,
+disables parallel tool calls to match ordered harness execution, snapshots
+normalized outputs, and keeps the API key only in a private field and
+Authorization header.
+
+Implemented a one-shot traced CLI with deterministic replay and live OpenRouter
+modes. Its AppBoot manifest composes the session store, registry, calculator,
+model, and loop; the command prints the final answer and drains all five fibers
+on success or failure. Required tests use injected HTTP responses, while a live
+smoke test requires both `OPENROUTER_LIVE_TEST=1` and a key.
+
+Twelve new required tests cover provider wire mapping, usage and routing
+diagnostics, immutable normalized output, attribution headers,
+HTTP/network/malformed response containment, secret isolation, argument
+parsing, tracing, mocked-live and replay compositions, failure cleanup,
+defaults, and process exit behavior. A thirteenth live smoke test is opt-in.
+Together with PRs 1–4, 49 deterministic tests pass and one live test is skipped
+by default. Native coverage reports 100% lines and functions for project-owned
+`model-openrouter`, CLI orchestration, and tracing code.
+
+Verified from the repository root:
+
+```sh
+npm install
+npm run clean
+npm run build
+npm run typecheck
+npm test
+npm run cli:replay -- "add 17 and 25"
+```
 
 ### PR 6: `feature/006-persistent-sessions`
 
