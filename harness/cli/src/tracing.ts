@@ -1,10 +1,6 @@
 import type { ModelAdapter } from '@deepseek-cordis/model'
 import type { ModelRequest, ModelResponse, SessionEvent, SessionEventInput } from '@deepseek-cordis/protocol'
-import {
-  InMemorySession,
-  type Session,
-  type SessionStore,
-} from '@deepseek-cordis/session'
+import { InMemorySessionStore, type Session, type SessionStore } from '@deepseek-cordis/session'
 import {
   RuntimeFiberState,
   type RuntimeContext,
@@ -17,40 +13,59 @@ export const consoleTrace: TraceSink = (label, value) => {
   console.dir(value, { colors: process.stdout.isTTY, depth: null })
 }
 
-class TracingSession extends InMemorySession {
+class TracingSession implements Session {
+  readonly #inner: Session
   readonly #trace: TraceSink
 
-  constructor(id: string, trace: TraceSink) {
-    super(id)
+  constructor(inner: Session, trace: TraceSink) {
+    this.#inner = inner
     this.#trace = trace
   }
 
-  override append(input: SessionEventInput): SessionEvent {
-    const event = super.append(input)
+  get id(): string {
+    return this.#inner.id
+  }
+
+  get events(): readonly SessionEvent[] {
+    return this.#inner.events
+  }
+
+  append(input: SessionEventInput): SessionEvent {
+    const event = this.#inner.append(input)
     this.#trace('session/event', event)
     return event
+  }
+
+  projectMessages() {
+    return this.#inner.projectMessages()
   }
 }
 
 export class TracingSessionStore implements SessionStore {
-  readonly #sessions = new Map<string, Session>()
+  readonly #inner: SessionStore
+  readonly #sessions = new Map<string, { readonly inner: Session; readonly traced: Session }>()
   readonly #trace: TraceSink
 
-  constructor(trace: TraceSink = consoleTrace) {
+  constructor(trace: TraceSink = consoleTrace, inner: SessionStore = new InMemorySessionStore()) {
     this.#trace = trace
+    this.#inner = inner
   }
 
   create(id: string): Session {
-    if (this.#sessions.has(id)) {
-      throw new Error(`session ${JSON.stringify(id)} already exists`)
-    }
-    const session = new TracingSession(id, this.#trace)
-    this.#sessions.set(id, session)
-    return session
+    return this.#wrap(this.#inner.create(id))
   }
 
   get(id: string): Session | undefined {
-    return this.#sessions.get(id)
+    const session = this.#inner.get(id)
+    return session === undefined ? undefined : this.#wrap(session)
+  }
+
+  #wrap(inner: Session): Session {
+    const cached = this.#sessions.get(inner.id)
+    if (cached?.inner === inner) return cached.traced
+    const traced = new TracingSession(inner, this.#trace)
+    this.#sessions.set(inner.id, { inner, traced })
+    return traced
   }
 }
 

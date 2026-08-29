@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import test from 'node:test'
 
 import { parseCliArguments, runCli } from '@deepseek-cordis/cli'
@@ -8,6 +11,7 @@ import {
   type TraceSink,
   TracingSessionStore,
 } from '@deepseek-cordis/cli/tracing'
+import { FileSessionStore } from '@deepseek-cordis/session-file'
 
 interface TraceRecord {
   readonly label: string
@@ -89,6 +93,43 @@ test('replay CLI runs a complete turn, prints the answer, traces it, and fully d
     label === 'runtime/fiber'
     && JSON.stringify(value).includes('DISPOSED')))
   assert.equal(records.at(-1)?.label, 'runtime/fiber')
+})
+
+test('file-backed CLI resumes the same session across fresh application boots', async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'deepseek-cordis-cli-'))
+  t.after(() => { rmSync(directory, { recursive: true, force: true }) })
+  const firstTrace = recorder()
+  const secondTrace = recorder()
+  const env = { HARNESS_SESSION_DIR: directory, HARNESS_SESSION_ID: 'persistent-cli' }
+
+  const first = await runCli({
+    argv: ['--replay', 'add 2 and 3'],
+    env,
+    trace: firstTrace.trace,
+    output: () => undefined,
+  })
+  const second = await runCli({
+    argv: ['--replay', 'add 4 and 5'],
+    env,
+    trace: secondTrace.trace,
+    output: () => undefined,
+  })
+
+  assert.equal(first.turnId, 'persistent-cli:turn:1')
+  assert.equal(second.turnId, 'persistent-cli:turn:2')
+  assert.match(JSON.stringify(firstTrace.records[0]?.value), /"resumed":false/)
+  assert.match(JSON.stringify(secondTrace.records[0]?.value), /"resumed":true/)
+
+  const resumed = new FileSessionStore({ directory }).get('persistent-cli')
+  assert.ok(resumed)
+  assert.equal(resumed.events.filter((event) => event.type === 'turn/start').length, 2)
+  assert.deepEqual(
+    resumed.projectMessages().filter((message) => message.role === 'user'),
+    [
+      { role: 'user', content: 'add 2 and 3' },
+      { role: 'user', content: 'add 4 and 5' },
+    ],
+  )
 })
 
 test('live-mode composition maps a tool round trip and never traces its API key', async () => {

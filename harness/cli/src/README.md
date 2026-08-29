@@ -16,11 +16,14 @@ its manifest. The manifest deliberately lists the agent loop before its
 providers, demonstrating that Cordis keeps it pending until the traced session
 store, tool registry, calculator, and traced model are available.
 
-After reconciliation, the command creates one session, runs one turn, traces
-the result, and prints its final content. `finally` always reconciles an empty
-manifest before removing the lifecycle listener. Success, model failure,
-configuration failure after mounting, and tool failure therefore share the
-same cleanup path.
+Before reconciliation, the command selects the in-memory store or the file
+provider configured by `HARNESS_SESSION_DIR`. Its tracing store decorates that
+provider and caches wrappers, preserving the identity rule required by the
+agent loop. After reconciliation, it creates the configured session or resumes
+an existing `HARNESS_SESSION_ID`, runs one turn, traces the result, and prints
+its final content. `finally` always reconciles an empty manifest before removing
+the lifecycle listener. Success, model failure, configuration failure after
+mounting, and tool failure therefore share the same cleanup path.
 
 Tracing wraps public session and model contracts. It records session events,
 normalized requests and responses, OpenRouter diagnostics, and fiber state

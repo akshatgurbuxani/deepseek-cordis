@@ -3,6 +3,8 @@ import type { ModelAdapter } from '@deepseek-cordis/model'
 import { ReplayModelAdapter } from '@deepseek-cordis/model/testing'
 import { OpenRouterModelAdapter } from '@deepseek-cordis/model-openrouter'
 import type { JsonValue, RunResult } from '@deepseek-cordis/protocol'
+import { InMemorySessionStore, type SessionStore } from '@deepseek-cordis/session'
+import { FileSessionStore } from '@deepseek-cordis/session-file'
 import {
   createAgentLoopPlugin,
   createModelAdapterPlugin,
@@ -143,12 +145,23 @@ export async function runCli(options: RunCliOptions = {}): Promise<RunResult> {
           ...(options.fetch ? { fetch: options.fetch } : {}),
           onDiagnostics: (diagnostics) => trace('openrouter/diagnostics', diagnostics),
         })
-    const sessions = createSessionStorePlugin(new TracingSessionStore(trace))
+    const sessionStore: SessionStore = env.HARNESS_SESSION_DIR
+      ? new FileSessionStore({ directory: env.HARNESS_SESSION_DIR })
+      : new InMemorySessionStore()
+    const tracedSessions = new TracingSessionStore(trace, sessionStore)
+    const sessions = createSessionStorePlugin(tracedSessions)
     const model = new TracingModelAdapter(innerModel, trace)
+    const sessionId = options.sessionId ?? env.HARNESS_SESSION_ID ?? `cli-${Date.now()}`
+    const existingSession = tracedSessions.get(sessionId)
 
-    trace('cli/start', configuration)
+    trace('cli/start', {
+      ...configuration,
+      sessionId,
+      sessionStore: env.HARNESS_SESSION_DIR ? 'file' : 'memory',
+      resumed: existingSession !== undefined,
+    })
     await boot.reconcile(manifestFor(sessions, model))
-    const session = boot.context.sessions.create(options.sessionId ?? `cli-${Date.now()}`)
+    const session = existingSession ?? boot.context.sessions.create(sessionId)
     const result = await boot.context.agentLoop.run(session, configuration.input)
     trace('cli/result', result)
     output(result.content)

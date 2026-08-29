@@ -34,6 +34,7 @@ tests that survive implementation replacement.
 
 ```text
 session             ──> protocol
+session-file        ──> session + protocol
 model               ──> protocol
 tools               ──> protocol
 agent-loop          ──> protocol + session + model + tools
@@ -59,8 +60,9 @@ only—no registries, stores, network calls, or Cordis imports.
 
 Owns the `Session` and `SessionStore` contracts plus the first in-memory
 implementation. It appends immutable, monotonically sequenced events and
-projects model-visible messages. Storage persistence is a later provider, not
-a reason to weaken the initial contract.
+projects model-visible messages. `session-file` implements that unchanged
+contract with versioned JSON documents and atomic replacement; the in-memory
+implementation remains the default for tests and ephemeral commands.
 
 ### `model`
 
@@ -477,8 +479,35 @@ npm run cli:replay -- "add 17 and 25"
 
 ### PR 6: `feature/006-persistent-sessions`
 
-Add a persistent session-store provider, restart/resume tests, atomic append,
-and schema migration policy. The in-memory provider remains useful for tests.
+Add `@deepseek-cordis/session-file`, a provider for the existing `SessionStore`
+contract. It stores one schema-versioned JSON document per session and derives
+safe filenames from session IDs. Every create, append, and migration writes a
+same-directory temporary file, flushes it, and atomically renames it before
+publishing the new state in memory. The store supports the versionless V0
+format, rewrites it to V1, and refuses unknown future versions or corrupt event
+streams without silently changing their files.
+
+The CLI selects this provider when `HARNESS_SESSION_DIR` is set. Reusing
+`HARNESS_SESSION_ID` loads the prior immutable event stream, so the next agent
+turn keeps its history and receives the next turn number. Without these values,
+the existing in-memory one-shot behavior is unchanged. Tracing decorates either
+provider instead of inheriting from the memory implementation.
+
+#### PR 6 result
+
+Implemented crash-safe file replacement, strict runtime validation of every
+event variant and contiguous sequence, V0-to-V1 migration, traversal-safe
+hashed filenames, copied event views, and model-history projection shared with
+the in-memory provider. The documented concurrency boundary is one writer per
+session directory; cross-process locking is intentionally deferred.
+
+Six provider tests cover restart fidelity, immutable projection, file mode,
+failed-write rollback, migration, future-schema preservation, malformed JSON,
+invalid sequences and event types, filename integrity, and orphan-file
+handling. A CLI integration test runs two fresh application boots against the
+same directory and proves the second boot resumes as turn two with both user
+messages in projected history. Together with PRs 1–5, 56 deterministic tests
+pass and one live OpenRouter smoke test remains opt-in.
 
 ### Later milestones
 

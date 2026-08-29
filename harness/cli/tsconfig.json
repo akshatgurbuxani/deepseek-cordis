@@ -12,6 +12,7 @@
   "references": [
     { "path": "../protocol" },
     { "path": "../session" },
+    { "path": "../session-file" },
     { "path": "../model" },
     { "path": "../model-openrouter" },
     { "path": "../runtime-cordis" },

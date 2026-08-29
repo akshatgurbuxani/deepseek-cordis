@@ -9,6 +9,7 @@
     { "path": "./harness/runtime-cordis" },
     { "path": "./harness/app-boot" },
     { "path": "./harness/model-openrouter" },
+    { "path": "./harness/session-file" },
     { "path": "./harness/cli" }
   ]
 }

@@ -17,6 +17,37 @@ export interface SessionStore {
   get(id: string): Session | undefined
 }
 
+export function projectSessionMessages(events: readonly SessionEvent[]): readonly ModelMessage[] {
+  return events.flatMap((event): ModelMessage[] => {
+    switch (event.type) {
+      case 'user/message':
+        return [{ role: 'user', content: event.content }]
+      case 'assistant/message':
+        return [{ role: 'assistant', content: event.content }]
+      case 'assistant/tool-calls':
+        return [{ role: 'assistant', toolCalls: event.calls }]
+      case 'tool/result':
+        return event.ok
+          ? [{
+              role: 'tool',
+              callId: event.callId,
+              name: event.name,
+              ok: true,
+              output: event.output,
+            }]
+          : [{
+              role: 'tool',
+              callId: event.callId,
+              name: event.name,
+              ok: false,
+              error: event.error,
+            }]
+      default:
+        return []
+    }
+  })
+}
+
 export class InMemorySession implements Session {
   readonly id: string
   readonly #events: SessionEvent[] = []
@@ -39,34 +70,7 @@ export class InMemorySession implements Session {
   }
 
   projectMessages(): readonly ModelMessage[] {
-    return this.#events.flatMap((event): ModelMessage[] => {
-      switch (event.type) {
-        case 'user/message':
-          return [{ role: 'user', content: event.content }]
-        case 'assistant/message':
-          return [{ role: 'assistant', content: event.content }]
-        case 'assistant/tool-calls':
-          return [{ role: 'assistant', toolCalls: event.calls }]
-        case 'tool/result':
-          return event.ok
-            ? [{
-                role: 'tool',
-                callId: event.callId,
-                name: event.name,
-                ok: true,
-                output: event.output,
-              }]
-            : [{
-                role: 'tool',
-                callId: event.callId,
-                name: event.name,
-                ok: false,
-                error: event.error,
-              }]
-        default:
-          return []
-      }
-    })
+    return projectSessionMessages(this.#events)
   }
 }
 

@@ -11,7 +11,8 @@
     "harness/runtime-cordis",
     "harness/app-boot",
     "harness/model-openrouter",
-    "harness/cli"
+    "harness/cli",
+    "harness/session-file"
   ],
   "scripts": {
     "build": "tsc -b",

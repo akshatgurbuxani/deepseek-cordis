@@ -2,11 +2,11 @@
 
 First runnable production composition for the harness.
 
-The CLI builds a complete `AppBoot` manifest containing an in-memory traced
-session store, tool registry, calculator registration, replay or OpenRouter
-model, and stable agent loop. It runs one turn, prints the final answer, and
-always reconciles to an empty manifest in `finally` so every fiber,
-registration, service, and connection is withdrawn before exit.
+The CLI builds a complete `AppBoot` manifest containing a traced session store,
+tool registry, calculator registration, replay or OpenRouter model, and stable
+agent loop. It runs one turn, prints the final answer, and always reconciles to
+an empty manifest in `finally` so every fiber, registration, service, and
+connection is withdrawn before exit.
 
 Replay mode is deterministic and needs no credential:
 
@@ -27,6 +27,16 @@ model requests and responses, session events, router diagnostics, and runtime
 fiber transitions. API keys and authorization headers never enter traced
 objects.
 
-This command is deliberately one-shot. Interactive sessions, persistence,
-streaming, cancellation, and provider replacement during a running turn remain
-future work.
+Sessions remain ephemeral by default. Set `HARNESS_SESSION_DIR` to select the
+file provider and `HARNESS_SESSION_ID` to give the history a stable identity:
+
+```sh
+HARNESS_SESSION_DIR=.sessions HARNESS_SESSION_ID=demo \
+  npm run cli:replay -- "add 17 and 25"
+HARNESS_SESSION_DIR=.sessions HARNESS_SESSION_ID=demo \
+  npm run cli:replay -- "add 8 and 9"
+```
+
+The second command resumes `demo` and records turn two. Interactive input,
+cross-process writer locking, streaming, cancellation, and provider replacement
+during a running turn remain future work.
