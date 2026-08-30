@@ -7,8 +7,10 @@ import type { JsonValue } from '@deepseek-cordis/protocol'
 import {
   RuntimeFiberState,
   createAgentLoopPlugin,
+  createApprovalServicePlugin,
   createModelAdapterPlugin,
   createSessionStorePlugin,
+  createSandboxPlugin,
   createToolRegistrationPlugin,
   createToolRegistryPlugin,
   type RuntimePlugin,
@@ -34,6 +36,7 @@ function addTool(offset = 0) {
         b: { type: 'number' },
       },
     },
+    safety: { risk: 'none' },
     execute(argumentsValue: JsonValue) {
       if (
         argumentsValue === null
@@ -72,9 +75,13 @@ test('initial boot follows Cordis dependencies and an identical manifest is a no
     sessions: sessions.plugin,
     tools: tools.plugin,
     model: model.plugin,
+    approval: createApprovalServicePlugin().plugin,
+    sandbox: createSandboxPlugin().plugin,
     add: addTool(),
   }
-  const manifest = ['loop', 'add', 'sessions', 'tools', 'model'].map((id): ManifestEntry => ({
+  const manifest = [
+    'loop', 'add', 'sessions', 'tools', 'model', 'approval', 'sandbox',
+  ].map((id): ManifestEntry => ({
     id,
     revision: 'v1',
     load() {
@@ -91,12 +98,13 @@ test('initial boot follows Cordis dependencies and an identical manifest is a no
     'add 2 and 3',
   )
 
-  assert.deepEqual([...first.added].sort(), ['add', 'loop', 'model', 'sessions', 'tools'])
-  assert.deepEqual([...second.preserved].sort(), ['add', 'loop', 'model', 'sessions', 'tools'])
+  const ids = ['add', 'approval', 'loop', 'model', 'sandbox', 'sessions', 'tools']
+  assert.deepEqual([...first.added].sort(), ids)
+  assert.deepEqual([...second.preserved].sort(), ids)
   assert.deepEqual(second.added, [])
   assert.deepEqual(second.updated, [])
   assert.equal(boot.entry('loop')?.fiber, loopFiber)
-  assert.equal(loads, 5)
+  assert.equal(loads, 7)
   assert.equal(result.content, '5')
 
   await boot.dispose()
@@ -124,6 +132,8 @@ test('tool replacement changes execution while preserving the loop and session h
     entry('sessions', 'v1', sessions.plugin),
     entry('tools', 'v1', tools.plugin),
     entry('model', 'v1', model.plugin),
+    entry('approval', 'v1', createApprovalServicePlugin().plugin),
+    entry('sandbox', 'v1', createSandboxPlugin().plugin),
     entry('loop', 'v1', loop.plugin),
   ]
   await boot.reconcile([...base, entry('add', 'v1', addTool())])
@@ -157,6 +167,8 @@ test('model replacement preserves history and a failed candidate restores the wo
     entry('sessions', 'v1', sessions.plugin),
     entry('tools', 'v1', tools.plugin),
     entry('model', 'v1', stableModel.plugin),
+    entry('approval', 'v1', createApprovalServicePlugin().plugin),
+    entry('sandbox', 'v1', createSandboxPlugin().plugin),
     entry('loop', 'v1', loop.plugin),
   ]
   await boot.reconcile(stableManifest)

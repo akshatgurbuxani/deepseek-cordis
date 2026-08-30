@@ -8,11 +8,11 @@ same-directory temporary file, fsyncs it, and atomically renames it over the
 committed file. The in-memory event list advances only after that commit point,
 so a failed write leaves both memory and the previous file unchanged.
 
-Schema V4 stores `schemaVersion`, `id`, and the complete immutable event list,
+Schema V5 stores `schemaVersion`, `id`, and the complete immutable event list,
 including provenance-bearing compaction checkpoints and context-budget
-decisions. It also permits validated provider-usage anchors on assistant
-events. Versionless V0 plus V1, V2, and V3 documents are rewritten as V4 during
-startup. Unknown versions,
+decisions. It also permits validated provider-usage anchors on assistant events
+and log-only approval/sandbox audit events. Versionless V0 plus V1 through V4
+documents are rewritten as V5 during startup. Unknown versions,
 malformed JSON, invalid event fields,
 sequence gaps, and filename/ID mismatches fail explicitly and are never
 overwritten.
@@ -38,6 +38,9 @@ Compacted budget decisions must reference an earlier checkpoint and cannot
 smuggle the new event vocabulary into a legacy schema.
 Usage anchors cite the exact pre-response surface and preserve their tool
 schemas atomically with the assistant event.
+Approval outcomes use a closed vocabulary, sandbox preparation records provider
+identity and enforcement strength, and neither event family enters model
+projection. Legacy documents cannot smuggle these V5 events into older schemas.
 
 The current provider assumes one active writer per directory. Atomic replacement
 protects against torn process writes; cross-process locking and merge semantics

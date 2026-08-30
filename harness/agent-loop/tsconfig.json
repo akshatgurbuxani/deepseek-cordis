@@ -7,8 +7,10 @@
   },
   "include": ["src/**/*.ts"],
   "references": [
+    { "path": "../approval" },
     { "path": "../protocol" },
     { "path": "../session" },
+    { "path": "../sandbox" },
     { "path": "../model" },
     { "path": "../tools" }
   ]

@@ -4,6 +4,10 @@ import {
   type ModelAdapter,
 } from '@deepseek-cordis/model'
 import {
+  type ApprovalService,
+  UnavailableApprovalService,
+} from '@deepseek-cordis/approval'
+import {
   type ModelResponse,
   type RunResult,
   snapshot,
@@ -11,6 +15,10 @@ import {
   type ToolSchema,
 } from '@deepseek-cordis/protocol'
 import { deriveSessionSurface, type Session, type SessionStore } from '@deepseek-cordis/session'
+import {
+  type ToolSandbox,
+  UnavailableToolSandbox,
+} from '@deepseek-cordis/sandbox'
 import type { ToolRegistry } from '@deepseek-cordis/tools'
 
 export class StepLimitError extends Error {}
@@ -59,19 +67,31 @@ export class AgentLoop {
   #sessions: SessionStore | undefined
   #tools: ToolRegistry | undefined
   #model: ModelAdapter | undefined
+  #approval: ApprovalService | undefined
+  #sandbox: ToolSandbox | undefined
   readonly #policy: AgentLoopPolicy | undefined
 
   constructor(policy?: AgentLoopPolicy) {
     this.#policy = policy
   }
 
-  connect(sessions: SessionStore, tools: ToolRegistry, model: ModelAdapter): () => void {
+  connect(
+    sessions: SessionStore,
+    tools: ToolRegistry,
+    model: ModelAdapter,
+    boundaries: {
+      readonly approval?: ApprovalService
+      readonly sandbox?: ToolSandbox
+    } = {},
+  ): () => void {
     if (this.#sessions || this.#tools || this.#model) {
       throw new Error('agent loop is already connected')
     }
     this.#sessions = sessions
     this.#tools = tools
     this.#model = model
+    this.#approval = boundaries.approval ?? new UnavailableApprovalService()
+    this.#sandbox = boundaries.sandbox ?? new UnavailableToolSandbox()
     let disposed = false
     return () => {
       if (disposed) return
@@ -82,6 +102,8 @@ export class AgentLoop {
       this.#sessions = undefined
       this.#tools = undefined
       this.#model = undefined
+      this.#approval = undefined
+      this.#sandbox = undefined
     }
   }
 
@@ -89,7 +111,11 @@ export class AgentLoop {
     const sessions = this.#sessions
     const tools = this.#tools
     const model = this.#model
-    if (!sessions || !tools || !model) throw new Error('agent loop is not connected')
+    const approval = this.#approval
+    const sandbox = this.#sandbox
+    if (!sessions || !tools || !model || !approval || !sandbox) {
+      throw new Error('agent loop is not connected')
+    }
     if (sessions.get(session.id) !== session) {
       throw new Error(`session ${JSON.stringify(session.id)} does not belong to this loop`)
     }
@@ -199,6 +225,10 @@ export class AgentLoop {
           if (pending) pending.started = true
           const execution = await tools.execute(call.name, call.arguments, {
             ...(options.signal ? { signal: options.signal } : {}),
+            context: { sessionId: session.id, turnId, callId: call.id },
+            approval,
+            sandbox,
+            audit: (event) => session.append({ ...event, turnId }),
           })
           throwIfCancelled(options.signal)
           session.append(execution.ok

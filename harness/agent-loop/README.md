@@ -1,7 +1,8 @@
 # Agent loop
 
 `@deepseek-cordis/agent-loop` turns one user input into bounded model and tool
-steps. It depends only on the public session, model, tool, and protocol
+steps. It depends only on the public session, model, tool, approval, sandbox,
+and protocol
 contracts. It does not import Cordis, a network provider, configuration, or UI.
 
 `connect()` gives one stable loop facade its current providers and returns an
@@ -15,6 +16,12 @@ history from the session and reads current tool schemas. Model text deltas are
 forwarded live while only the terminal response enters session history. Tool
 calls are recorded and executed in model order; every result is recorded before
 the next model request.
+
+For consequential calls, the loop supplies exact session/turn/call identity and
+commits `approval/asked`, `approval/decided`, and `sandbox/prepared` audit events
+through the tool pipeline. These events are log-only. A failed audit append
+prevents dispatch, while the ordinary tool result remains the only new
+model-visible message.
 
 Model failures and the maximum-step guard append durable failed-turn events.
 An optional turn signal propagates through model and tool work. Cancellation

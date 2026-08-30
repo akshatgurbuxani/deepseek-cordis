@@ -6,6 +6,8 @@
     "harness/protocol",
     "harness/session",
     "harness/model",
+    "harness/approval",
+    "harness/sandbox",
     "harness/tools",
     "harness/agent-loop",
     "harness/runtime-cordis",

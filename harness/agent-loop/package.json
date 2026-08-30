@@ -13,9 +13,11 @@
   },
   "files": ["dist"],
   "dependencies": {
+    "@deepseek-cordis/approval": "0.0.0",
     "@deepseek-cordis/model": "0.0.0",
     "@deepseek-cordis/protocol": "0.0.0",
     "@deepseek-cordis/session": "0.0.0",
+    "@deepseek-cordis/sandbox": "0.0.0",
     "@deepseek-cordis/tools": "0.0.0"
   }
 }

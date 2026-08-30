@@ -20,12 +20,16 @@
   },
   "files": ["dist"],
   "dependencies": {
+    "@deepseek-cordis/agent-loop": "0.0.0",
     "@deepseek-cordis/app-boot": "0.0.0",
+    "@deepseek-cordis/compaction": "0.0.0",
+    "@deepseek-cordis/context-budget": "0.0.0",
     "@deepseek-cordis/model": "0.0.0",
     "@deepseek-cordis/model-openrouter": "0.0.0",
     "@deepseek-cordis/protocol": "0.0.0",
     "@deepseek-cordis/runtime-cordis": "0.0.0",
     "@deepseek-cordis/session": "0.0.0",
-    "@deepseek-cordis/session-file": "0.0.0"
+    "@deepseek-cordis/session-file": "0.0.0",
+    "@deepseek-cordis/token-meter": "0.0.0"
   }
 }

@@ -45,6 +45,22 @@ test('sessions survive restart with immutable events and projected model history
     },
   })
   session.append({
+    type: 'tool/call', turnId: 'turn-1',
+    call: { id: 'call-1', name: 'add', arguments: { a: 2, b: 3 } },
+  })
+  session.append({
+    type: 'approval/asked', turnId: 'turn-1', callId: 'call-1', name: 'add',
+    risk: 'external', reason: 'invoke a consequential provider',
+  })
+  session.append({
+    type: 'approval/decided', turnId: 'turn-1', callId: 'call-1', name: 'add',
+    outcome: 'allowed-once',
+  })
+  session.append({
+    type: 'sandbox/prepared', turnId: 'turn-1', callId: 'call-1', name: 'add',
+    profile: 'isolated', provider: 'test/provider', enforcement: 'full',
+  })
+  session.append({
     type: 'tool/result', turnId: 'turn-1', callId: 'call-1', name: 'add', ok: true, output: 5,
   })
   session.append({ type: 'assistant/message', turnId: 'turn-1', content: '5' })
@@ -111,7 +127,7 @@ test('a failed atomic append leaves memory and the committed file unchanged', (t
   assert.equal(readdirSync(directory).some((name) => name.endsWith('.tmp')), false)
 })
 
-test('V0, V1, V2, and V3 documents migrate once to the current schema', (t) => {
+test('V0 through V4 documents migrate once to the current schema', (t) => {
   const directory = temporaryDirectory(t)
   const id = 'legacy'
   const filePath = sessionFilePath(directory, id)
@@ -162,6 +178,15 @@ test('V0, V1, V2, and V3 documents migrate once to the current schema', (t) => {
   ])
   assert.equal(
     (JSON.parse(readFileSync(v2Path, 'utf8')) as Record<string, unknown>).schemaVersion,
+    SESSION_FILE_SCHEMA_VERSION,
+  )
+
+  const v4Id = 'schema-v4'
+  const v4Path = sessionFilePath(directory, v4Id)
+  writeFileSync(v4Path, JSON.stringify({ schemaVersion: 4, id: v4Id, events: [] }))
+  assert.ok(new FileSessionStore({ directory }).get(v4Id))
+  assert.equal(
+    (JSON.parse(readFileSync(v4Path, 'utf8')) as Record<string, unknown>).schemaVersion,
     SESSION_FILE_SCHEMA_VERSION,
   )
 
@@ -246,6 +271,64 @@ test('cold startup preserves an interrupted turn and durably synthesizes balance
   const secondLoad = new FileSessionStore({ directory }).get(id)
   assert.deepEqual(secondLoad?.events, session.events)
   assert.equal(readFileSync(filePath, 'utf8'), committed)
+})
+
+test('crash repair uses safety audit to classify consequential execution', (t) => {
+  const directory = temporaryDirectory(t)
+  const id = 'interrupted-safety'
+  const turnId = `${id}:turn:1`
+  const filePath = sessionFilePath(directory, id)
+  const events = [
+    { type: 'turn/start', turnId, sequence: 1 },
+    { type: 'user/message', turnId, content: 'write twice', sequence: 2 },
+    { type: 'step/start', turnId, step: 1, sequence: 3 },
+    {
+      type: 'assistant/tool-calls', turnId, sequence: 4,
+      calls: [
+        { id: 'denied', name: 'write', arguments: null },
+        { id: 'dispatched', name: 'write', arguments: null },
+      ],
+    },
+    {
+      type: 'tool/call', turnId, sequence: 5,
+      call: { id: 'denied', name: 'write', arguments: null },
+    },
+    {
+      type: 'approval/asked', turnId, sequence: 6, callId: 'denied', name: 'write',
+      risk: 'filesystem', reason: 'write a file',
+    },
+    {
+      type: 'approval/decided', turnId, sequence: 7, callId: 'denied', name: 'write',
+      outcome: 'rejected',
+    },
+    {
+      type: 'tool/call', turnId, sequence: 8,
+      call: { id: 'dispatched', name: 'write', arguments: null },
+    },
+    {
+      type: 'approval/asked', turnId, sequence: 9, callId: 'dispatched', name: 'write',
+      risk: 'filesystem', reason: 'write a file',
+    },
+    {
+      type: 'approval/decided', turnId, sequence: 10,
+      callId: 'dispatched', name: 'write', outcome: 'allowed-once',
+    },
+    {
+      type: 'sandbox/prepared', turnId, sequence: 11,
+      callId: 'dispatched', name: 'write', profile: 'workspace-write',
+      provider: 'container/v1', enforcement: 'full',
+    },
+  ]
+  writeFileSync(filePath, JSON.stringify({
+    schemaVersion: SESSION_FILE_SCHEMA_VERSION, id, events,
+  }))
+
+  const repaired = new FileSessionStore({ directory }).get(id)
+  const results = repaired?.events.filter((event) => event.type === 'tool/result')
+  assert.deepEqual(results?.map((event) => event.ok ? undefined : event.error), [
+    TOOL_NOT_STARTED,
+    TOOL_OUTCOME_UNKNOWN,
+  ])
 })
 
 test('failed crash repair leaves the original document unchanged and unpublished', (t) => {
@@ -352,6 +435,18 @@ test('future schemas and corrupt documents fail explicitly without rewriting inp
   writeFileSync(filePath, legacyUsage)
   assert.throws(() => new FileSessionStore({ directory }), /legacy schema.*newer schema/)
   assert.equal(readFileSync(filePath, 'utf8'), legacyUsage)
+
+  const legacySafety = JSON.stringify({
+    schemaVersion: 4,
+    id,
+    events: [{
+      type: 'approval/decided', turnId: 'turn-1', sequence: 1,
+      callId: 'call-1', name: 'write', outcome: 'rejected',
+    }],
+  })
+  writeFileSync(filePath, legacySafety)
+  assert.throws(() => new FileSessionStore({ directory }), /legacy schema.*newer schema/)
+  assert.equal(readFileSync(filePath, 'utf8'), legacySafety)
 })
 
 test('every persisted event variant is validated before it can become live state', (t) => {
@@ -384,6 +479,18 @@ test('every persisted event variant is validated before it can become live state
       calls: [{ id: 'call-1', name: 'add' }],
     }, /invalid tool call/],
     [{ type: 'tool/call', turnId: 'turn-1', sequence: 1, call: null }, /invalid tool call/],
+    [{
+      type: 'approval/asked', turnId: 'turn-1', sequence: 1,
+      callId: 'call-1', name: 'write', risk: 'safe', reason: '',
+    }, /approval\/asked has invalid fields/],
+    [{
+      type: 'approval/decided', turnId: 'turn-1', sequence: 1,
+      callId: 'call-1', name: 'write', outcome: 'forever',
+    }, /approval\/decided has invalid fields/],
+    [{
+      type: 'sandbox/prepared', turnId: 'turn-1', sequence: 1,
+      callId: 'call-1', name: 'write', profile: '', provider: '', enforcement: 'none',
+    }, /sandbox\/prepared has invalid fields/],
     [{ type: 'tool/result', turnId: 'turn-1', sequence: 1, ok: true }, /invalid envelope/],
     [{
       type: 'tool/result', turnId: 'turn-1', sequence: 1,

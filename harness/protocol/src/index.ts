@@ -33,6 +33,16 @@ export type ToolExecution =
   | { readonly ok: true; readonly output: JsonValue }
   | { readonly ok: false; readonly error: string }
 
+export type ToolRisk = 'filesystem' | 'shell' | 'browser' | 'external'
+
+export type ApprovalOutcome =
+  | 'allowed-once'
+  | 'rejected'
+  | 'cancelled'
+  | 'unavailable'
+
+export type SandboxEnforcement = 'full' | 'partial'
+
 interface EventBase {
   readonly sequence: number
   readonly turnId: string
@@ -48,6 +58,27 @@ export type SessionEvent =
     readonly usage?: AssistantUsage
   }
   | EventBase & { readonly type: 'tool/call'; readonly call: ToolCall }
+  | EventBase & {
+    readonly type: 'approval/asked'
+    readonly callId: string
+    readonly name: string
+    readonly risk: ToolRisk
+    readonly reason: string
+  }
+  | EventBase & {
+    readonly type: 'approval/decided'
+    readonly callId: string
+    readonly name: string
+    readonly outcome: ApprovalOutcome
+  }
+  | EventBase & {
+    readonly type: 'sandbox/prepared'
+    readonly callId: string
+    readonly name: string
+    readonly profile: string
+    readonly provider: string
+    readonly enforcement: SandboxEnforcement
+  }
   | EventBase & {
     readonly type: 'tool/result'
     readonly callId: string

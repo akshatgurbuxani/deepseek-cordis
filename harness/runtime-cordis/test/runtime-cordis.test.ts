@@ -2,14 +2,18 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { ReplayModelAdapter } from '@deepseek-cordis/model/testing'
+import type { ApprovalService } from '@deepseek-cordis/approval'
 import { SessionCompactor } from '@deepseek-cordis/compaction'
 import type { JsonValue } from '@deepseek-cordis/protocol'
 import { InMemoryToolRegistry, type ToolDefinition } from '@deepseek-cordis/tools'
+import type { ToolSandbox } from '@deepseek-cordis/sandbox'
 import {
   createAgentLoopPlugin,
+  createApprovalServicePlugin,
   createCompactionPlugin,
   createModelAdapterPlugin,
   createSessionStorePlugin,
+  createSandboxPlugin,
   createToolRegistrationPlugin,
   createToolRegistryPlugin,
   createTokenMeterPlugin,
@@ -37,6 +41,7 @@ function addTool(offset = 0): ToolDefinition {
         b: { type: 'number' },
       },
     },
+    safety: { risk: 'none' },
     execute(argumentsValue: JsonValue) {
       if (
         argumentsValue === null
@@ -73,6 +78,10 @@ test('the loop remains pending until every provider exists, then runs a complete
   assert.equal(loopFiber.state, FiberState.PENDING)
 
   fibers.push(await mount(context, model.plugin))
+  assert.equal(loopFiber.state, FiberState.PENDING)
+  fibers.push(await mount(context, createApprovalServicePlugin().plugin))
+  assert.equal(loopFiber.state, FiberState.PENDING)
+  fibers.push(await mount(context, createSandboxPlugin().plugin))
   await loopFiber
   assert.equal(loopFiber.state, FiberState.ACTIVE)
   fibers.push(await mount(context, createToolRegistrationPlugin(addTool())))
@@ -133,6 +142,8 @@ test('effect-owned tool registration withdraws once and replacement changes late
     await mount(context, createSessionStorePlugin().plugin),
     await mount(context, createToolRegistryPlugin(registry).plugin),
     await mount(context, createModelAdapterPlugin(adapter).plugin),
+    await mount(context, createApprovalServicePlugin().plugin),
+    await mount(context, createSandboxPlugin().plugin),
     await mount(context, createAgentLoopPlugin().plugin),
   ]
 
@@ -165,6 +176,8 @@ test('model withdrawal drains and reconnects the same loop without replacing ses
   const sessionFiber = await mount(context, sessions.plugin)
   const toolsFiber = await mount(context, tools.plugin)
   const firstModelFiber = await mount(context, firstModel.plugin)
+  const approvalFiber = await mount(context, createApprovalServicePlugin().plugin)
+  const sandboxFiber = await mount(context, createSandboxPlugin().plugin)
   const loopFiber = await mount(context, loop.plugin)
   const session = context.sessions.create('model-replacement')
   const stableLoop = context.agentLoop
@@ -193,7 +206,9 @@ test('model withdrawal drains and reconnects the same loop without replacing ses
     { role: 'user', content: 'second turn' },
   ])
 
-  await disposeReverse([sessionFiber, toolsFiber, secondModelFiber, loopFiber])
+  await disposeReverse([
+    sessionFiber, toolsFiber, secondModelFiber, approvalFiber, sandboxFiber, loopFiber,
+  ])
 })
 
 test('isolated contexts inherit sessions and tools but resolve independent models and loops', async () => {
@@ -203,6 +218,8 @@ test('isolated contexts inherit sessions and tools but resolve independent model
   const rootFibers = [
     await mount(root, sessions.plugin),
     await mount(root, tools.plugin),
+    await mount(root, createApprovalServicePlugin().plugin),
+    await mount(root, createSandboxPlugin().plugin),
   ]
   const first = root.isolate('model').isolate('agentLoop')
   const second = root.isolate('model').isolate('agentLoop')
@@ -276,6 +293,8 @@ test('disposing all mounted fibers withdraws services, registrations, and connec
     await mount(context, sessions.plugin),
     await mount(context, tools.plugin),
     await mount(context, model.plugin),
+    await mount(context, createApprovalServicePlugin().plugin),
+    await mount(context, createSandboxPlugin().plugin),
     await mount(context, loop.plugin),
     await mount(context, createToolRegistrationPlugin(addTool())),
   ]
@@ -287,9 +306,79 @@ test('disposing all mounted fibers withdraws services, registrations, and connec
   assert.equal(context.get('sessions'), undefined)
   assert.equal(context.get('tools'), undefined)
   assert.equal(context.get('model'), undefined)
+  assert.equal(context.get('approval'), undefined)
+  assert.equal(context.get('sandbox'), undefined)
   assert.equal(context.get('agentLoop'), undefined)
   await assert.rejects(loop.value.run(session, 'cannot run'), /not connected/)
   assert.ok(fibers.every((fiber) => fiber.state === FiberState.DISPOSED))
+})
+
+test('approval provider replacement drains and safely reconnects the stable loop', async () => {
+  const context = new Context()
+  const adapter = new ReplayModelAdapter('approval-replacement', [
+    {
+      type: 'tool_calls',
+      calls: [{ id: 'first', name: 'write-file', arguments: { value: 1 } }],
+    },
+    { type: 'message', content: 'first complete' },
+    {
+      type: 'tool_calls',
+      calls: [{ id: 'second', name: 'write-file', arguments: { value: 2 } }],
+    },
+    { type: 'message', content: 'second complete' },
+  ])
+  let executions = 0
+  const sandbox: ToolSandbox = {
+    async prepare(request) {
+      return {
+        ok: true,
+        lease: {
+          provider: 'test-sandbox', enforcement: 'full',
+          async execute() { executions += 1; return request.arguments },
+          dispose() {},
+        },
+      }
+    },
+  }
+  const reject: ApprovalService = { request: async () => 'rejected' }
+  const allow: ApprovalService = { request: async () => 'allowed-once' }
+  const baseFibers = [
+    await mount(context, createSessionStorePlugin().plugin),
+    await mount(context, createToolRegistryPlugin().plugin),
+    await mount(context, createModelAdapterPlugin(adapter).plugin),
+    await mount(context, createSandboxPlugin(sandbox).plugin),
+  ]
+  const approvalFiber = await mount(context, createApprovalServicePlugin(reject).plugin)
+  const loopFactory = createAgentLoopPlugin()
+  const loopFiber = await mount(context, loopFactory.plugin)
+  const toolFiber = await mount(context, createToolRegistrationPlugin({
+    name: 'write-file',
+    description: 'Write a file',
+    inputSchema: {},
+    safety: {
+      risk: 'filesystem',
+      approvalReason: 'write a workspace file',
+      sandbox: { profile: 'workspace-write', requiredEnforcement: 'full' },
+    },
+  }))
+  const session = context.sessions.create('approval-replacement')
+  const stableLoop = context.agentLoop
+
+  await context.agentLoop.run(session, 'first')
+  assert.equal(executions, 0)
+  await approvalFiber.dispose()
+  assert.equal(context.get('agentLoop'), undefined)
+  const replacementFiber = await mount(context, createApprovalServicePlugin(allow).plugin)
+  await loopFiber
+  assert.equal(context.agentLoop, stableLoop)
+  await context.agentLoop.run(session, 'second')
+
+  assert.equal(executions, 1)
+  const decisions = session.events.filter((event) => event.type === 'approval/decided')
+  assert.deepEqual(decisions.map((event) => event.outcome), ['rejected', 'allowed-once'])
+  assert.equal(session.events.filter((event) => event.type === 'sandbox/prepared').length, 1)
+
+  await disposeReverse([...baseFibers, replacementFiber, loopFiber, toolFiber])
 })
 
 test('compaction is an optional Cordis capability with stable provider identity', async () => {

@@ -6,5 +6,9 @@
     "tsBuildInfoFile": "../../.cache/tsbuildinfo/tools.tsbuildinfo"
   },
   "include": ["src/**/*.ts"],
-  "references": [{ "path": "../protocol" }]
+  "references": [
+    { "path": "../protocol" },
+    { "path": "../approval" },
+    { "path": "../sandbox" }
+  ]
 }

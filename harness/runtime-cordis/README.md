@@ -2,11 +2,18 @@
 
 Cordis lifecycle adapter for the provider-neutral harness capabilities.
 
-This package publishes session stores, tool registries, model adapters, an
-optional session compactor, optional token meter, and a stable agent-loop facade
+This package publishes session stores, tool registries, model adapters,
+approval services, sandbox providers, an optional session compactor, optional
+token meter, and a stable agent-loop facade
 as typed Cordis services. Tool registration and loop
 connection are Cordis-owned effects, so withdrawing their plugin fibers
 reclaims the underlying capability registration or connection.
+
+Approval and sandbox are independent required coeffects of the loop plugin.
+Withdrawing or replacing either provider drains the loop first and reconnects
+the same facade after the replacement activates. Default provider plugins fail
+closed; they exist to make unattended compositions explicit, not to grant or
+simulate isolation.
 
 It also re-exports the public context, fiber, plugin, and pinned fiber-state
 vocabulary under `Runtime*` names. This gives `app-boot` a narrow lifecycle seam

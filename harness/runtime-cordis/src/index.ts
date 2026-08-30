@@ -1,10 +1,18 @@
 import { AgentLoop } from '@deepseek-cordis/agent-loop'
+import {
+  type ApprovalService,
+  UnavailableApprovalService,
+} from '@deepseek-cordis/approval'
 import { SessionCompactor } from '@deepseek-cordis/compaction'
 import type { ModelAdapter } from '@deepseek-cordis/model'
 import {
   InMemorySessionStore,
   type SessionStore,
 } from '@deepseek-cordis/session'
+import {
+  type ToolSandbox,
+  UnavailableToolSandbox,
+} from '@deepseek-cordis/sandbox'
 import {
   InMemoryToolRegistry,
   type ToolDefinition,
@@ -38,6 +46,8 @@ declare module 'cordis' {
     agentLoop: AgentLoop
     compaction: SessionCompactor
     tokenMeter: TokenMeter
+    approval: ApprovalService
+    sandbox: ToolSandbox
   }
 }
 
@@ -73,6 +83,28 @@ export function createToolRegistryPlugin(
   return { plugin, value: registry }
 }
 
+export function createApprovalServicePlugin(
+  service: ApprovalService = new UnavailableApprovalService(),
+): PluginFactory<ApprovalService> {
+  const plugin: Plugin.Function<void> = (context) => {
+    context.provide('approval', service)
+  }
+  namePlugin(plugin, 'approval')
+  plugin.provide = 'approval'
+  return { plugin, value: service }
+}
+
+export function createSandboxPlugin(
+  sandbox: ToolSandbox = new UnavailableToolSandbox(),
+): PluginFactory<ToolSandbox> {
+  const plugin: Plugin.Function<void> = (context) => {
+    context.provide('sandbox', sandbox)
+  }
+  namePlugin(plugin, 'sandbox')
+  plugin.provide = 'sandbox'
+  return { plugin, value: sandbox }
+}
+
 export function createModelAdapterPlugin(
   adapter: ModelAdapter,
 ): PluginFactory<ModelAdapter> {
@@ -103,13 +135,16 @@ export function createAgentLoopPlugin(
 ): PluginFactory<AgentLoop> {
   const plugin: Plugin.Function<void> = (context) => {
     context.effect(
-      () => loop.connect(context.sessions, context.tools, context.model),
+      () => loop.connect(context.sessions, context.tools, context.model, {
+        approval: context.approval,
+        sandbox: context.sandbox,
+      }),
       'connect agent loop',
     )
     context.provide('agentLoop', loop)
   }
   namePlugin(plugin, 'agent-loop')
-  plugin.inject = ['sessions', 'tools', 'model']
+  plugin.inject = ['sessions', 'tools', 'model', 'approval', 'sandbox']
   plugin.provide = 'agentLoop'
   return { plugin, value: loop }
 }

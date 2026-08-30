@@ -8,10 +8,12 @@ import {
   TOOL_CANCELLED_OUTCOME_UNKNOWN,
   TurnCancelledError,
 } from '@deepseek-cordis/agent-loop'
+import type { ApprovalService } from '@deepseek-cordis/approval'
 import type { ModelAdapter } from '@deepseek-cordis/model'
 import { ReplayModelAdapter } from '@deepseek-cordis/model/testing'
 import type { JsonValue, ModelRequest, ModelResponse } from '@deepseek-cordis/protocol'
 import { InMemorySession, InMemorySessionStore } from '@deepseek-cordis/session'
+import type { ToolSandbox } from '@deepseek-cordis/sandbox'
 import { InMemoryToolRegistry } from '@deepseek-cordis/tools'
 
 function addTool(registry: InMemoryToolRegistry, offset = 0): () => void {
@@ -25,6 +27,7 @@ function addTool(registry: InMemoryToolRegistry, offset = 0): () => void {
         b: { type: 'number' },
       },
     },
+    safety: { risk: 'none' },
     execute(argumentsValue: JsonValue) {
       if (
         argumentsValue === null ||
@@ -152,6 +155,7 @@ test('tool schemas are read live before every model step', async () => {
     name: 'remove_self',
     description: 'Remove this tool',
     inputSchema: {},
+    safety: { risk: 'none' },
     execute() {
       dispose()
       return 'removed'
@@ -216,6 +220,7 @@ test('missing and throwing tool failures are recorded for the next model step', 
     name: 'boom',
     description: 'Throw',
     inputSchema: {},
+    safety: { risk: 'none' },
     execute() { throw new Error('boom failed') },
   })
 
@@ -390,6 +395,77 @@ test('model-stream cancellation closes the durable turn without committing parti
   assert.equal((await loop.run(session, 'retry')).content, 'next turn works')
 })
 
+test('consequential calls durably audit approval and sandbox before execution', async () => {
+  const adapter = new ReplayModelAdapter('safe-write', [
+    {
+      type: 'tool_calls',
+      calls: [{ id: 'write-1', name: 'write-file', arguments: { path: 'note.txt' } }],
+    },
+    { type: 'message', content: 'written' },
+  ])
+  const sessions = new InMemorySessionStore()
+  const tools = new InMemoryToolRegistry()
+  tools.register({
+    name: 'write-file',
+    description: 'Write one workspace file',
+    inputSchema: { type: 'object' },
+    safety: {
+      risk: 'filesystem',
+      approvalReason: 'write note.txt in the workspace',
+      sandbox: { profile: 'workspace-write', requiredEnforcement: 'full' },
+    },
+  })
+  const order: string[] = []
+  const approval: ApprovalService = {
+    async request(request) {
+      order.push('approval')
+      assert.equal(request.callId, 'write-1')
+      assert.equal(request.sessionId, 'safe-write-session')
+      return 'allowed-once'
+    },
+  }
+  const sandbox: ToolSandbox = {
+    async prepare(request) {
+      order.push('prepare')
+      return {
+        ok: true,
+        lease: {
+          provider: 'container/v1',
+          enforcement: 'full',
+          async execute() {
+            order.push('execute')
+            return { path: request.arguments }
+          },
+          dispose() {},
+        },
+      }
+    },
+  }
+  const loop = new AgentLoop()
+  loop.connect(sessions, tools, adapter, { approval, sandbox })
+  const session = sessions.create('safe-write-session')
+
+  await loop.run(session, 'write the note')
+
+  assert.deepEqual(order, ['approval', 'prepare', 'execute'])
+  assert.deepEqual(session.events.map((event) => event.type), [
+    'turn/start', 'user/message', 'step/start', 'assistant/tool-calls', 'tool/call',
+    'approval/asked', 'approval/decided', 'sandbox/prepared', 'tool/result',
+    'step/end', 'step/start', 'assistant/message', 'step/end', 'turn/end',
+  ])
+  assert.deepEqual(adapter.requests[1]?.messages, [
+    { role: 'user', content: 'write the note' },
+    {
+      role: 'assistant',
+      toolCalls: [{ id: 'write-1', name: 'write-file', arguments: { path: 'note.txt' } }],
+    },
+    {
+      role: 'tool', callId: 'write-1', name: 'write-file', ok: true,
+      output: { path: { path: 'note.txt' } },
+    },
+  ])
+})
+
 test('tool cancellation receives the turn signal and records a conservative result', async () => {
   const adapter = new ReplayModelAdapter('cancel-tool', [{
     type: 'tool_calls',
@@ -405,6 +481,7 @@ test('tool cancellation receives the turn signal and records a conservative resu
     name: 'wait',
     description: 'Wait until cancelled',
     inputSchema: {},
+    safety: { risk: 'none' },
     async execute(_arguments, { signal }) {
       started?.()
       await new Promise<void>((_resolve, reject) => {

@@ -10,7 +10,9 @@
   },
   "include": ["src/**/*.ts"],
   "references": [
+    { "path": "../approval" },
     { "path": "../session" },
+    { "path": "../sandbox" },
     { "path": "../model" },
     { "path": "../tools" },
     { "path": "../agent-loop" },

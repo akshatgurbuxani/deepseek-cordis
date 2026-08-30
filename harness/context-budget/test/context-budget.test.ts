@@ -87,6 +87,7 @@ test('pressure uses asynchronously resolved adapter capacity', async () => {
         name: 'late-tool',
         description: 'x'.repeat(800),
         inputSchema: { type: 'object' },
+        safety: { risk: 'none' },
         execute: () => null,
       })
       return { model: 'provider/resolved-model', contextWindow: 40 }

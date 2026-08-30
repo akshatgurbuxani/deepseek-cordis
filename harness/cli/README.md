@@ -3,8 +3,9 @@
 First runnable production composition for the harness.
 
 The CLI builds a complete `AppBoot` manifest containing a traced session store,
-tool registry, calculator registration, replay or OpenRouter model, and stable
-agent loop. It runs one turn, prints the final answer, and always reconciles to
+tool registry, harmless calculator registration, fail-closed approval and
+sandbox providers, replay or OpenRouter model, and stable agent loop. It runs
+one turn, prints the final answer, and always reconciles to
 an empty manifest in `finally` so every fiber, registration, service, and
 connection is withdrawn before exit.
 

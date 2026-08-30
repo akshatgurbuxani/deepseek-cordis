@@ -14,6 +14,7 @@ import {
 import { basename, dirname, join, resolve } from 'node:path'
 
 import {
+  type ApprovalOutcome,
   type JsonValue,
   type ModelMessage,
   type SessionEvent,
@@ -29,7 +30,7 @@ import {
   type SessionStore,
 } from '@deepseek-cordis/session'
 
-export const SESSION_FILE_SCHEMA_VERSION = 4
+export const SESSION_FILE_SCHEMA_VERSION = 5
 
 export interface SessionFileDocument {
   readonly schemaVersion: typeof SESSION_FILE_SCHEMA_VERSION
@@ -203,6 +204,35 @@ function validateEvent(value: unknown, index: number, source: string): SessionEv
     case 'tool/call':
       validateToolCall(value.call, source)
       break
+    case 'approval/asked':
+      if (
+        typeof value.callId !== 'string'
+        || typeof value.name !== 'string'
+        || !['filesystem', 'shell', 'browser', 'external'].includes(String(value.risk))
+        || typeof value.reason !== 'string'
+        || value.reason.trim().length === 0
+      ) invalid(source, 'approval/asked has invalid fields')
+      break
+    case 'approval/decided':
+      if (
+        typeof value.callId !== 'string'
+        || typeof value.name !== 'string'
+        || !['allowed-once', 'rejected', 'cancelled', 'unavailable'].includes(
+          String(value.outcome),
+        )
+      ) invalid(source, 'approval/decided has invalid fields')
+      break
+    case 'sandbox/prepared':
+      if (
+        typeof value.callId !== 'string'
+        || typeof value.name !== 'string'
+        || typeof value.profile !== 'string'
+        || value.profile.trim().length === 0
+        || typeof value.provider !== 'string'
+        || value.provider.trim().length === 0
+        || !['full', 'partial'].includes(String(value.enforcement))
+      ) invalid(source, 'sandbox/prepared has invalid fields')
+      break
     case 'tool/result':
       if (
         typeof value.callId !== 'string'
@@ -258,6 +288,7 @@ function decodeDocument(contents: string, source: string): DecodedDocument {
     || value.schemaVersion === 1
     || value.schemaVersion === 2
     || value.schemaVersion === 3
+    || value.schemaVersion === 4
   if (!migrated && value.schemaVersion !== SESSION_FILE_SCHEMA_VERSION) {
     throw new UnsupportedSessionSchemaError(value.schemaVersion, source)
   }
@@ -280,6 +311,13 @@ function decodeDocument(contents: string, source: string): DecodedDocument {
     && events.some((event) =>
       (event.type === 'assistant/message' || event.type === 'assistant/tool-calls')
       && event.usage !== undefined)
+  ) invalid(source, 'legacy schema contains an event introduced by a newer schema')
+  if (
+    value.schemaVersion !== SESSION_FILE_SCHEMA_VERSION
+    && events.some((event) =>
+      event.type === 'approval/asked'
+      || event.type === 'approval/decided'
+      || event.type === 'sandbox/prepared')
   ) invalid(source, 'legacy schema contains an event introduced by a newer schema')
   try {
     deriveSessionSurface(events)
@@ -308,6 +346,8 @@ export const TOOL_OUTCOME_UNKNOWN = 'tool outcome is unknown because execution w
 interface PendingToolCall {
   readonly call: ToolCall
   started: boolean
+  approval?: 'asked' | ApprovalOutcome
+  sandboxPrepared?: boolean
 }
 
 export function interruptedTurnClosers(
@@ -371,6 +411,37 @@ export function interruptedTurnClosers(
         if (!entry || entry.call.name !== event.call.name || entry.started) {
           invalid(source, `tool/call ${JSON.stringify(event.call.id)} has no pending call`)
         }
+        entry.started = true
+        break
+      }
+      case 'approval/asked': {
+        const entry = pending.get(event.callId)
+        if (openStep === undefined || !entry || !entry.started || entry.approval !== undefined) {
+          invalid(source, `${event.type} ${JSON.stringify(event.callId)} has no pending call`)
+        }
+        entry.approval = 'asked'
+        entry.started = false
+        break
+      }
+      case 'approval/decided': {
+        const entry = pending.get(event.callId)
+        if (openStep === undefined || !entry || entry.approval !== 'asked') {
+          invalid(source, `${event.type} ${JSON.stringify(event.callId)} has no matching ask`)
+        }
+        entry.approval = event.outcome
+        break
+      }
+      case 'sandbox/prepared': {
+        const entry = pending.get(event.callId)
+        if (
+          openStep === undefined
+          || !entry
+          || entry.approval !== 'allowed-once'
+          || entry.sandboxPrepared
+        ) {
+          invalid(source, `${event.type} ${JSON.stringify(event.callId)} is not approved`)
+        }
+        entry.sandboxPrepared = true
         entry.started = true
         break
       }

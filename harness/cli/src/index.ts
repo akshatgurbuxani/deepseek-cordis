@@ -11,9 +11,11 @@ import { FileSessionStore } from '@deepseek-cordis/session-file'
 import { TokenMeter } from '@deepseek-cordis/token-meter'
 import {
   createAgentLoopPlugin,
+  createApprovalServicePlugin,
   createCompactionPlugin,
   createModelAdapterPlugin,
   createSessionStorePlugin,
+  createSandboxPlugin,
   createToolRegistrationPlugin,
   createToolRegistryPlugin,
   createTokenMeterPlugin,
@@ -133,11 +135,14 @@ function manifestFor(
         required: ['a', 'b'],
         additionalProperties: false,
       },
+      safety: { risk: 'none' },
       execute: calculator,
     }) },
     { id: 'sessions', revision: 'v1', load: () => sessions.plugin },
     { id: 'tools', revision: 'v1', load: () => tools.plugin },
     { id: 'model', revision: 'v1', load: () => modelPlugin.plugin },
+    { id: 'approval', revision: 'v1', load: () => createApprovalServicePlugin().plugin },
+    { id: 'sandbox', revision: 'v1', load: () => createSandboxPlugin().plugin },
     { id: 'compaction', revision: 'v1', load: () => compaction.plugin },
     { id: 'token-meter', revision: 'v1', load: () => tokenMeter.plugin },
   ]

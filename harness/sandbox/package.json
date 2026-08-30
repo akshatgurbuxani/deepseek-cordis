@@ -1,5 +1,5 @@
 {
-  "name": "@deepseek-cordis/tools",
+  "name": "@deepseek-cordis/sandbox",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -13,8 +13,6 @@
   },
   "files": ["dist"],
   "dependencies": {
-    "@deepseek-cordis/approval": "0.0.0",
-    "@deepseek-cordis/protocol": "0.0.0",
-    "@deepseek-cordis/sandbox": "0.0.0"
+    "@deepseek-cordis/protocol": "0.0.0"
   }
 }

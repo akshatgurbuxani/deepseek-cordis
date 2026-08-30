@@ -22,6 +22,8 @@ imports:
 - `snapshot()` protects the model request at the capability boundary.
 - `Session` and `SessionStore` own durable events and message projection.
 - `ToolRegistry` supplies live schemas and contains tool execution failures.
+- `ApprovalService` and `ToolSandbox` provide independent fail-closed safety
+  boundaries for consequential calls.
 
 There is no Cordis import. Feature 2 defines agent behavior, while the later
 runtime adapter decides when providers exist and when the loop is connected or
@@ -31,16 +33,17 @@ plugin runtime.
 
 ## Stable facade and changing providers
 
-An `AgentLoop` instance has three private provider slots: the current session
-store, tool registry, and model adapter. The object itself can survive provider
+An `AgentLoop` instance has five private provider slots: the current session
+store, tool registry, model adapter, approval service, and sandbox. The object itself can survive provider
 replacement. A runtime can disconnect it from one provider set and reconnect
 the same facade to another set, preserving callers that hold the loop and
 preserving session history owned by the independent session store.
 
-`connect()` requires all three capabilities together. It rejects a second
+`connect()` commits all five capabilities together. Direct callers may omit the
+safety pair only to receive fail-closed defaults. It rejects a second
 connection rather than silently changing only part of the committed provider
 view. On success it returns an idempotent disposer. Calling that disposer clears
-all three slots together.
+all five slots together.
 
 The disposer refuses to disconnect while any turn is running. That failure is
 retryable: it does not mark the disposer as used, so the runtime can drain the
@@ -120,12 +123,18 @@ It then returns the turn ID, final content, and number of model steps used.
 
 For a tool-call response, the loop first records the assistant's complete call
 list in `assistant/tool-calls`. It then processes calls sequentially in model
-order. Each call produces this pair:
+order. Each harmless call produces this pair:
 
 ```text
 tool/call
 tool/result
 ```
+
+A consequential call inserts `approval/asked`, `approval/decided`, and
+`sandbox/prepared` between those events. The loop supplies exact call identity
+and uses `Session.append()` as the synchronous audit sink. These events are
+log-only; the ordinary result is still the only model-visible tool response.
+If an audit append fails, sandbox execution cannot begin.
 
 The registry converts a missing tool or a handler exception into a failed
 execution value, so either success or failure becomes a durable `tool/result`
@@ -181,7 +190,7 @@ therefore proceed after success, model failure, or step-limit failure.
 ## Complete data flow
 
 ```text
-connected session, tool, and model capabilities
+connected session, tool, model, approval, and sandbox capabilities
                     |
                     v
 append turn/start and user/message

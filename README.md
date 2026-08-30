@@ -5,7 +5,7 @@ Research and implementation workspace for understanding how [Cordis](https://git
 > [!IMPORTANT]
 > This project is about **Cordis**, the plugin meta-framework. It is not about the numerical CORDIC algorithm for trigonometric functions.
 
-This repository started from first principles: study the formal model, reproduce its smallest runtime mechanisms in isolated spikes, and only then promote proven behavior into a maintained `harness/` implementation. Spikes 000–007 completed that evaluation and selected a pinned upstream Cordis runtime. The production packages under [`harness/`](harness/README.md) now include a deterministic or OpenRouter-backed text CLI that streams completed text, supports cooperative turn cancellation, and can persist, repair, resume, and provenance-preservingly compact its immutable event history. A versioned request-pressure meter and bounded context-budget policy invoke that compaction automatically before provider limits or after a canonical overflow. OpenRouter capacity can be resolved from its model catalog, and successful provider usage anchors later pressure estimates without pretending heuristic deltas are exact. The goal is not to clone DeepSeek Harness feature-for-feature; it is to build the smallest durable, composable harness whose behavior we can explain and test.
+This repository started from first principles: study the formal model, reproduce its smallest runtime mechanisms in isolated spikes, and only then promote proven behavior into a maintained `harness/` implementation. Spikes 000–007 completed that evaluation and selected a pinned upstream Cordis runtime. The production packages under [`harness/`](harness/README.md) now include a deterministic or OpenRouter-backed text CLI that streams completed text, supports cooperative turn cancellation, and can persist, repair, resume, and provenance-preservingly compact its immutable event history. A versioned request-pressure meter and bounded context-budget policy invoke that compaction automatically before provider limits or after a canonical overflow. OpenRouter capacity can be resolved from its model catalog, and successful provider usage anchors later pressure estimates without pretending heuristic deltas are exact. Consequential tools are now separated from harmless local handlers by fail-closed one-shot approval, provider-owned sandbox execution, durable audit events, and Cordis-replaceable safety capabilities. The goal is not to clone DeepSeek Harness feature-for-feature; it is to build the smallest durable, composable harness whose behavior we can explain and test.
 
 ## Primary sources
 
@@ -100,6 +100,8 @@ These are later consumers of the Cordis foundation, not the first implementation
 │   ├── protocol/
 │   ├── session/
 │   ├── model/
+│   ├── approval/
+│   ├── sandbox/
 │   ├── tools/
 │   ├── agent-loop/
 │   ├── runtime-cordis/
@@ -207,8 +209,12 @@ Decided:
 - Pin upstream `cordis@4.0.0-rc.8` behind a dedicated adapter rather than promoting the educational runtime or initially vendoring Cordis.
 - Use a domain-neutral text/tool loop as the first production agent scenario.
 - Keep immutable session events as the only source of model-visible history.
+- Treat plugin code as trusted composition code. Consequential model actions
+  cross the `sandbox` provider boundary; the host has no local handler for
+  those definitions and claims no isolation when a real provider is absent.
 
 Still open:
 
 - How much of DeepSeek's profile/bundle/configuration layer belongs in scope.
-- What trust model plugins operate under and where process or container sandboxing begins.
+- Which platform-backed sandbox provider and enforcement profiles should ship
+  with the first filesystem or shell tool.

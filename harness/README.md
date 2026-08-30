@@ -39,9 +39,11 @@ compaction          ──> session + model + protocol
 token-meter         ──> session + protocol
 context-budget      ──> agent-loop + compaction + token-meter
 model               ──> protocol
-tools               ──> protocol
-agent-loop          ──> protocol + session + model + tools
-runtime-cordis      ──> agent-loop + compaction + token-meter + session + model + tools + cordis
+approval            ──> protocol
+sandbox             ──> protocol
+tools               ──> protocol + approval + sandbox
+agent-loop          ──> protocol + session + model + approval + sandbox + tools
+runtime-cordis      ──> agent-loop + approval + sandbox + compaction + token-meter + session + model + tools + cordis
 app-boot            ──> runtime-cordis
 model-openrouter    ──> protocol + model
 tool/storage plugins──> protocol + their capability contract
@@ -93,7 +95,16 @@ their outcomes are durable decisions with bounded retries.
 Owns the registry contract and in-memory registry. Registrations return
 idempotent disposers; schemas are immutable snapshots; missing tools and thrown
 handlers produce explicit execution results; cancellation remains a control
-signal rather than a model-visible tool failure.
+signal rather than a model-visible tool failure. Harmless definitions own local
+handlers; consequential definitions instead declare approval and sandbox
+requirements and execute only through provider-owned leases.
+
+### `approval` and `sandbox`
+
+Own independent, provider-neutral safety seams. Approval returns one closed,
+one-shot outcome for an exact call. Sandbox providers preflight an exact call,
+report actual enforcement strength, own execution, and expose deterministic
+lease cleanup. Neither package imports Cordis or supplies a permissive default.
 
 ### `agent-loop`
 
@@ -800,17 +811,75 @@ provider-anchored heuristic deltas, restart/compaction survival, and live CLI
 integration. Together with PRs 1–10, 100 deterministic tests pass and one live
 OpenRouter smoke test remains opt-in.
 
+### PR 12: `feature/012-tool-safety-boundaries`
+
+Add enforceable approval and sandbox boundaries before any filesystem, shell,
+browser, or other consequential tool enters the harness. Tool definitions form
+a closed safety union: `risk: none` is the only shape with a host-local handler;
+consequential shapes have no handler and must declare a one-shot approval
+reason, sandbox profile, and required `full` or `partial` enforcement.
+Registrations snapshot this declaration so later caller mutation cannot weaken
+it.
+
+The provider-neutral `approval` package identifies an exact
+session/turn/call/tool/risk request and returns `allowed-once`, `rejected`,
+`cancelled`, or `unavailable`. Missing, throwing, or malformed providers are
+unavailable and never grant. The `sandbox` package prepares one exact call and
+returns a provider-owned execution lease with reported enforcement and required
+idempotent cleanup. It deliberately has no in-process pass-through provider.
+Consequential execution requires both capabilities plus a synchronous durable
+audit sink; only `allowed-once` reaches sandbox preflight, insufficient
+enforcement cannot execute, and every valid lease is disposed.
+
+The agent loop commits log-only `approval/asked`, `approval/decided`, and
+`sandbox/prepared` events around this pipeline. A failed audit commit blocks
+dispatch. Session schema V5 validates and persists those events, migrates
+V0–V4, and prevents the new vocabulary from appearing in legacy documents.
+Cordis publishes approval and sandbox as independent required coeffects, so
+replacing either drains and reconnects the stable loop. The CLI explicitly
+composes fail-closed providers while its calculator remains harmless.
+
+#### Upstream motivation and adaptation boundary
+
+This feature was checked on August 30, 2026 against the Cordis paper at
+[`0d43a6f`](https://github.com/cordiverse/paper/commit/0d43a6f18004a7b5bf9662c31aa08c3712d232ec),
+upstream Cordis at
+[`b912d39`](https://github.com/cordiverse/cordis/commit/b912d3997ab8e819f8b112edc0b8ee0dfd77132d),
+and DeepSeek Harness at
+[`cd5ef81`](https://github.com/deepseek-ai/deepseek-harness/commit/cd5ef8148158c3a752a658978873241fdf8e2bbc),
+especially its
+[`approval`](https://github.com/deepseek-ai/deepseek-harness/blob/cd5ef8148158c3a752a658978873241fdf8e2bbc/docs/subsystems/approval.md),
+[`sandbox`](https://github.com/deepseek-ai/deepseek-harness/blob/cd5ef8148158c3a752a658978873241fdf8e2bbc/docs/subsystems/sandbox.md),
+and
+[`tool execution pipeline`](https://github.com/deepseek-ai/deepseek-harness/blob/cd5ef8148158c3a752a658978873241fdf8e2bbc/docs/tool-execution-pipeline.md)
+contracts. DeepSeek supplies the one-shot fail-closed outcome vocabulary,
+durable audit motivation, per-call sandbox policy, and explicit enforcement
+fact. Cordis supplies provider withdrawal and replacement ordering.
+
+This smaller harness adapts those invariants as a typed local/consequential
+definition split rather than copying DeepSeek's general pre/execute/post
+waterfalls, agent-scoped answerer dispatch, per-session permission presets,
+shell escalation vocabulary, or platform sandbox implementations. It does not
+claim process isolation until a real provider is composed.
+
+#### PR 12 result
+
+Implemented the two capability packages, immutable safety declarations,
+one-shot fail-closed approval, provider-owned sandbox leases, enforcement
+checks, durable V5 audit events, cancellation-safe cleanup, Cordis provider
+replacement, and explicit CLI composition. Together with PRs 1–11, 112
+deterministic tests pass and one live OpenRouter smoke test remains opt-in.
+
 ### Later milestones
 
-Feature 12 should add approval and sandbox boundaries before introducing
-filesystem, shell, browser, or other consequential tools. Manual inspect and
-compact commands should arrive with a real interactive command dispatcher,
-rather than as one-off flags on the current single-turn CLI.
+Feature 13 should add a real interactive command dispatcher with manual
+inspect/compact commands and a channel-owned approval answerer. This completes
+the human decision path without coupling it to the tool registry. A following
+feature can then add the first consequential filesystem or shell provider with
+platform-backed isolation and honest `full`/`partial` reporting.
 
-After that, add approval and sandbox boundaries before filesystem, shell,
-browser, or other consequential tools. Interactive input, cross-process writer
-coordination, parallel tools, subagents, attachments, scheduling, and UI remain
-outside the first production milestone.
+Cross-process writer coordination, parallel tools, subagents, attachments,
+scheduling, and UI remain outside the first production milestone.
 
 ## Promotion rules
 
