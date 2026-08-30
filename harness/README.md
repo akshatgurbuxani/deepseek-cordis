@@ -35,10 +35,11 @@ tests that survive implementation replacement.
 ```text
 session             ──> protocol
 session-file        ──> session + protocol
+compaction          ──> session + model + protocol
 model               ──> protocol
 tools               ──> protocol
 agent-loop          ──> protocol + session + model + tools
-runtime-cordis      ──> agent-loop + session + model + tools + cordis
+runtime-cordis      ──> agent-loop + compaction + session + model + tools + cordis
 app-boot            ──> runtime-cordis
 model-openrouter    ──> protocol + model
 tool/storage plugins──> protocol + their capability contract
@@ -69,6 +70,14 @@ implementation remains the default for tests and ephemeral commands.
 Owns the provider-neutral `ModelAdapter` stream contract and shared terminal
 collector. A deterministic replay adapter is exposed from a testing subpath so
 agent-loop tests do not depend on a network provider.
+
+### `compaction`
+
+Owns optional, idle-session history compaction. It selects a complete
+closed-turn prefix, asks an injected summarizer for a checkpoint, revalidates
+the selected surface, and atomically appends exact sequence provenance. Its
+model-backed adapter uses the canonical model stream seam; pressure policy is
+not part of the agent-loop core.
 
 ### `tools`
 
@@ -616,10 +625,76 @@ rejection, and a fresh CLI process resuming only after repair. Together with
 PRs 1–7, 69 deterministic tests pass and one live OpenRouter smoke test remains
 opt-in.
 
+### PR 9: `feature/009-provenance-compaction`
+
+Add compaction as an optional capability rather than another responsibility of
+the agent loop. `SessionCompactor` selects only a complete closed-turn surface
+prefix and retains at least the newest closed turn. Its injected summarizer
+receives an immutable request containing the exact model messages and source
+event sequences. After asynchronous generation, the compactor checks
+cancellation, rejects empty output, requires the session to remain idle, and
+revalidates the selected prefix before committing.
+
+One `compaction/summary` event atomically stores the checkpoint text,
+summarizer identity, and exact `shadowedSequences`. Projection replaces that
+prefix with a user-role checkpoint but never deletes source events. A later
+checkpoint may shadow the earlier checkpoint sequence, forming a durable chain
+back to the original history. Both session providers reject a checkpoint whose
+sequence list is not the exact current surface prefix. The file schema advances
+to V2 and explicitly migrates valid V0 and V1 documents.
+
+`ModelSummaryAdapter` is a production provider path, not a fixture: it replays
+the selected messages through the canonical streaming model collector, appends
+a stable checkpoint instruction, forwards cancellation, disables tools for the
+summary call, and rejects tool-call output. `runtime-cordis` publishes the
+compactor as an optional service whose withdrawal does not disturb sessions or
+the loop.
+
+#### Upstream motivation and adaptation boundary
+
+This feature was checked on August 30, 2026 against the Cordis paper at
+[`0d43a6f`](https://github.com/cordiverse/paper/commit/0d43a6f18004a7b5bf9662c31aa08c3712d232ec)
+and DeepSeek Harness at
+[`cd5ef81`](https://github.com/deepseek-ai/deepseek-harness/commit/cd5ef8148158c3a752a658978873241fdf8e2bbc),
+especially its current
+[`compaction`](https://github.com/deepseek-ai/deepseek-harness/blob/cd5ef8148158c3a752a658978873241fdf8e2bbc/docs/subsystems/compaction.md)
+and
+[`session`](https://github.com/deepseek-ai/deepseek-harness/blob/cd5ef8148158c3a752a658978873241fdf8e2bbc/docs/subsystems/session.md)
+contracts. DeepSeek supplies the capability split, append-only provenance,
+surface replacement, prefix revalidation, tool-pairing boundary, and
+model-prefix replay motivation. The paper supplies the lifecycle rule that an
+optional provider owns its live work and must be withdrawable independently.
+
+This smaller harness deliberately uses one atomic summary checkpoint instead
+of DeepSeek's multi-event lock, summary, surface-operation, and end bracket.
+Whole-turn prefix selection replaces its general positional range algorithm and
+preserves tool pairing by construction. It does not copy DeepSeek's token
+meter, pruning, automatic pressure/overflow hooks, raw provider output, usage
+accounting, manual command, or UI. Those require policy signals this repository
+does not yet have and are not simulated with character counts.
+
+#### PR 9 result
+
+Implemented surface nodes with sequence identity, exact-prefix projection,
+model-backed and injectable summarizers, guarded compaction, recursive
+provenance, file schema V2 migration and validation, restart fidelity, and the
+optional Cordis provider. Ten new deterministic tests cover atomic projection,
+repeat compaction, tool-pair preservation, model request construction, tool-output rejection,
+concurrency and mutation guards, cancellation and empty output, durable restart,
+schema corruption, no-op selection, and provider disposal. Together with PRs
+1–8, 79 deterministic tests pass and one live OpenRouter smoke test remains
+opt-in.
+
 ### Later milestones
 
-Add compaction only after the persistent log can prove which history produced
-each summary. Add approval and sandbox boundaries before filesystem, shell,
+Feature 10 should add a provider-neutral token meter and explicit context-budget
+policy, then invoke compaction between turns or after a canonical context
+overflow. It must record the routed model/budget decision, preserve the original
+provider error when no useful checkpoint commits, and test retry limits without
+using character counts as fake tokens. A manual CLI command can share that
+policy seam.
+
+After that, add approval and sandbox boundaries before filesystem, shell,
 browser, or other consequential tools. Interactive input, cross-process writer
 coordination, parallel tools, subagents, attachments, scheduling, and UI remain
 outside the first production milestone.

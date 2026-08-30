@@ -11,7 +11,12 @@ import type {
   SessionEvent,
   SessionEventInput,
 } from '@deepseek-cordis/protocol'
-import { InMemorySessionStore, type Session, type SessionStore } from '@deepseek-cordis/session'
+import {
+  type AppendedSessionEvent,
+  InMemorySessionStore,
+  type Session,
+  type SessionStore,
+} from '@deepseek-cordis/session'
 import {
   RuntimeFiberState,
   type RuntimeContext,
@@ -41,7 +46,7 @@ class TracingSession implements Session {
     return this.#inner.events
   }
 
-  append(input: SessionEventInput): SessionEvent {
+  append<const Input extends SessionEventInput>(input: Input): AppendedSessionEvent<Input> {
     const event = this.#inner.append(input)
     this.#trace('session/event', event)
     return event

@@ -10,6 +10,7 @@
     { "path": "./harness/app-boot" },
     { "path": "./harness/model-openrouter" },
     { "path": "./harness/session-file" },
+    { "path": "./harness/compaction" },
     { "path": "./harness/cli" }
   ]
 }

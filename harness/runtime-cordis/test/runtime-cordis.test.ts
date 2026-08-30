@@ -2,10 +2,12 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { ReplayModelAdapter } from '@deepseek-cordis/model/testing'
+import { SessionCompactor } from '@deepseek-cordis/compaction'
 import type { JsonValue } from '@deepseek-cordis/protocol'
 import { InMemoryToolRegistry, type ToolDefinition } from '@deepseek-cordis/tools'
 import {
   createAgentLoopPlugin,
+  createCompactionPlugin,
   createModelAdapterPlugin,
   createSessionStorePlugin,
   createToolRegistrationPlugin,
@@ -287,4 +289,21 @@ test('disposing all mounted fibers withdraws services, registrations, and connec
   assert.equal(context.get('agentLoop'), undefined)
   await assert.rejects(loop.value.run(session, 'cannot run'), /not connected/)
   assert.ok(fibers.every((fiber) => fiber.state === FiberState.DISPOSED))
+})
+
+test('compaction is an optional Cordis capability with stable provider identity', async () => {
+  const context = new Context()
+  const compactor = new SessionCompactor({
+    id: 'runtime-test',
+    summarize: async () => 'checkpoint',
+  })
+  const factory = createCompactionPlugin(compactor)
+
+  assert.equal(context.get('compaction'), undefined)
+  const fiber = await mount(context, factory.plugin)
+  assert.equal(context.compaction, compactor)
+  assert.equal(factory.value, compactor)
+
+  await fiber.dispose()
+  assert.equal(context.get('compaction'), undefined)
 })

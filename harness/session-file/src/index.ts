@@ -22,12 +22,14 @@ import {
   type ToolCall,
 } from '@deepseek-cordis/protocol'
 import {
+  type AppendedSessionEvent,
+  deriveSessionSurface,
   projectSessionMessages,
   type Session,
   type SessionStore,
 } from '@deepseek-cordis/session'
 
-export const SESSION_FILE_SCHEMA_VERSION = 1
+export const SESSION_FILE_SCHEMA_VERSION = 2
 
 export interface SessionFileDocument {
   readonly schemaVersion: typeof SESSION_FILE_SCHEMA_VERSION
@@ -106,6 +108,22 @@ function validateEvent(value: unknown, index: number, source: string): SessionEv
       if (!Array.isArray(value.calls)) invalid(source, 'assistant/tool-calls has invalid calls')
       value.calls.forEach((call) => validateToolCall(call, source))
       break
+    case 'compaction/summary':
+      if (
+        typeof value.summary !== 'string'
+        || value.summary.trim().length === 0
+        || typeof value.summarizer !== 'string'
+        || value.summarizer.trim().length === 0
+        || !Array.isArray(value.shadowedSequences)
+        || value.shadowedSequences.length === 0
+        || value.shadowedSequences.some((sequence) =>
+          typeof sequence !== 'number'
+          || !Number.isInteger(sequence)
+          || sequence < 1
+          || sequence >= index + 1)
+        || new Set(value.shadowedSequences).size !== value.shadowedSequences.length
+      ) invalid(source, 'compaction/summary has invalid provenance')
+      break
     case 'tool/call':
       validateToolCall(value.call, source)
       break
@@ -160,16 +178,26 @@ function decodeDocument(contents: string, source: string): DecodedDocument {
   }
   if (!isRecord(value)) invalid(source, 'document is not an object')
 
-  const migrated = value.schemaVersion === undefined
+  const migrated = value.schemaVersion === undefined || value.schemaVersion === 1
   if (!migrated && value.schemaVersion !== SESSION_FILE_SCHEMA_VERSION) {
     throw new UnsupportedSessionSchemaError(value.schemaVersion, source)
   }
   if (typeof value.id !== 'string' || !Array.isArray(value.events)) {
     invalid(source, 'document must contain a string id and events array')
   }
+  const events = value.events.map((event, index) => validateEvent(event, index, source))
+  if (
+    value.schemaVersion !== SESSION_FILE_SCHEMA_VERSION
+    && events.some((event) => event.type === 'compaction/summary')
+  ) invalid(source, 'legacy schema contains a V2 compaction event')
+  try {
+    deriveSessionSurface(events)
+  } catch (error) {
+    invalid(source, error instanceof Error ? error.message : String(error))
+  }
   return {
     id: value.id,
-    events: value.events.map((event, index) => validateEvent(event, index, source)),
+    events,
     migrated,
   }
 }
@@ -196,13 +224,19 @@ export function interruptedTurnClosers(
   source = 'session event stream',
 ): readonly SessionEvent[] {
   const lastTurnEnd = events.findLastIndex((event) => event.type === 'turn/end')
-  const tail = events.slice(lastTurnEnd + 1)
-  if (tail.length === 0) return []
-  if (tail[0]?.type !== 'turn/start') {
+  const suffix = events.slice(lastTurnEnd + 1)
+  if (suffix.length === 0) return []
+  const nextTurn = suffix.findIndex((event) => event.type === 'turn/start')
+  if (nextTurn === -1 && suffix.every((event) => event.type === 'compaction/summary')) return []
+  if (
+    nextTurn === -1
+    || suffix.slice(0, nextTurn).some((event) => event.type !== 'compaction/summary')
+  ) {
     invalid(source, 'events follow the last closed turn without a new turn/start')
   }
+  const tail = suffix.slice(nextTurn)
 
-  const turnId = tail[0].turnId
+  const turnId = tail[0]!.turnId
   let openStep: number | undefined
   const pending = new Map<string, PendingToolCall>()
 
@@ -266,6 +300,8 @@ export function interruptedTurnClosers(
           invalid(source, 'assistant message appears outside an open step')
         }
         break
+      case 'compaction/summary':
+        invalid(source, 'compaction appears inside an open trailing turn')
       case 'user/message':
       case 'turn/error':
         break
@@ -363,15 +399,16 @@ export class FileSession implements Session {
     return [...this.#events]
   }
 
-  append(input: SessionEventInput): SessionEvent {
+  append<const Input extends SessionEventInput>(input: Input): AppendedSessionEvent<Input> {
     const event = validateEvent(snapshot({
       ...input,
       sequence: this.#events.length + 1,
     }), this.#events.length, `session ${JSON.stringify(this.id)} append`)
     const candidate = [...this.#events, event]
+    if (event.type === 'compaction/summary') deriveSessionSurface(candidate)
     this.#persist(candidate)
     this.#events.push(event)
-    return event
+    return event as AppendedSessionEvent<Input>
   }
 
   projectMessages(): readonly ModelMessage[] {

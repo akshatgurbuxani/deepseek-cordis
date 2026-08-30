@@ -2,8 +2,9 @@
 
 Cordis lifecycle adapter for the provider-neutral harness capabilities.
 
-This package publishes session stores, tool registries, model adapters, and a
-stable agent-loop facade as typed Cordis services. Tool registration and loop
+This package publishes session stores, tool registries, model adapters, an
+optional session compactor, and a stable agent-loop facade as typed Cordis
+services. Tool registration and loop
 connection are Cordis-owned effects, so withdrawing their plugin fibers
 reclaims the underlying capability registration or connection.
 

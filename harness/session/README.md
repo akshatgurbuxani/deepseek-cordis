@@ -21,3 +21,9 @@ Durable storage is provided separately by `@deepseek-cordis/session-file`
 behind the same contracts. Both providers use the exported pure
 `projectSessionMessages()` function, so persisted and ephemeral histories
 produce the same model-visible transcript.
+
+`deriveSessionSurface()` retains each visible message's event sequence and
+applies `compaction/summary` only when its `shadowedSequences` exactly match the
+current surface prefix. It replaces that prefix with one user-role checkpoint
+node while preserving every source event. Invalid or reordered provenance is a
+projection error and is rejected before either reference store commits it.

@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { InMemorySessionStore } from '@deepseek-cordis/session'
+import {
+  InMemorySessionStore,
+  SessionProjectionError,
+} from '@deepseek-cordis/session'
 
 test('sessions append immutable sequenced events and expose a copied list', () => {
   const store = new InMemorySessionStore()
@@ -69,4 +72,35 @@ test('stores reject duplicate IDs and return only owned sessions', () => {
   assert.equal(store.get('stable-id'), session)
   assert.equal(store.get('unknown'), undefined)
   assert.throws(() => store.create('stable-id'), /already exists/)
+})
+
+test('summary checkpoints replace only the exact current surface prefix', () => {
+  const session = new InMemorySessionStore().create('summary')
+  session.append({ type: 'turn/start', turnId: 'turn-1' })
+  session.append({ type: 'user/message', turnId: 'turn-1', content: 'old user' })
+  session.append({ type: 'assistant/message', turnId: 'turn-1', content: 'old answer' })
+  session.append({ type: 'turn/end', turnId: 'turn-1', status: 'completed' })
+  session.append({
+    type: 'compaction/summary',
+    turnId: 'turn-1',
+    summary: 'old checkpoint',
+    shadowedSequences: [2, 3],
+    summarizer: 'test/v1',
+  })
+  session.append({ type: 'turn/start', turnId: 'turn-2' })
+  session.append({ type: 'user/message', turnId: 'turn-2', content: 'new user' })
+
+  assert.deepEqual(session.projectMessages(), [
+    { role: 'user', content: 'old checkpoint' },
+    { role: 'user', content: 'new user' },
+  ])
+  const before = session.events
+  assert.throws(() => session.append({
+    type: 'compaction/summary',
+    turnId: 'turn-2',
+    summary: 'invalid checkpoint',
+    shadowedSequences: [7],
+    summarizer: 'test/v1',
+  }), SessionProjectionError)
+  assert.deepEqual(session.events, before)
 })

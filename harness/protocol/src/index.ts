@@ -52,6 +52,12 @@ export type SessionEvent =
   }
   | EventBase & { readonly type: 'assistant/message'; readonly content: string }
   | EventBase & {
+    readonly type: 'compaction/summary'
+    readonly summary: string
+    readonly shadowedSequences: readonly number[]
+    readonly summarizer: string
+  }
+  | EventBase & {
     readonly type: 'step/end'
     readonly step: number
     readonly outcome: 'tool_calls' | 'completed' | 'failed' | 'aborted' | 'interrupted'

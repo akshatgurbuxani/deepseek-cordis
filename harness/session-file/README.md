@@ -8,9 +8,10 @@ same-directory temporary file, fsyncs it, and atomically renames it over the
 committed file. The in-memory event list advances only after that commit point,
 so a failed write leaves both memory and the previous file unchanged.
 
-Schema V1 stores `schemaVersion`, `id`, and the complete immutable event list.
-Versionless V0 documents with `id` and `events` are validated and rewritten as
-V1 during startup. Unknown versions, malformed JSON, invalid event fields,
+Schema V2 stores `schemaVersion`, `id`, and the complete immutable event list,
+including provenance-bearing compaction checkpoints. Versionless V0 and V1
+documents are validated and rewritten as V2 during startup. Unknown versions,
+malformed JSON, invalid event fields,
 sequence gaps, and filename/ID mismatches fail explicitly and are never
 overwritten.
 
@@ -27,6 +28,10 @@ Migration and repair share one atomic replacement and occur before any loaded
 session is published. Reopening the repaired file is therefore idempotent. An
 ambiguous tail is corruption rather than repair input, and a failed repair
 write leaves the original document unchanged and unpublished.
+
+Compaction checkpoint fields and their exact surface-prefix relationship are
+validated before load or append. A checkpoint uses the same atomic append path
+as every other event, so its summary and provenance cannot commit separately.
 
 The current provider assumes one active writer per directory. Atomic replacement
 protects against torn process writes; cross-process locking and merge semantics

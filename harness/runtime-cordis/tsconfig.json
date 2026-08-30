@@ -13,6 +13,7 @@
     { "path": "../session" },
     { "path": "../model" },
     { "path": "../tools" },
-    { "path": "../agent-loop" }
+    { "path": "../agent-loop" },
+    { "path": "../compaction" }
   ]
 }

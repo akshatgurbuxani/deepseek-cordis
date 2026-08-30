@@ -8,44 +8,113 @@ import {
 export interface Session {
   readonly id: string
   readonly events: readonly SessionEvent[]
-  append(input: SessionEventInput): SessionEvent
+  append<const Input extends SessionEventInput>(input: Input): AppendedSessionEvent<Input>
   projectMessages(): readonly ModelMessage[]
 }
+
+export type AppendedSessionEvent<Input extends SessionEventInput> = Extract<
+  SessionEvent,
+  { readonly type: Input['type'] }
+>
 
 export interface SessionStore {
   create(id: string): Session
   get(id: string): Session | undefined
 }
 
-export function projectSessionMessages(events: readonly SessionEvent[]): readonly ModelMessage[] {
-  return events.flatMap((event): ModelMessage[] => {
+export interface SessionSurfaceNode {
+  readonly sequence: number
+  readonly turnId: string
+  readonly message: ModelMessage
+}
+
+export class SessionProjectionError extends Error {}
+
+export function deriveSessionSurface(
+  events: readonly SessionEvent[],
+): readonly SessionSurfaceNode[] {
+  const surface: SessionSurfaceNode[] = []
+  const closedTurns = new Set<string>()
+  let openTurn: string | undefined
+  for (const event of events) {
+    let message: ModelMessage | undefined
     switch (event.type) {
+      case 'turn/start':
+        openTurn = event.turnId
+        break
+      case 'turn/end':
+        if (openTurn === event.turnId) openTurn = undefined
+        closedTurns.add(event.turnId)
+        break
       case 'user/message':
-        return [{ role: 'user', content: event.content }]
+        message = { role: 'user', content: event.content }
+        break
       case 'assistant/message':
-        return [{ role: 'assistant', content: event.content }]
+        message = { role: 'assistant', content: event.content }
+        break
       case 'assistant/tool-calls':
-        return [{ role: 'assistant', toolCalls: event.calls }]
+        message = { role: 'assistant', toolCalls: event.calls }
+        break
       case 'tool/result':
-        return event.ok
-          ? [{
+        message = event.ok
+          ? {
               role: 'tool',
               callId: event.callId,
               name: event.name,
               ok: true,
               output: event.output,
-            }]
-          : [{
+            }
+          : {
               role: 'tool',
               callId: event.callId,
               name: event.name,
               ok: false,
               error: event.error,
-            }]
+            }
+        break
+      case 'compaction/summary': {
+        if (openTurn !== undefined || !closedTurns.has(event.turnId)) {
+          throw new SessionProjectionError(
+            `compaction event ${event.sequence} is not between closed turns`,
+          )
+        }
+        const actual = surface
+          .slice(0, event.shadowedSequences.length)
+          .map((node) => node.sequence)
+        if (
+          event.shadowedSequences.length === 0
+          || actual.length !== event.shadowedSequences.length
+          || actual.some((sequence, index) => sequence !== event.shadowedSequences[index])
+        ) {
+          throw new SessionProjectionError(
+            `compaction event ${event.sequence} does not shadow the current surface prefix`,
+          )
+        }
+        const boundary = surface[event.shadowedSequences.length - 1]
+        if (boundary?.turnId !== event.turnId) {
+          throw new SessionProjectionError(
+            `compaction event ${event.sequence} does not match its boundary turn`,
+          )
+        }
+        surface.splice(0, actual.length, {
+          sequence: event.sequence,
+          turnId: event.turnId,
+          message: { role: 'user', content: event.summary },
+        })
+        break
+      }
       default:
-        return []
+        break
     }
-  })
+    if (message) {
+      surface.push({ sequence: event.sequence, turnId: event.turnId, message })
+    }
+  }
+  return surface
+}
+
+export function projectSessionMessages(events: readonly SessionEvent[]): readonly ModelMessage[] {
+  return deriveSessionSurface(events).map((node) => node.message)
 }
 
 export class InMemorySession implements Session {
@@ -60,13 +129,16 @@ export class InMemorySession implements Session {
     return [...this.#events]
   }
 
-  append(input: SessionEventInput): SessionEvent {
+  append<const Input extends SessionEventInput>(input: Input): AppendedSessionEvent<Input> {
     const event = snapshot({
       ...input,
       sequence: this.#events.length + 1,
-    }) as SessionEvent
+    }) as unknown as SessionEvent
+    if (event.type === 'compaction/summary') {
+      deriveSessionSurface([...this.#events, event])
+    }
     this.#events.push(event)
-    return event
+    return event as AppendedSessionEvent<Input>
   }
 
   projectMessages(): readonly ModelMessage[] {

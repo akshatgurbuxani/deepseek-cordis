@@ -107,7 +107,7 @@ test('a failed atomic append leaves memory and the committed file unchanged', (t
   assert.equal(readdirSync(directory).some((name) => name.endsWith('.tmp')), false)
 })
 
-test('versionless V0 documents migrate once to the current schema', (t) => {
+test('V0 and V1 documents migrate once to the current schema', (t) => {
   const directory = temporaryDirectory(t)
   const id = 'legacy'
   const filePath = sessionFilePath(directory, id)
@@ -122,6 +122,13 @@ test('versionless V0 documents migrate once to the current schema', (t) => {
   const migrated = JSON.parse(readFileSync(filePath, 'utf8')) as Record<string, unknown>
   assert.equal(migrated.schemaVersion, SESSION_FILE_SCHEMA_VERSION)
   assert.equal((migrated.events as unknown[]).length, 2)
+
+  const v1Id = 'schema-v1'
+  const v1Path = sessionFilePath(directory, v1Id)
+  writeFileSync(v1Path, JSON.stringify({ schemaVersion: 1, id: v1Id, events: [] }))
+  assert.ok(new FileSessionStore({ directory }).get(v1Id))
+  const migratedV1 = JSON.parse(readFileSync(v1Path, 'utf8')) as Record<string, unknown>
+  assert.equal(migratedV1.schemaVersion, SESSION_FILE_SCHEMA_VERSION)
 })
 
 test('cold startup preserves an interrupted turn and durably synthesizes balanced closers', (t) => {
@@ -202,7 +209,7 @@ test('failed crash repair leaves the original document unchanged and unpublished
   const id = 'repair-failure'
   const filePath = sessionFilePath(directory, id)
   const original = JSON.stringify({
-    schemaVersion: 1,
+    schemaVersion: SESSION_FILE_SCHEMA_VERSION,
     id,
     events: [{ type: 'turn/start', turnId: 'repair-failure:turn:1', sequence: 1 }],
   })
@@ -299,6 +306,10 @@ test('every persisted event variant is validated before it can become live state
     [{ type: 'step/start', turnId: 'turn-1', sequence: 1, step: 0 }, /invalid step number/],
     [{ type: 'assistant/tool-calls', turnId: 'turn-1', sequence: 1 }, /invalid calls/],
     [{
+      type: 'compaction/summary', turnId: 'turn-1', sequence: 1,
+      summary: '', shadowedSequences: [], summarizer: '',
+    }, /invalid provenance/],
+    [{
       type: 'assistant/tool-calls', turnId: 'turn-1', sequence: 1,
       calls: [{ id: 'call-1', name: 'add' }],
     }, /invalid tool call/],
@@ -344,6 +355,55 @@ test('every persisted event variant is validated before it can become live state
   }), /invalid output/)
   assert.equal(session.events.length, 0)
   assert.equal(readFileSync(filePath, 'utf8'), before)
+})
+
+test('persisted compaction provenance must match the derived surface prefix', (t) => {
+  const directory = temporaryDirectory(t)
+  const id = 'invalid-compaction-provenance'
+  const filePath = sessionFilePath(directory, id)
+  const original = JSON.stringify({
+    schemaVersion: SESSION_FILE_SCHEMA_VERSION,
+    id,
+    events: [
+      { type: 'turn/start', turnId: 'turn-1', sequence: 1 },
+      { type: 'user/message', turnId: 'turn-1', content: 'first', sequence: 2 },
+      { type: 'assistant/message', turnId: 'turn-1', content: 'second', sequence: 3 },
+      { type: 'turn/end', turnId: 'turn-1', status: 'completed', sequence: 4 },
+      {
+        type: 'compaction/summary', turnId: 'turn-1', sequence: 5,
+        summary: 'bad checkpoint', shadowedSequences: [3], summarizer: 'test/v1',
+      },
+    ],
+  })
+  writeFileSync(filePath, original)
+
+  assert.throws(() => new FileSessionStore({ directory }), /does not shadow.*surface prefix/)
+  assert.equal(readFileSync(filePath, 'utf8'), original)
+
+  const wrongBoundary = original.replace(
+    '"turnId":"turn-1","sequence":5',
+    '"turnId":"wrong-turn","sequence":5',
+  ).replace('"shadowedSequences":[3]', '"shadowedSequences":[2,3]')
+  writeFileSync(filePath, wrongBoundary)
+  assert.throws(() => new FileSessionStore({ directory }), /not between closed turns/)
+  assert.equal(readFileSync(filePath, 'utf8'), wrongBoundary)
+
+  const legacy = JSON.stringify({
+    schemaVersion: 1,
+    id,
+    events: [
+      { type: 'turn/start', turnId: 'turn-1', sequence: 1 },
+      { type: 'user/message', turnId: 'turn-1', content: 'first', sequence: 2 },
+      { type: 'turn/end', turnId: 'turn-1', status: 'completed', sequence: 3 },
+      {
+        type: 'compaction/summary', turnId: 'turn-1', sequence: 4,
+        summary: 'checkpoint', shadowedSequences: [2], summarizer: 'test/v1',
+      },
+    ],
+  })
+  writeFileSync(filePath, legacy)
+  assert.throws(() => new FileSessionStore({ directory }), /legacy schema.*V2 compaction/)
+  assert.equal(readFileSync(filePath, 'utf8'), legacy)
 })
 
 test('canonical files must match their stored IDs while unrelated and temporary files are ignored', (t) => {

@@ -1,4 +1,5 @@
 import { AgentLoop } from '@deepseek-cordis/agent-loop'
+import { SessionCompactor } from '@deepseek-cordis/compaction'
 import type { ModelAdapter } from '@deepseek-cordis/model'
 import {
   InMemorySessionStore,
@@ -34,6 +35,7 @@ declare module 'cordis' {
     tools: ToolRegistry
     model: ModelAdapter
     agentLoop: AgentLoop
+    compaction: SessionCompactor
   }
 }
 
@@ -108,4 +110,15 @@ export function createAgentLoopPlugin(
   plugin.inject = ['sessions', 'tools', 'model']
   plugin.provide = 'agentLoop'
   return { plugin, value: loop }
+}
+
+export function createCompactionPlugin(
+  compactor: SessionCompactor,
+): PluginFactory<SessionCompactor> {
+  const plugin: Plugin.Function<void> = (context) => {
+    context.provide('compaction', compactor)
+  }
+  namePlugin(plugin, 'compaction')
+  plugin.provide = 'compaction'
+  return { plugin, value: compactor }
 }

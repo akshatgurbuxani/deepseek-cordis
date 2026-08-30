@@ -12,7 +12,8 @@
     "harness/app-boot",
     "harness/model-openrouter",
     "harness/cli",
-    "harness/session-file"
+    "harness/session-file",
+    "harness/compaction"
   ],
   "scripts": {
     "build": "tsc -b",

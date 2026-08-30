@@ -16,3 +16,8 @@ turns record their terminal boundary without serializing `AbortSignal.reason`.
 `aborted` means a live process observed cooperative cancellation;
 `interrupted` is reserved for durable boundaries synthesized during cold-start
 repair when the prior process disappeared without closing its turn.
+
+`compaction/summary` is the sole surface-transforming checkpoint. It records
+summary text, summarizer identity, and the exact current surface sequence prefix
+it shadows. The source events remain in the log; consumers derive the shorter
+model surface by applying the checkpoint.

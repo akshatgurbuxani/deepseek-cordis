@@ -1,5 +1,5 @@
 {
-  "name": "@deepseek-cordis/runtime-cordis",
+  "name": "@deepseek-cordis/compaction",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -13,11 +13,8 @@
   },
   "files": ["dist"],
   "dependencies": {
-    "@deepseek-cordis/agent-loop": "0.0.0",
-    "@deepseek-cordis/compaction": "0.0.0",
     "@deepseek-cordis/model": "0.0.0",
-    "@deepseek-cordis/session": "0.0.0",
-    "@deepseek-cordis/tools": "0.0.0",
-    "cordis": "4.0.0-rc.8"
+    "@deepseek-cordis/protocol": "0.0.0",
+    "@deepseek-cordis/session": "0.0.0"
   }
 }
