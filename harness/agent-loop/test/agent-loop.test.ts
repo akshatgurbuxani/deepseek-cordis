@@ -91,6 +91,34 @@ test('one tool-call turn is fully recorded and projected into the next request',
   ]))
 })
 
+test('successful provider usage is anchored to the exact request surface', async () => {
+  const adapter: ModelAdapter = {
+    id: 'usage-model',
+    async *stream() {
+      yield { type: 'text-delta', delta: 'anchored' }
+      yield {
+        type: 'finish', reason: 'completed',
+        response: { type: 'message', content: 'anchored' },
+        usage: { inputTokens: 101, outputTokens: 3 },
+      }
+    },
+  }
+  const { sessions, loop } = setup(adapter)
+  const session = sessions.create('usage')
+
+  await loop.run(session, 'provider input')
+
+  const assistant = session.events.find((event) => event.type === 'assistant/message')
+  assert.ok(assistant?.type === 'assistant/message')
+  assert.deepEqual(assistant.usage, {
+    model: 'usage-model',
+    inputTokens: 101,
+    outputTokens: 3,
+    inputSurfaceSequences: [2],
+    inputTools: [],
+  })
+})
+
 test('the same scenario produces identical events and model requests', async () => {
   async function run() {
     const adapter = new ReplayModelAdapter('deterministic', [

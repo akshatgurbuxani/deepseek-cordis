@@ -3,8 +3,10 @@
 Automatic pressure and canonical context-overflow policy for `AgentLoop`.
 
 The policy measures the exact derived request surface before each step. It acts
-only when the selected adapter advertises a context window and the versioned
-heuristic measurement reaches the configured ratio. Recognized provider
+only when the selected adapter statically advertises or asynchronously resolves
+a context window and the revisioned measurement reaches the configured ratio.
+Metadata lookup failure disables only proactive pressure for that step.
+Recognized provider
 overflow errors can trigger one bounded recovery even without capacity
 metadata. A retry is authorized only when compaction committed a new summary
 checkpoint; otherwise the original model error remains authoritative.

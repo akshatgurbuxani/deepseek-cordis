@@ -39,6 +39,10 @@ test('sessions survive restart with immutable events and projected model history
     type: 'assistant/tool-calls',
     turnId: 'turn-1',
     calls: [{ id: 'call-1', name: 'add', arguments: { a: 2, b: 3 } }],
+    usage: {
+      model: 'provider/model', inputTokens: 12, outputTokens: 3,
+      inputSurfaceSequences: [2], inputTools: [],
+    },
   })
   session.append({
     type: 'tool/result', turnId: 'turn-1', callId: 'call-1', name: 'add', ok: true, output: 5,
@@ -107,7 +111,7 @@ test('a failed atomic append leaves memory and the committed file unchanged', (t
   assert.equal(readdirSync(directory).some((name) => name.endsWith('.tmp')), false)
 })
 
-test('V0, V1, and V2 documents migrate once to the current schema', (t) => {
+test('V0, V1, V2, and V3 documents migrate once to the current schema', (t) => {
   const directory = temporaryDirectory(t)
   const id = 'legacy'
   const filePath = sessionFilePath(directory, id)
@@ -158,6 +162,15 @@ test('V0, V1, and V2 documents migrate once to the current schema', (t) => {
   ])
   assert.equal(
     (JSON.parse(readFileSync(v2Path, 'utf8')) as Record<string, unknown>).schemaVersion,
+    SESSION_FILE_SCHEMA_VERSION,
+  )
+
+  const v3Id = 'schema-v3'
+  const v3Path = sessionFilePath(directory, v3Id)
+  writeFileSync(v3Path, JSON.stringify({ schemaVersion: 3, id: v3Id, events: [] }))
+  assert.ok(new FileSessionStore({ directory }).get(v3Id))
+  assert.equal(
+    (JSON.parse(readFileSync(v3Path, 'utf8')) as Record<string, unknown>).schemaVersion,
     SESSION_FILE_SCHEMA_VERSION,
   )
 })
@@ -324,6 +337,21 @@ test('future schemas and corrupt documents fail explicitly without rewriting inp
     events: [{ type: 'not-an-event', turnId: 'turn-1', sequence: 1 }],
   }))
   assert.throws(() => new FileSessionStore({ directory }), /unknown type/)
+
+  const legacyUsage = JSON.stringify({
+    schemaVersion: 3,
+    id,
+    events: [{
+      type: 'assistant/message', turnId: 'turn-1', sequence: 1, content: 'legacy',
+      usage: {
+        model: 'provider/model', inputTokens: 1, outputTokens: 1,
+        inputSurfaceSequences: [], inputTools: [],
+      },
+    }],
+  })
+  writeFileSync(filePath, legacyUsage)
+  assert.throws(() => new FileSessionStore({ directory }), /legacy schema.*newer schema/)
+  assert.equal(readFileSync(filePath, 'utf8'), legacyUsage)
 })
 
 test('every persisted event variant is validated before it can become live state', (t) => {
@@ -334,6 +362,13 @@ test('every persisted event variant is validated before it can become live state
     [null, /document is not an object/],
     [{ schemaVersion: 1, id }, /string id and events array/],
     [{ type: 'user/message', turnId: 'turn-1', sequence: 1 }, /invalid content/],
+    [{
+      type: 'assistant/message', turnId: 'turn-1', sequence: 1, content: 'bad usage',
+      usage: {
+        model: 'provider/model', inputTokens: -1, outputTokens: 0,
+        inputSurfaceSequences: [], inputTools: [],
+      },
+    }, /invalid provider usage/],
     [{ type: 'step/start', turnId: 'turn-1', sequence: 1, step: 0 }, /invalid step number/],
     [{ type: 'assistant/tool-calls', turnId: 'turn-1', sequence: 1 }, /invalid calls/],
     [{

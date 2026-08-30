@@ -18,6 +18,17 @@ export interface ToolSchema {
   readonly inputSchema: JsonValue
 }
 
+export interface ModelTokenUsage {
+  readonly inputTokens: number
+  readonly outputTokens: number
+}
+
+export interface AssistantUsage extends ModelTokenUsage {
+  readonly model: string
+  readonly inputSurfaceSequences: readonly number[]
+  readonly inputTools: readonly ToolSchema[]
+}
+
 export type ToolExecution =
   | { readonly ok: true; readonly output: JsonValue }
   | { readonly ok: false; readonly error: string }
@@ -34,6 +45,7 @@ export type SessionEvent =
   | EventBase & {
     readonly type: 'assistant/tool-calls'
     readonly calls: readonly ToolCall[]
+    readonly usage?: AssistantUsage
   }
   | EventBase & { readonly type: 'tool/call'; readonly call: ToolCall }
   | EventBase & {
@@ -50,7 +62,11 @@ export type SessionEvent =
     readonly ok: false
     readonly error: string
   }
-  | EventBase & { readonly type: 'assistant/message'; readonly content: string }
+  | EventBase & {
+    readonly type: 'assistant/message'
+    readonly content: string
+    readonly usage?: AssistantUsage
+  }
   | EventBase & {
     readonly type: 'compaction/summary'
     readonly summary: string
@@ -143,6 +159,7 @@ export type ModelStreamChunk =
     readonly type: 'finish'
     readonly reason: 'completed'
     readonly response: ModelResponse
+    readonly usage?: ModelTokenUsage
   }
   | {
     readonly type: 'finish'

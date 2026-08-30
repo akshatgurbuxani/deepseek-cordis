@@ -30,6 +30,23 @@ export interface SessionSurfaceNode {
 
 export class SessionProjectionError extends Error {}
 
+function validateUsageAnchor(
+  event: Extract<SessionEvent, { readonly type: 'assistant/message' | 'assistant/tool-calls' }>,
+  surface: readonly SessionSurfaceNode[],
+): void {
+  if (!event.usage) return
+  const actual = surface.map((node) => node.sequence)
+  if (
+    actual.length !== event.usage.inputSurfaceSequences.length
+    || actual.some((sequence, index) =>
+      sequence !== event.usage?.inputSurfaceSequences[index])
+  ) {
+    throw new SessionProjectionError(
+      `assistant usage event ${event.sequence} does not match its input surface`,
+    )
+  }
+}
+
 export function deriveSessionSurface(
   events: readonly SessionEvent[],
 ): readonly SessionSurfaceNode[] {
@@ -57,9 +74,11 @@ export function deriveSessionSurface(
         message = { role: 'user', content: event.content }
         break
       case 'assistant/message':
+        validateUsageAnchor(event, surface)
         message = { role: 'assistant', content: event.content }
         break
       case 'assistant/tool-calls':
+        validateUsageAnchor(event, surface)
         message = { role: 'assistant', toolCalls: event.calls }
         break
       case 'tool/result':
@@ -152,7 +171,12 @@ export class InMemorySession implements Session {
       ...input,
       sequence: this.#events.length + 1,
     }) as unknown as SessionEvent
-    if (event.type === 'compaction/summary' || event.type === 'context-budget/decision') {
+    if (
+      event.type === 'compaction/summary'
+      || event.type === 'context-budget/decision'
+      || ((event.type === 'assistant/message' || event.type === 'assistant/tool-calls')
+        && event.usage !== undefined)
+    ) {
       deriveSessionSurface([...this.#events, event])
     }
     this.#events.push(event)

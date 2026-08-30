@@ -229,7 +229,12 @@ test('live-mode composition maps a tool round trip and never traces its API key'
   const { records, trace } = recorder()
   const bodies: Array<Record<string, unknown>> = []
   let call = 0
-  const fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+  const fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    if (String(input).endsWith('/api/v1/models')) {
+      return new Response(JSON.stringify({
+        data: [{ id: 'openrouter/free', context_length: 64_000 }],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    }
     bodies.push(JSON.parse(String(init?.body)))
     call += 1
     return call === 1
@@ -258,6 +263,10 @@ test('live-mode composition maps a tool round trip and never traces its API key'
       : sseResponse([
           { model: 'selected/tool-model', choices: [{ delta: { content: 'The answer ' } }] },
           { choices: [{ delta: { content: 'is 17.' } }] },
+          {
+            choices: [],
+            usage: { prompt_tokens: 14, completion_tokens: 4, total_tokens: 18 },
+          },
         ])
   }) as typeof globalThis.fetch
   const output: string[] = []
@@ -285,6 +294,12 @@ test('live-mode composition maps a tool round trip and never traces its API key'
   assert.ok(Array.isArray(bodies[0]?.tools))
   assert.equal(bodies[0]?.stream, true)
   assert.deepEqual(bodies[0]?.stream_options, { include_usage: true })
+  assert.ok(records.some(({ label, value }) =>
+    label === 'model/info'
+    && JSON.stringify(value).includes('"contextWindow":64000')))
+  assert.ok(records.some(({ label, value }) =>
+    label === 'session/event'
+    && JSON.stringify(value).includes('"inputTokens":14')))
   assert.deepEqual(bodies[1]?.messages, [
     { role: 'user', content: 'add 8 and 9' },
     {

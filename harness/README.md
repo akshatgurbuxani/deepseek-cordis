@@ -745,13 +745,67 @@ decisions, independent Cordis meter service, and end-to-end persistent CLI
 pressure coverage. Together with PRs 1–9, 91 deterministic tests pass and one
 live OpenRouter smoke test remains opt-in.
 
+### PR 11: `feature/011-provider-token-metadata`
+
+Resolve capacity through the provider-owned model route and anchor pressure to
+durable provider input usage without changing Feature 10's immutable meter
+contract. `ModelAdapter.resolveInfo()` is optional and asynchronous; the shared
+resolver validates its model ID and capacity, while static adapter capacity
+remains supported. OpenRouter queries its official `/api/v1/models` catalog,
+matches the requested ID or canonical slug, and caches positive or known-absent
+metadata. Explicit environment capacity remains an override.
+
+A completed model stream may carry normalized input/output usage. The agent
+loop stores successful usage on the assistant event with the exact pre-response
+surface sequence list, effective adapter identity, and complete tool schemas.
+Projection verifies that provenance and keeps it log-only. File schema V4 adds
+the optional anchor and explicitly migrates V0–V3 while rejecting the new field
+in legacy documents.
+
+The meter's component breakdown remains the named `four-characters-v1`
+heuristic. When a durable provider sample exists, `totalTokens` instead starts
+from its exact input count and applies the signed heuristic difference between
+the anchored and current surface/tool envelopes. This remains correct across
+restart and provenance-preserving compaction because source events are never
+deleted. A replaced adapter cannot reuse the previous route's anchor. The
+snapshot exposes `source` and anchor metadata so consumers cannot
+mistake mixed estimation for billing precision.
+
+#### Upstream motivation and adaptation boundary
+
+This feature was checked on August 30, 2026 against the Cordis paper at
+[`0d43a6f`](https://github.com/cordiverse/paper/commit/0d43a6f18004a7b5bf9662c31aa08c3712d232ec),
+DeepSeek Harness at
+[`cd5ef81`](https://github.com/deepseek-ai/deepseek-harness/commit/cd5ef8148158c3a752a658978873241fdf8e2bbc),
+especially its
+[`token-meter`](https://github.com/deepseek-ai/deepseek-harness/blob/cd5ef8148158c3a752a658978873241fdf8e2bbc/packages/llm/token-meter/README.md),
+[`request/context` design](https://github.com/deepseek-ai/deepseek-harness/blob/cd5ef8148158c3a752a658978873241fdf8e2bbc/.agents/notes/implemented/architecture/2026-07-29-projected-token-usage-and-request-context.md),
+and OpenRouter's official
+[`GET /api/v1/models`](https://openrouter.ai/docs/api/api-reference/models/get-models)
+contract. The current upstream meter also retains a fixed heuristic for
+unanchored content and uses provider usage as a reusable baseline; it does not
+claim exact provider tokenization where none exists.
+
+This smaller harness stores a self-contained request anchor on each successful
+assistant event rather than adding DeepSeek's request-header/context events,
+usage chunks, projections, and route registry. Failed-call billing, cache token
+buckets, system prompts, compaction-call billing, and a general model catalog
+service remain outside the present protocol.
+
+#### PR 11 result
+
+Implemented asynchronous model metadata, cached OpenRouter capacity resolution,
+normalized usage finishes, durable exact-envelope anchors, V4 persistence,
+provider-anchored heuristic deltas, restart/compaction survival, and live CLI
+integration. Together with PRs 1–10, 100 deterministic tests pass and one live
+OpenRouter smoke test remains opt-in.
+
 ### Later milestones
 
-Feature 11 should replace configured capacity and heuristic-only pressure with
-a provider metadata resolver and tokenizer/usage anchoring while retaining the
-same immutable measurement contract. It can also expose inspect/compact through
-a real command seam; the current one-shot CLI has no interactive dispatcher, so
-Feature 10 does not disguise a special flag as that abstraction.
+Feature 12 should add approval and sandbox boundaries before introducing
+filesystem, shell, browser, or other consequential tools. Manual inspect and
+compact commands should arrive with a real interactive command dispatcher,
+rather than as one-off flags on the current single-turn CLI.
 
 After that, add approval and sandbox boundaries before filesystem, shell,
 browser, or other consequential tools. Interactive input, cross-process writer

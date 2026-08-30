@@ -9,6 +9,9 @@ Adapters may advertise an exact `contextWindow`. Capacity is provider metadata,
 not inferred from a pressure estimate. A coded stream failure becomes
 `ModelContextOverflowError`, allowing policy to distinguish context pressure
 from unrelated provider failures without parsing arbitrary errors in the loop.
+`resolveModelInfo()` validates static metadata or an adapter's asynchronous
+route lookup. `completeModelResult()` retains normalized provider usage beside
+the response; `completeModel()` remains the response-only collector.
 
 `completeModel()` is the shared collector used by the agent loop and tests. It
 forwards text deltas to an optional observer, rejects malformed streams, and

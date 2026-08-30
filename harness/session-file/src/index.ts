@@ -29,7 +29,7 @@ import {
   type SessionStore,
 } from '@deepseek-cordis/session'
 
-export const SESSION_FILE_SCHEMA_VERSION = 3
+export const SESSION_FILE_SCHEMA_VERSION = 4
 
 export interface SessionFileDocument {
   readonly schemaVersion: typeof SESSION_FILE_SCHEMA_VERSION
@@ -80,6 +80,39 @@ function validateToolCall(value: unknown, source: string): void {
   ) invalid(source, 'event contains an invalid tool call')
 }
 
+function validateToolSchema(value: unknown, source: string): void {
+  if (
+    !isRecord(value)
+    || typeof value.name !== 'string'
+    || typeof value.description !== 'string'
+    || !isJsonValue(value.inputSchema)
+  ) invalid(source, 'assistant usage contains an invalid tool schema')
+}
+
+function validateAssistantUsage(value: unknown, index: number, source: string): void {
+  if (value === undefined) return
+  if (
+    !isRecord(value)
+    || typeof value.model !== 'string'
+    || value.model.trim().length === 0
+    || typeof value.inputTokens !== 'number'
+    || !Number.isInteger(value.inputTokens)
+    || value.inputTokens < 0
+    || typeof value.outputTokens !== 'number'
+    || !Number.isInteger(value.outputTokens)
+    || value.outputTokens < 0
+    || !Array.isArray(value.inputSurfaceSequences)
+    || value.inputSurfaceSequences.some((sequence) =>
+      typeof sequence !== 'number'
+      || !Number.isInteger(sequence)
+      || sequence < 1
+      || sequence >= index + 1)
+    || new Set(value.inputSurfaceSequences).size !== value.inputSurfaceSequences.length
+    || !Array.isArray(value.inputTools)
+  ) invalid(source, 'assistant event has invalid provider usage')
+  value.inputTools.forEach((tool) => validateToolSchema(tool, source))
+}
+
 function validateStep(value: unknown, source: string): void {
   if (typeof value !== 'number' || !Number.isInteger(value) || value < 1) {
     invalid(source, 'event contains an invalid step number')
@@ -98,8 +131,11 @@ function validateEvent(value: unknown, index: number, source: string): SessionEv
     case 'turn/start':
       break
     case 'user/message':
+      if (typeof value.content !== 'string') invalid(source, `${value.type} has invalid content`)
+      break
     case 'assistant/message':
       if (typeof value.content !== 'string') invalid(source, `${value.type} has invalid content`)
+      validateAssistantUsage(value.usage, index, source)
       break
     case 'step/start':
       validateStep(value.step, source)
@@ -107,6 +143,7 @@ function validateEvent(value: unknown, index: number, source: string): SessionEv
     case 'assistant/tool-calls':
       if (!Array.isArray(value.calls)) invalid(source, 'assistant/tool-calls has invalid calls')
       value.calls.forEach((call) => validateToolCall(call, source))
+      validateAssistantUsage(value.usage, index, source)
       break
     case 'compaction/summary':
       if (
@@ -220,6 +257,7 @@ function decodeDocument(contents: string, source: string): DecodedDocument {
   const migrated = value.schemaVersion === undefined
     || value.schemaVersion === 1
     || value.schemaVersion === 2
+    || value.schemaVersion === 3
   if (!migrated && value.schemaVersion !== SESSION_FILE_SCHEMA_VERSION) {
     throw new UnsupportedSessionSchemaError(value.schemaVersion, source)
   }
@@ -232,8 +270,16 @@ function decodeDocument(contents: string, source: string): DecodedDocument {
     && events.some((event) => event.type === 'compaction/summary')
   ) invalid(source, 'legacy schema contains an event introduced by a newer schema')
   if (
-    value.schemaVersion !== SESSION_FILE_SCHEMA_VERSION
+    (value.schemaVersion === undefined
+      || value.schemaVersion === 1
+      || value.schemaVersion === 2)
     && events.some((event) => event.type === 'context-budget/decision')
+  ) invalid(source, 'legacy schema contains an event introduced by a newer schema')
+  if (
+    value.schemaVersion !== SESSION_FILE_SCHEMA_VERSION
+    && events.some((event) =>
+      (event.type === 'assistant/message' || event.type === 'assistant/tool-calls')
+      && event.usage !== undefined)
   ) invalid(source, 'legacy schema contains an event introduced by a newer schema')
   try {
     deriveSessionSurface(events)
@@ -464,7 +510,12 @@ export class FileSession implements Session {
       sequence: this.#events.length + 1,
     }), this.#events.length, `session ${JSON.stringify(this.id)} append`)
     const candidate = [...this.#events, event]
-    if (event.type === 'compaction/summary' || event.type === 'context-budget/decision') {
+    if (
+      event.type === 'compaction/summary'
+      || event.type === 'context-budget/decision'
+      || ((event.type === 'assistant/message' || event.type === 'assistant/tool-calls')
+        && event.usage !== undefined)
+    ) {
       deriveSessionSurface(candidate)
     }
     this.#persist(candidate)

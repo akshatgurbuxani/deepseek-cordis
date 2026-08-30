@@ -69,6 +69,68 @@ test('pressure compacts before request derivation and records the exact decision
   disconnect()
 })
 
+test('pressure uses asynchronously resolved adapter capacity', async () => {
+  const sessions = new InMemorySessionStore()
+  const session = sessions.create('resolved-pressure')
+  appendTurn(session, 1, 'a'.repeat(80))
+  appendTurn(session, 2)
+  const replay = new ReplayModelAdapter('resolved-model', [
+    { type: 'message', content: 'done' },
+  ])
+  const tools = new InMemoryToolRegistry()
+  let resolutions = 0
+  const model: ModelAdapter = {
+    id: replay.id,
+    async resolveInfo() {
+      resolutions += 1
+      tools.register({
+        name: 'late-tool',
+        description: 'x'.repeat(800),
+        inputSchema: { type: 'object' },
+        execute: () => null,
+      })
+      return { model: 'provider/resolved-model', contextWindow: 40 }
+    },
+    stream: replay.stream.bind(replay),
+  }
+  const loop = new AgentLoop(policy())
+  const disconnect = loop.connect(sessions, tools, model)
+
+  await loop.run(session, 'current')
+
+  assert.equal(resolutions, 1)
+  const decision = session.events.find((event) => event.type === 'context-budget/decision')
+  assert.ok(decision?.type === 'context-budget/decision')
+  assert.equal(decision.contextWindow, 40)
+  assert.equal(decision.outcome, 'compacted')
+  assert.ok(decision.measuredTokens > 200)
+  disconnect()
+})
+
+test('metadata lookup failure disables proactive policy without blocking the model', async () => {
+  const sessions = new InMemorySessionStore()
+  const session = sessions.create('metadata-unavailable')
+  const replay = new ReplayModelAdapter('available-model', [
+    { type: 'message', content: 'still runs' },
+  ])
+  const model: ModelAdapter = {
+    id: replay.id,
+    async resolveInfo() {
+      throw new Error('catalog unavailable')
+    },
+    stream: replay.stream.bind(replay),
+  }
+  const loop = new AgentLoop(policy())
+  const disconnect = loop.connect(sessions, new InMemoryToolRegistry(), model)
+
+  assert.equal((await loop.run(session, 'current')).content, 'still runs')
+  assert.equal(
+    session.events.some((event) => event.type === 'context-budget/decision'),
+    false,
+  )
+  disconnect()
+})
+
 test('canonical overflow retries only after a checkpoint changes the surface', async () => {
   const sessions = new InMemorySessionStore()
   const session = sessions.create('overflow')

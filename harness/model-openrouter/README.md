@@ -7,8 +7,11 @@ chat-completions API. Its canonical model seam consumes server-sent events,
 emits text deltas, assembles fragmented local tool calls, and terminates with a
 normalized finish. `complete()` remains available as a compatibility collector.
 Both paths report usage plus additive router metadata through a diagnostics
-callback.
+callback. The streaming finish also carries validated prompt/completion usage
+through the provider-neutral boundary so sessions can anchor pressure.
 An optional configured `contextWindow` exposes exact capacity to policy.
+Without it, `resolveInfo()` queries `/api/v1/models`, selects the requested ID
+or canonical slug, validates `context_length`, and caches the result.
 Recognized HTTP or streamed context-limit failures normalize to
 `ModelContextOverflowError`; status alone is insufficient, so an unrelated 413
 remains an ordinary HTTP failure.
@@ -27,4 +30,4 @@ Current primary references:
 - [local tool calling](https://openrouter.ai/docs/guides/features/tool-calling)
 - [router metadata](https://openrouter.ai/docs/guides/features/router-metadata)
 - [`openrouter/free`](https://openrouter.ai/docs/guides/routing/routers/free-router)
-- [models and context lengths](https://openrouter.ai/docs/api-reference/list-available-models)
+- [models and context lengths](https://openrouter.ai/docs/api/api-reference/models/get-models)

@@ -22,6 +22,11 @@ A failed model finish may carry the canonical
 the shared collector turns it into the provider-neutral overflow error used by
 policy.
 
+A completed finish may include normalized input/output token usage. The agent
+loop commits that sample with the assistant event, exact input-surface
+sequences, model identity, and tool-schema snapshot. Usage is log-only and does
+not change message projection.
+
 `compaction/summary` is the sole surface-transforming checkpoint. It records
 summary text, summarizer identity, and the exact current surface sequence prefix
 it shadows. The source events remain in the log; consumers derive the shorter

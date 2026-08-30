@@ -3,6 +3,7 @@ import {
   type ModelAdapter,
   type ModelCompletionOptions,
   ModelContextOverflowError,
+  type ModelInfo,
   type ModelStreamOptions,
 } from '@deepseek-cordis/model'
 import {
@@ -11,6 +12,7 @@ import {
   type ModelRequest,
   type ModelResponse,
   type ModelStreamChunk,
+  type ModelTokenUsage,
   snapshot,
   type ToolCall,
 } from '@deepseek-cordis/protocol'
@@ -28,6 +30,7 @@ export interface OpenRouterAdapterOptions {
   readonly apiKey: string
   readonly model?: string
   readonly endpoint?: string
+  readonly modelsEndpoint?: string
   readonly httpReferer?: string
   readonly appTitle?: string
   readonly fetch?: typeof globalThis.fetch
@@ -137,6 +140,21 @@ function optionalNumber(record: Record<string, unknown>, name: string): number |
   return typeof record[name] === 'number' ? record[name] : undefined
 }
 
+function readModelUsage(payload: Record<string, unknown>): ModelTokenUsage | undefined {
+  if (!isRecord(payload.usage)) return undefined
+  const inputTokens = payload.usage.prompt_tokens
+  const outputTokens = payload.usage.completion_tokens
+  if (
+    typeof inputTokens !== 'number'
+    || !Number.isInteger(inputTokens)
+    || inputTokens < 0
+    || typeof outputTokens !== 'number'
+    || !Number.isInteger(outputTokens)
+    || outputTokens < 0
+  ) return undefined
+  return { inputTokens, outputTokens }
+}
+
 function isContextOverflow(status: number, detail: string): boolean {
   return (status === 400 || status === 413) && (
     /context[_ -]?(?:length|window)|maximum context|too many (?:input )?tokens/i.test(detail)
@@ -231,16 +249,19 @@ export class OpenRouterModelAdapter implements ModelAdapter {
   readonly #apiKey: string
   readonly #model: string
   readonly #endpoint: string
+  readonly #modelsEndpoint: string
   readonly #httpReferer: string | undefined
   readonly #appTitle: string | undefined
   readonly #fetch: typeof globalThis.fetch
   readonly #onDiagnostics: ((diagnostics: OpenRouterDiagnostics) => void) | undefined
+  #resolvedInfo: ModelInfo | undefined
 
   constructor(options: OpenRouterAdapterOptions) {
     if (!options.apiKey) throw new OpenRouterRequestError('OpenRouter API key is required')
     this.#apiKey = options.apiKey
     this.#model = options.model ?? 'openrouter/free'
     this.#endpoint = options.endpoint ?? 'https://openrouter.ai/api/v1/chat/completions'
+    this.#modelsEndpoint = options.modelsEndpoint ?? 'https://openrouter.ai/api/v1/models'
     this.#httpReferer = options.httpReferer
     this.#appTitle = options.appTitle
     this.#fetch = options.fetch ?? globalThis.fetch
@@ -251,6 +272,56 @@ export class OpenRouterModelAdapter implements ModelAdapter {
     ) throw new OpenRouterRequestError('OpenRouter context window must be a positive integer')
     if (options.contextWindow !== undefined) this.contextWindow = options.contextWindow
     this.id = `openrouter:${this.#model}`
+  }
+
+  async resolveInfo(options: ModelStreamOptions = {}): Promise<ModelInfo> {
+    if (this.#resolvedInfo) return this.#resolvedInfo
+    if (this.contextWindow !== undefined) {
+      this.#resolvedInfo = { model: this.#model, contextWindow: this.contextWindow }
+      return this.#resolvedInfo
+    }
+    let response: Response
+    try {
+      response = await this.#fetch(this.#modelsEndpoint, {
+        method: 'GET',
+        headers: this.#headers(),
+        ...(options.signal ? { signal: options.signal } : {}),
+      })
+    } catch (error) {
+      options.signal?.throwIfAborted()
+      throw new OpenRouterRequestError('OpenRouter model metadata request failed', {
+        cause: error,
+      })
+    }
+    if (!response.ok) {
+      const detail = (await response.text()).slice(0, 1_000)
+      throw new OpenRouterHttpError(response.status, detail || response.statusText)
+    }
+    let payload: unknown
+    try {
+      payload = await response.json()
+    } catch (error) {
+      throw new OpenRouterResponseError('OpenRouter returned invalid model metadata', {
+        cause: error,
+      })
+    }
+    if (!isRecord(payload) || !Array.isArray(payload.data)) {
+      throw new OpenRouterResponseError('OpenRouter returned invalid model metadata')
+    }
+    const match = payload.data.find((value) => isRecord(value) && (
+      value.id === this.#model || value.canonical_slug === this.#model
+    ))
+    if (!isRecord(match)) {
+      this.#resolvedInfo = { model: this.#model }
+      return this.#resolvedInfo
+    }
+    const contextWindow = match.context_length
+    if (typeof contextWindow !== 'number' || !Number.isInteger(contextWindow) || contextWindow < 1) {
+      this.#resolvedInfo = { model: this.#model }
+      return this.#resolvedInfo
+    }
+    this.#resolvedInfo = { model: this.#model, contextWindow }
+    return this.#resolvedInfo
   }
 
   #headers(): Record<string, string> {
@@ -429,6 +500,7 @@ export class OpenRouterModelAdapter implements ModelAdapter {
         throw new OpenRouterResponseError('OpenRouter stream contained no completion choice')
       }
       this.#emitDiagnostics(diagnostics)
+      const usage = readModelUsage(diagnostics)
       if (toolCalls.size > 0) {
         const calls = [...toolCalls.entries()]
           .sort(([left], [right]) => left - right)
@@ -441,12 +513,14 @@ export class OpenRouterModelAdapter implements ModelAdapter {
           type: 'finish',
           reason: 'completed',
           response: { type: 'tool_calls', calls },
+          ...(usage ? { usage } : {}),
         })
       } else {
         yield snapshot({
           type: 'finish',
           reason: 'completed',
           response: { type: 'message', content: text.join('') },
+          ...(usage ? { usage } : {}),
         })
       }
     } catch (error) {

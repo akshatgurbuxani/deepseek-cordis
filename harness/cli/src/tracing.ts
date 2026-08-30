@@ -2,6 +2,7 @@ import {
   completeModel,
   type ModelAdapter,
   type ModelCompletionOptions,
+  type ModelInfo,
   type ModelStreamOptions,
 } from '@deepseek-cordis/model'
 import type {
@@ -96,6 +97,26 @@ export class TracingModelAdapter implements ModelAdapter {
     this.#trace = trace
     this.id = `trace:${inner.id}`
     if (inner.contextWindow !== undefined) this.contextWindow = inner.contextWindow
+  }
+
+  async resolveInfo(options: ModelStreamOptions = {}): Promise<ModelInfo> {
+    try {
+      const info = this.#inner.resolveInfo
+        ? await this.#inner.resolveInfo(options)
+        : {
+            model: this.#inner.id,
+            ...(this.#inner.contextWindow === undefined
+              ? {}
+              : { contextWindow: this.#inner.contextWindow }),
+          }
+      this.#trace('model/info', info)
+      return info
+    } catch (error) {
+      this.#trace('model/info-error', {
+        error: error instanceof Error ? error.message : String(error),
+      })
+      throw error
+    }
   }
 
   async *stream(

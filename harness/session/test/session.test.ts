@@ -120,3 +120,30 @@ test('compacted budget decisions must reference an existing summary checkpoint',
   }), /does not reference a compaction event/)
   assert.equal(session.events.length, 1)
 })
+
+test('provider usage is log-only and must cite the exact pre-response surface', () => {
+  const session = new InMemorySessionStore().create('usage-anchor')
+  session.append({ type: 'turn/start', turnId: 'turn-1' })
+  session.append({ type: 'user/message', turnId: 'turn-1', content: 'hello' })
+  session.append({
+    type: 'assistant/message', turnId: 'turn-1', content: 'world',
+    usage: {
+      model: 'provider/model', inputTokens: 10, outputTokens: 1,
+      inputSurfaceSequences: [2], inputTools: [],
+    },
+  })
+  assert.deepEqual(session.projectMessages(), [
+    { role: 'user', content: 'hello' },
+    { role: 'assistant', content: 'world' },
+  ])
+
+  const before = session.events
+  assert.throws(() => session.append({
+    type: 'assistant/message', turnId: 'turn-1', content: 'invalid',
+    usage: {
+      model: 'provider/model', inputTokens: 12, outputTokens: 1,
+      inputSurfaceSequences: [2], inputTools: [],
+    },
+  }), /does not match its input surface/)
+  assert.deepEqual(session.events, before)
+})

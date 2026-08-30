@@ -3,7 +3,7 @@ import type {
   AgentLoopPolicyContext,
 } from '@deepseek-cordis/agent-loop'
 import { SessionCompactor } from '@deepseek-cordis/compaction'
-import { ModelContextOverflowError } from '@deepseek-cordis/model'
+import { ModelContextOverflowError, resolveModelInfo } from '@deepseek-cordis/model'
 import type { SessionEventInput } from '@deepseek-cordis/protocol'
 import type { Session } from '@deepseek-cordis/session'
 import { TokenMeter, type TokenMeasurement } from '@deepseek-cordis/token-meter'
@@ -65,12 +65,24 @@ export class ContextBudgetPolicy implements AgentLoopPolicy {
 
   async beforeStep(context: AgentLoopPolicyContext): Promise<void> {
     throwIfAborted(context.signal)
-    const contextWindow = context.model.contextWindow
+    let contextWindow: number | undefined
+    try {
+      contextWindow = (await resolveModelInfo(context.model, {
+        ...(context.signal ? { signal: context.signal } : {}),
+      })).contextWindow
+    } catch {
+      throwIfAborted(context.signal)
+      return
+    }
     if (contextWindow === undefined) return
-    const measurement = this.#meter.measure(context.session, context.tools)
+    const measurement = this.#meter.measure(
+      context.session,
+      context.readTools(),
+      { model: context.model.id },
+    )
     const thresholdTokens = Math.max(1, Math.floor(contextWindow * this.#thresholdRatio))
     if (measurement.totalTokens < thresholdTokens) return
-    await this.#attempt(context, 'pressure', measurement, thresholdTokens)
+    await this.#attempt(context, 'pressure', measurement, thresholdTokens, contextWindow)
   }
 
   async recoverModelError(
@@ -86,8 +98,18 @@ export class ContextBudgetPolicy implements AgentLoopPolicy {
       turnId: context.turnId,
       attempts: attempts + 1,
     })
-    const measurement = this.#meter.measure(context.session, context.tools)
-    return this.#attempt(context, 'context_overflow', measurement)
+    const measurement = this.#meter.measure(
+      context.session,
+      context.tools,
+      { model: context.model.id },
+    )
+    return this.#attempt(
+      context,
+      'context_overflow',
+      measurement,
+      undefined,
+      context.model.contextWindow,
+    )
   }
 
   async #attempt(
@@ -95,26 +117,27 @@ export class ContextBudgetPolicy implements AgentLoopPolicy {
     trigger: 'pressure' | 'context_overflow',
     measurement: TokenMeasurement,
     thresholdTokens?: number,
+    contextWindow?: number,
   ): Promise<boolean> {
     let decision: WithoutTurn<Extract<SessionEventInput, {
       readonly type: 'context-budget/decision'
     }>>
     const triggerMetadata = trigger === 'pressure'
       ? (() => {
-          if (context.model.contextWindow === undefined || thresholdTokens === undefined) {
+          if (contextWindow === undefined || thresholdTokens === undefined) {
             throw new Error('pressure policy requires capacity and threshold metadata')
           }
           return {
             trigger,
-            contextWindow: context.model.contextWindow,
+            contextWindow,
             thresholdTokens,
           } as const
         })()
       : {
           trigger,
-          ...(context.model.contextWindow === undefined
+          ...(contextWindow === undefined
             ? {}
-            : { contextWindow: context.model.contextWindow }),
+            : { contextWindow }),
         } as const
     try {
       const result = await this.#compactor.compact(context.session, {

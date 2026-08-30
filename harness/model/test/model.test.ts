@@ -3,9 +3,11 @@ import test from 'node:test'
 
 import {
   completeModel,
+  completeModelResult,
   ModelContextOverflowError,
   ModelStreamAbortedError,
   ModelStreamProtocolError,
+  resolveModelInfo,
   type ModelAdapter,
 } from '@deepseek-cordis/model'
 import { ReplayModelAdapter } from '@deepseek-cordis/model/testing'
@@ -68,6 +70,51 @@ test('the shared collector exposes deltas and returns only the terminal response
 
   assert.deepEqual(deltas, ['streamed ', 'answer'])
   assert.deepEqual(response, { type: 'message', content: 'streamed answer' })
+})
+
+test('model metadata and provider usage are validated at the shared boundary', async () => {
+  const request: ModelRequest = {
+    sessionId: 'metadata', turnId: 'metadata:turn:1', step: 1, messages: [], tools: [],
+  }
+  const adapter: ModelAdapter = {
+    id: 'dynamic',
+    async resolveInfo() {
+      return { model: 'provider/dynamic', contextWindow: 16_384 }
+    },
+    async *stream() {
+      yield {
+        type: 'finish', reason: 'completed',
+        response: { type: 'message', content: 'done' },
+        usage: { inputTokens: 123, outputTokens: 4 },
+      }
+    },
+  }
+
+  assert.deepEqual(await resolveModelInfo(adapter), {
+    model: 'provider/dynamic', contextWindow: 16_384,
+  })
+  assert.deepEqual(await completeModelResult(adapter, request), {
+    response: { type: 'message', content: 'done' },
+    usage: { inputTokens: 123, outputTokens: 4 },
+  })
+  await assert.rejects(completeModelResult({
+    id: 'invalid-usage',
+    async *stream() {
+      yield {
+        type: 'finish', reason: 'completed',
+        response: { type: 'message', content: 'bad' },
+        usage: { inputTokens: -1, outputTokens: 0 },
+      }
+    },
+  }, request), /invalid token usage/)
+  await assert.rejects(resolveModelInfo({
+    ...adapter,
+    async resolveInfo() { return { model: '', contextWindow: 1 } },
+  }), /must contain a model id/)
+  await assert.rejects(resolveModelInfo({
+    ...adapter,
+    async resolveInfo() { return { model: 'valid', contextWindow: 0 } },
+  }), /contextWindow must be a positive integer/)
 })
 
 test('the shared collector rejects malformed and aborted streams', async () => {

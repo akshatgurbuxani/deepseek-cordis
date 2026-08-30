@@ -2,6 +2,7 @@ import type {
   ModelRequest,
   ModelResponse,
   ModelStreamChunk,
+  ModelTokenUsage,
 } from '@deepseek-cordis/protocol'
 
 export interface ModelStreamOptions {
@@ -12,9 +13,20 @@ export interface ModelCompletionOptions extends ModelStreamOptions {
   readonly onTextDelta?: (delta: string) => void
 }
 
+export interface ModelInfo {
+  readonly model: string
+  readonly contextWindow?: number
+}
+
+export interface ModelCompletionResult {
+  readonly response: ModelResponse
+  readonly usage?: ModelTokenUsage
+}
+
 export interface ModelAdapter {
   readonly id: string
   readonly contextWindow?: number
+  resolveInfo?(options?: ModelStreamOptions): Promise<ModelInfo>
   stream(
     request: ModelRequest,
     options?: ModelStreamOptions,
@@ -46,11 +58,48 @@ export class ModelStreamAbortedError extends ModelStreamError {
 
 export class ModelStreamProtocolError extends ModelStreamError {}
 
-export async function completeModel(
+function validateUsage(usage: ModelTokenUsage | undefined): ModelTokenUsage | undefined {
+  if (usage === undefined) return undefined
+  if (
+    !Number.isInteger(usage.inputTokens)
+    || usage.inputTokens < 0
+    || !Number.isInteger(usage.outputTokens)
+    || usage.outputTokens < 0
+  ) throw new ModelStreamProtocolError('model stream returned invalid token usage')
+  return usage
+}
+
+function validateInfo(info: ModelInfo): ModelInfo {
+  if (typeof info.model !== 'string' || info.model.trim().length === 0) {
+    throw new Error('model info must contain a model id')
+  }
+  if (
+    info.contextWindow !== undefined
+    && (!Number.isInteger(info.contextWindow) || info.contextWindow < 1)
+  ) throw new Error('model info contextWindow must be a positive integer')
+  return info
+}
+
+export async function resolveModelInfo(
+  adapter: ModelAdapter,
+  options: ModelStreamOptions = {},
+): Promise<ModelInfo> {
+  options.signal?.throwIfAborted()
+  const info = adapter.resolveInfo
+    ? await adapter.resolveInfo(options)
+    : {
+        model: adapter.id,
+        ...(adapter.contextWindow === undefined ? {} : { contextWindow: adapter.contextWindow }),
+      }
+  options.signal?.throwIfAborted()
+  return validateInfo(info)
+}
+
+export async function completeModelResult(
   adapter: ModelAdapter,
   request: ModelRequest,
   options: ModelCompletionOptions = {},
-): Promise<ModelResponse> {
+): Promise<ModelCompletionResult> {
   let finish: Extract<ModelStreamChunk, { type: 'finish' }> | undefined
   let streamedText = ''
 
@@ -82,5 +131,17 @@ export async function completeModel(
   } else if (streamedText) {
     throw new ModelStreamProtocolError('model stream mixed text deltas with tool calls')
   }
-  return finish.response
+  const usage = validateUsage(finish.usage)
+  return {
+    response: finish.response,
+    ...(usage === undefined ? {} : { usage }),
+  }
+}
+
+export async function completeModel(
+  adapter: ModelAdapter,
+  request: ModelRequest,
+  options: ModelCompletionOptions = {},
+): Promise<ModelResponse> {
+  return (await completeModelResult(adapter, request, options)).response
 }

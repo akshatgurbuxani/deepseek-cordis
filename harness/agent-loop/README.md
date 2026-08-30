@@ -27,8 +27,15 @@ possible after success or failure.
 An optional `AgentLoopPolicy` runs at the maintenance boundary before request
 derivation and may inspect a failed model call. Tool schemas are read again
 after policy work, so a slow policy cannot freeze a stale registry snapshot.
+The policy receives the same live-schema reader, allowing measurement after an
+asynchronous metadata lookup to use the envelope that will actually be sent.
 Recovery starts a new durable step only when the policy reports a surface
 change; the failed attempt remains closed in the log.
+
+When a successful finish includes provider usage, the loop records it on the
+assistant event with the exact input-surface sequence list and tool schemas used
+for that call. The metadata stays outside model projection while giving a
+restarted token meter a verifiable request anchor.
 
 ```text
 append user input

@@ -16,6 +16,12 @@ chunk boundaries, emits normalized text deltas, and assembles indexed tool-call
 fragments before its completed finish. `complete()` retains the original JSON
 path unless a delta observer requests collection through the streaming seam.
 
+`resolveInfo()` uses the official `/api/v1/models` catalog when no explicit
+capacity override exists. It matches the configured ID or canonical slug,
+accepts only a positive integer `context_length`, and caches a successful or
+known-absent result. Metadata failure disables proactive pressure for that step
+without preventing the provider request or canonical overflow recovery.
+
 When tools exist, tool choice is automatic and parallel tool calls are disabled
 because the current `AgentLoop` executes calls in deterministic order. The
 harness session ID is forwarded as OpenRouter's supported `session_id` field.
@@ -32,7 +38,8 @@ terminal error finishes. This follows the model contract's data boundary while
 the compatibility `complete()` method still throws its typed provider errors.
 
 The adapter opts into router metadata and reports selected model, token counts,
-and the metadata object without interpreting its additive fields. The API key
+and the metadata object without interpreting its additive fields. Valid
+prompt/completion counts also enter the completed stream finish. The API key
 is retained in a private field and placed only in the Authorization header.
 Neither request bodies nor diagnostic values contain it.
 

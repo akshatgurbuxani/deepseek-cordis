@@ -54,13 +54,19 @@ Set exact provider capacity to enable proactive pressure compaction:
 HARNESS_CONTEXT_WINDOW=128000 npm run cli -- "continue the task"
 ```
 
-`OPENROUTER_CONTEXT_WINDOW` is accepted as an OpenRouter-specific alias. The
+OpenRouter capacity is resolved from the official model catalog and cached for
+the adapter lifetime. `HARNESS_CONTEXT_WINDOW` or
+`OPENROUTER_CONTEXT_WINDOW` can override it explicitly. The
 CLI measures the persisted surface and live calculator schema before each
 request, compacts at 80% pressure, and permits one retry after a canonical
 provider overflow only when a new checkpoint commits. Replay mode uses a
 deterministic summary response; live mode uses the configured model through the
 same adapter. Decisions and checkpoint provenance remain in the session file.
-No capacity is guessed from a model name.
+Successful OpenRouter prompt usage is stored with its exact request anchor, so
+later turns and restarts use a provider baseline plus explicit heuristic deltas.
+No capacity or token count is guessed from a model name.
+Traces expose successful `model/info` resolution and safe `model/info-error`
+failures without including credentials.
 
 Interactive commands (including manual inspect/compact), cross-process writer
 locking, parallel tool execution, and provider replacement during a running

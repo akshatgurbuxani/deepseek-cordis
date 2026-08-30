@@ -4,6 +4,7 @@ import test from 'node:test'
 import {
   ModelContextOverflowError,
   ModelStreamAbortedError,
+  resolveModelInfo,
 } from '@deepseek-cordis/model'
 import {
   OpenRouterHttpError,
@@ -321,6 +322,70 @@ test('normalizes HTTP and streamed context-limit failures for policy recovery', 
     () => new OpenRouterModelAdapter({ apiKey: 'test', contextWindow: 0 }),
     /context window must be a positive integer/,
   )
+})
+
+test('resolves and caches exact context capacity from the OpenRouter catalog', async () => {
+  let calls = 0
+  let authorization: string | undefined
+  const adapter = new OpenRouterModelAdapter({
+    apiKey: 'metadata-secret',
+    model: 'openai/gpt-4',
+    modelsEndpoint: 'https://router.test/models',
+    fetch: (async (_input, init) => {
+      calls += 1
+      authorization = (init?.headers as Record<string, string>).Authorization
+      return new Response(JSON.stringify({
+        data: [
+          { id: 'other/model', context_length: 1_000 },
+          { id: 'openai/gpt-4', context_length: 8_192 },
+        ],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    }) as typeof fetch,
+  })
+
+  assert.deepEqual(await resolveModelInfo(adapter), {
+    model: 'openai/gpt-4', contextWindow: 8_192,
+  })
+  assert.deepEqual(await resolveModelInfo(adapter), {
+    model: 'openai/gpt-4', contextWindow: 8_192,
+  })
+  assert.equal(calls, 1)
+  assert.equal(authorization, 'Bearer metadata-secret')
+
+  let overrideFetches = 0
+  const configured = new OpenRouterModelAdapter({
+    apiKey: 'test', contextWindow: 32_000,
+    fetch: (async () => { overrideFetches += 1; throw new Error('unused') }) as typeof fetch,
+  })
+  assert.equal((await resolveModelInfo(configured)).contextWindow, 32_000)
+  assert.equal(overrideFetches, 0)
+})
+
+test('model metadata lookup validates failures and tolerates an unknown route', async () => {
+  const adapterFor = (fetch: typeof globalThis.fetch) => new OpenRouterModelAdapter({
+    apiKey: 'metadata-secret', model: 'unknown/model', fetch,
+  })
+  const missing = adapterFor((async () => new Response(JSON.stringify({ data: [] }), {
+    status: 200, headers: { 'Content-Type': 'application/json' },
+  })) as typeof fetch)
+  assert.deepEqual(await resolveModelInfo(missing), { model: 'unknown/model' })
+
+  await assert.rejects(resolveModelInfo(adapterFor(
+    (async () => { throw new Error('socket failed') }) as typeof fetch,
+  )), (error) => error instanceof OpenRouterRequestError
+    && /metadata request failed/.test(error.message)
+    && !error.message.includes('metadata-secret'))
+
+  await assert.rejects(resolveModelInfo(adapterFor(
+    (async () => new Response('catalog unavailable', { status: 503 })) as typeof fetch,
+  )), (error) => error instanceof OpenRouterHttpError && error.status === 503)
+
+  await assert.rejects(resolveModelInfo(adapterFor(
+    (async () => new Response('{bad json', { status: 200 })) as typeof fetch,
+  )), /invalid model metadata/)
+  await assert.rejects(resolveModelInfo(adapterFor(
+    (async () => new Response('{}', { status: 200 })) as typeof fetch,
+  )), /invalid model metadata/)
 })
 
 test('rejects invalid JSON, completion envelopes, messages, and empty completions', async () => {

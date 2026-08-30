@@ -31,3 +31,8 @@ projection error and is rejected before either reference store commits it.
 Budget decisions never alter the surface. A decision that claims compaction
 must reference an earlier `compaction/summary`; this relationship is checked
 before either store accepts it.
+
+Assistant provider usage is also log-only. Its cited input sequences must equal
+the complete surface immediately before that response event; reordered,
+partial, or invented anchors are projection errors. Tool schemas remain with
+the anchor because they affect prompt usage without appearing as messages.
