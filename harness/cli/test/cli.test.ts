@@ -26,6 +26,15 @@ function recorder(): { readonly records: TraceRecord[]; readonly trace: TraceSin
   }
 }
 
+function sseResponse(payloads: readonly unknown[]): Response {
+  const body = payloads.map((payload) => `data: ${JSON.stringify(payload)}\n\n`).join('')
+    + 'data: [DONE]\n\n'
+  return new Response(body, {
+    status: 200,
+    headers: { 'Content-Type': 'text/event-stream' },
+  })
+}
+
 test('argument parsing selects replay or OpenRouter without exposing environment values', () => {
   assert.deepEqual(parseCliArguments(['--replay', 'add', '2', 'and', '3'], {}), {
     mode: 'replay',
@@ -139,25 +148,36 @@ test('live-mode composition maps a tool round trip and never traces its API key'
   const fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
     bodies.push(JSON.parse(String(init?.body)))
     call += 1
-    return new Response(JSON.stringify(call === 1
-      ? {
-          model: 'selected/tool-model',
-          choices: [{ message: {
-            tool_calls: [{
+    return call === 1
+      ? sseResponse([
+          {
+            model: 'selected/tool-model',
+            choices: [{ delta: { tool_calls: [{
+              index: 0,
               id: 'live-add',
               type: 'function',
-              function: { name: 'add', arguments: '{"a":8,"b":9}' },
-            }],
-          } }],
-          usage: { prompt_tokens: 7, completion_tokens: 3, total_tokens: 10 },
-          openrouter_metadata: { strategy: 'free' },
-        }
-      : {
-          model: 'selected/tool-model',
-          choices: [{ message: { content: 'The answer is 17.' } }],
-        }), { status: 200 })
+              function: { name: 'add', arguments: '{"a":8' },
+            }] } }],
+          },
+          {
+            choices: [{ delta: { tool_calls: [{
+              index: 0,
+              function: { arguments: ',"b":9}' },
+            }] } }],
+          },
+          {
+            choices: [],
+            usage: { prompt_tokens: 7, completion_tokens: 3, total_tokens: 10 },
+            openrouter_metadata: { strategy: 'free' },
+          },
+        ])
+      : sseResponse([
+          { model: 'selected/tool-model', choices: [{ delta: { content: 'The answer ' } }] },
+          { choices: [{ delta: { content: 'is 17.' } }] },
+        ])
   }) as typeof globalThis.fetch
   const output: string[] = []
+  const deltas: string[] = []
 
   const result = await runCli({
     argv: ['add 8 and 9'],
@@ -170,13 +190,17 @@ test('live-mode composition maps a tool round trip and never traces its API key'
     fetch,
     trace,
     output: (content) => { output.push(content) },
+    onTextDelta: (delta) => { deltas.push(delta) },
     sessionId: 'openrouter-cli',
   })
 
   assert.equal(result.content, 'The answer is 17.')
   assert.deepEqual(output, ['The answer is 17.'])
+  assert.deepEqual(deltas, ['The answer ', 'is 17.'])
   assert.equal(bodies.length, 2)
   assert.ok(Array.isArray(bodies[0]?.tools))
+  assert.equal(bodies[0]?.stream, true)
+  assert.deepEqual(bodies[0]?.stream_options, { include_usage: true })
   assert.deepEqual(bodies[1]?.messages, [
     { role: 'user', content: 'add 8 and 9' },
     {
@@ -192,6 +216,35 @@ test('live-mode composition maps a tool round trip and never traces its API key'
   ])
   assert.ok(records.some(({ label }) => label === 'openrouter/diagnostics'))
   assert.equal(JSON.stringify(records).includes('super-secret-key'), false)
+})
+
+test('CLI cancellation records an aborted turn and drains every mounted fiber', async () => {
+  const { records, trace } = recorder()
+  const controller = new AbortController()
+  const fetch = (async () => sseResponse([
+    { choices: [{ delta: { content: 'partial' } }] },
+    { choices: [{ delta: { content: ' text' } }] },
+  ])) as typeof globalThis.fetch
+
+  await assert.rejects(runCli({
+    argv: ['cancel this'],
+    env: { OPENROUTER_API_KEY: 'cancel-secret' },
+    fetch,
+    trace,
+    output: () => { assert.fail('cancelled turn must not print a final response') },
+    onTextDelta: () => { controller.abort({ kind: 'user' }) },
+    signal: controller.signal,
+    sessionId: 'cancel-cli',
+  }), (error) => error instanceof Error && error.name === 'TurnCancelledError')
+
+  assert.ok(records.some(({ label, value }) =>
+    label === 'session/event'
+    && JSON.stringify(value).includes('"status":"aborted"')))
+  assert.equal(records.some(({ label }) => label === 'cli/result'), false)
+  assert.ok(records.some(({ label, value }) =>
+    label === 'runtime/fiber'
+    && JSON.stringify(value).includes('DISPOSED')))
+  assert.equal(JSON.stringify(records).includes('cancel-secret'), false)
 })
 
 test('configuration and provider failures reject while still draining mounted fibers', async () => {

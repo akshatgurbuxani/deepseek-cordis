@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { AgentLoop, StepLimitError } from '@deepseek-cordis/agent-loop'
+import { AgentLoop, StepLimitError, TurnCancelledError } from '@deepseek-cordis/agent-loop'
 import type { ModelAdapter } from '@deepseek-cordis/model'
 import { ReplayModelAdapter } from '@deepseek-cordis/model/testing'
 import type { JsonValue, ModelRequest, ModelResponse } from '@deepseek-cordis/protocol'
@@ -224,7 +224,7 @@ test('reconnecting the stable loop changes the model and preserves session histo
 test('model failure durably closes the turn and releases its run lock', async () => {
   const failing: ModelAdapter = {
     id: 'failing',
-    async complete() { throw 'model string failure' },
+    async *stream() { throw 'model string failure' },
   }
   const { sessions, tools, loop, disconnect } = setup(failing)
   const session = sessions.create('model-failure')
@@ -250,7 +250,7 @@ test('model failure durably closes the turn and releases its run lock', async ()
 test('model Error objects record their message before escaping', async () => {
   const failing: ModelAdapter = {
     id: 'error-object',
-    async complete() { throw new Error('provider unavailable') },
+    async *stream() { throw new Error('provider unavailable') },
   }
   const { sessions, loop } = setup(failing)
   const session = sessions.create('error-object')
@@ -282,9 +282,11 @@ test('connection and session guards reject invalid ownership and concurrent work
   const started = new Promise<void>((resolve) => { announceStart = resolve })
   const blocking: ModelAdapter = {
     id: 'blocking',
-    async complete(_request: ModelRequest) {
+    async *stream(_request: ModelRequest) {
       announceStart?.()
-      return new Promise<ModelResponse>((resolve) => { release = resolve })
+      const response = await new Promise<ModelResponse>((resolve) => { release = resolve })
+      if (response.type === 'message') yield { type: 'text-delta' as const, delta: response.content }
+      yield { type: 'finish' as const, reason: 'completed' as const, response }
     },
   }
   const { sessions, tools, loop, disconnect } = setup(blocking)
@@ -310,11 +312,94 @@ test('connection and session guards reject invalid ownership and concurrent work
   )
 })
 
+test('model-stream cancellation closes the durable turn without committing partial text', async () => {
+  const streaming: ModelAdapter = {
+    id: 'cancel-stream',
+    async *stream(_request, options = {}) {
+      yield { type: 'text-delta', delta: 'partial' }
+      yield options.signal?.aborted
+        ? { type: 'finish', reason: 'aborted' }
+        : {
+            type: 'finish', reason: 'completed',
+            response: { type: 'message', content: 'partial' },
+          }
+    },
+  }
+  const { sessions, tools, loop, disconnect } = setup(streaming)
+  const session = sessions.create('cancel-model')
+  const controller = new AbortController()
+  const deltas: string[] = []
+
+  await assert.rejects(loop.run(session, 'cancel me', {
+    signal: controller.signal,
+    onTextDelta: (delta) => {
+      deltas.push(delta)
+      controller.abort({ kind: 'user' })
+    },
+  }), TurnCancelledError)
+
+  assert.deepEqual(deltas, ['partial'])
+  assert.equal(session.events.some((event) => event.type === 'assistant/message'), false)
+  assert.equal(session.events.some((event) => event.type === 'turn/error'), false)
+  assert.deepEqual(session.events.slice(-2), [
+    {
+      type: 'step/end', turnId: 'cancel-model:turn:1', step: 1,
+      outcome: 'aborted', sequence: 4,
+    },
+    { type: 'turn/end', turnId: 'cancel-model:turn:1', status: 'aborted', sequence: 5 },
+  ])
+
+  disconnect()
+  loop.connect(sessions, tools, new ReplayModelAdapter('after-cancel', [
+    { type: 'message', content: 'next turn works' },
+  ]))
+  assert.equal((await loop.run(session, 'retry')).content, 'next turn works')
+})
+
+test('tool cancellation receives the turn signal and records no invented result', async () => {
+  const adapter = new ReplayModelAdapter('cancel-tool', [{
+    type: 'tool_calls',
+    calls: [{ id: 'wait-1', name: 'wait', arguments: null }],
+  }])
+  const { sessions, tools, loop } = setup(adapter)
+  let started: (() => void) | undefined
+  const toolStarted = new Promise<void>((resolve) => { started = resolve })
+  tools.register({
+    name: 'wait',
+    description: 'Wait until cancelled',
+    inputSchema: {},
+    async execute(_arguments, { signal }) {
+      started?.()
+      await new Promise<void>((_resolve, reject) => {
+        signal?.addEventListener('abort', () => { reject(signal.reason) }, { once: true })
+      })
+      return null
+    },
+  })
+  const session = sessions.create('cancel-tool')
+  const controller = new AbortController()
+  const running = loop.run(session, 'wait', { signal: controller.signal })
+  await toolStarted
+  controller.abort({ kind: 'user' })
+
+  await assert.rejects(running, TurnCancelledError)
+  assert.equal(session.events.some((event) => event.type === 'tool/result'), false)
+  assert.deepEqual(session.events.slice(-2).map((event) => event.type), ['step/end', 'turn/end'])
+  const terminal = session.events.at(-1)
+  assert.equal(terminal?.type === 'turn/end' ? terminal.status : undefined, 'aborted')
+})
+
 test('invalid step limits fail before recording a turn', async () => {
   const { sessions, loop } = setup(new ReplayModelAdapter('unused', []))
   const session = sessions.create('invalid-limit')
 
   await assert.rejects(loop.run(session, 'zero', { maxSteps: 0 }), RangeError)
   await assert.rejects(loop.run(session, 'fraction', { maxSteps: 1.5 }), RangeError)
+  assert.deepEqual(session.events, [])
+
+  const controller = new AbortController()
+  controller.abort({ kind: 'user' })
+  await assert.rejects(loop.run(session, 'cancelled', { signal: controller.signal }),
+    TurnCancelledError)
   assert.deepEqual(session.events, [])
 })

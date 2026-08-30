@@ -1,9 +1,15 @@
-import type { ModelAdapter } from '@deepseek-cordis/model'
+import {
+  completeModel,
+  type ModelAdapter,
+  type ModelCompletionOptions,
+  type ModelStreamOptions,
+} from '@deepseek-cordis/model'
 import {
   type JsonValue,
   type ModelMessage,
   type ModelRequest,
   type ModelResponse,
+  type ModelStreamChunk,
   snapshot,
   type ToolCall,
 } from '@deepseek-cordis/protocol'
@@ -129,6 +135,88 @@ function optionalNumber(record: Record<string, unknown>, name: string): number |
   return typeof record[name] === 'number' ? record[name] : undefined
 }
 
+async function* readSsePayloads(body: ReadableStream<Uint8Array>): AsyncIterable<unknown> {
+  const reader = body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let done = false
+  try {
+    while (!done) {
+      const result = await reader.read()
+      done = result.done
+      buffer += decoder.decode(result.value, { stream: !done })
+      buffer = buffer.replaceAll('\r\n', '\n')
+      if (done) buffer += '\n\n'
+
+      let boundary = buffer.indexOf('\n\n')
+      while (boundary >= 0) {
+        const event = buffer.slice(0, boundary)
+        buffer = buffer.slice(boundary + 2)
+        const data = event
+          .split('\n')
+          .filter((line) => line.startsWith('data:'))
+          .map((line) => line.slice(5).trimStart())
+          .join('\n')
+        if (data === '[DONE]') return
+        if (data) {
+          try {
+            yield JSON.parse(data)
+          } catch (error) {
+            throw new OpenRouterResponseError('OpenRouter returned invalid streaming JSON', {
+              cause: error,
+            })
+          }
+        }
+        boundary = buffer.indexOf('\n\n')
+      }
+    }
+  } finally {
+    try { await reader.cancel() } catch {}
+    reader.releaseLock()
+  }
+}
+
+interface PartialToolCall {
+  id: string
+  name: string
+  arguments: string
+}
+
+function applyToolCallDelta(calls: Map<number, PartialToolCall>, value: unknown): void {
+  if (!isRecord(value) || !Number.isInteger(value.index) || Number(value.index) < 0) {
+    throw new OpenRouterResponseError('OpenRouter returned an invalid streaming tool call')
+  }
+  const index = Number(value.index)
+  const call = calls.get(index) ?? { id: '', name: '', arguments: '' }
+  if (value.id !== undefined) {
+    if (typeof value.id !== 'string') {
+      throw new OpenRouterResponseError('OpenRouter returned an invalid streaming tool call id')
+    }
+    call.id += value.id
+  }
+  if (value.type !== undefined && value.type !== 'function') {
+    throw new OpenRouterResponseError('OpenRouter returned an invalid streaming tool call type')
+  }
+  if (value.function !== undefined) {
+    if (!isRecord(value.function)) {
+      throw new OpenRouterResponseError('OpenRouter returned an invalid streaming tool function')
+    }
+    if (value.function.name !== undefined) {
+      if (typeof value.function.name !== 'string') {
+        throw new OpenRouterResponseError('OpenRouter returned an invalid streaming tool name')
+      }
+      call.name += value.function.name
+    }
+    if (value.function.arguments !== undefined) {
+      if (typeof value.function.arguments !== 'string') {
+        throw new OpenRouterResponseError('OpenRouter returned invalid streaming tool arguments')
+      }
+      call.arguments += value.function.arguments
+    }
+  }
+  calls.set(index, call)
+}
+
 export class OpenRouterModelAdapter implements ModelAdapter {
   readonly id: string
   readonly #apiKey: string
@@ -151,7 +239,7 @@ export class OpenRouterModelAdapter implements ModelAdapter {
     this.id = `openrouter:${this.#model}`
   }
 
-  async complete(request: ModelRequest): Promise<ModelResponse> {
+  #headers(): Record<string, string> {
     const headers: Record<string, string> = {
       Authorization: `Bearer ${this.#apiKey}`,
       'Content-Type': 'application/json',
@@ -159,7 +247,10 @@ export class OpenRouterModelAdapter implements ModelAdapter {
     }
     if (this.#httpReferer) headers['HTTP-Referer'] = this.#httpReferer
     if (this.#appTitle) headers['X-OpenRouter-Title'] = this.#appTitle
+    return headers
+  }
 
+  #body(request: ModelRequest, stream: boolean): Record<string, unknown> {
     const wireTools = request.tools.map((tool) => ({
       type: 'function' as const,
       function: {
@@ -172,21 +263,32 @@ export class OpenRouterModelAdapter implements ModelAdapter {
       model: this.#model,
       messages: request.messages.map(toWireMessage),
       session_id: request.sessionId,
+      ...(stream ? { stream: true, stream_options: { include_usage: true } } : {}),
       ...(wireTools.length === 0 ? {} : {
         tools: wireTools,
         tool_choice: 'auto' as const,
         parallel_tool_calls: false,
       }),
     }
+    return body
+  }
 
+  async #fetchResponse(
+    request: ModelRequest,
+    stream: boolean,
+    signal?: AbortSignal,
+  ): Promise<Response> {
+    signal?.throwIfAborted()
     let response: Response
     try {
       response = await this.#fetch(this.#endpoint, {
         method: 'POST',
-        headers,
-        body: JSON.stringify(body),
+        headers: this.#headers(),
+        body: JSON.stringify(this.#body(request, stream)),
+        ...(signal ? { signal } : {}),
       })
     } catch (error) {
+      signal?.throwIfAborted()
       const message = error instanceof Error ? error.message : String(error)
       throw new OpenRouterRequestError(`OpenRouter network request failed: ${message}`, {
         cause: error,
@@ -197,22 +299,10 @@ export class OpenRouterModelAdapter implements ModelAdapter {
       const detail = (await response.text()).slice(0, 1_000)
       throw new OpenRouterHttpError(response.status, detail || response.statusText)
     }
+    return response
+  }
 
-    let payload: unknown
-    try {
-      payload = await response.json()
-    } catch (error) {
-      throw new OpenRouterResponseError('OpenRouter returned invalid JSON', { cause: error })
-    }
-    if (!isRecord(payload) || !Array.isArray(payload.choices) || !isRecord(payload.choices[0])) {
-      throw new OpenRouterResponseError('OpenRouter returned an invalid completion response')
-    }
-    const choice = payload.choices[0]
-    if (!isRecord(choice.message)) {
-      throw new OpenRouterResponseError('OpenRouter completion did not contain a message')
-    }
-    const message = choice.message
-
+  #emitDiagnostics(payload: Record<string, unknown>): void {
     const usage = isRecord(payload.usage) ? payload.usage : {}
     const promptTokens = optionalNumber(usage, 'prompt_tokens')
     const completionTokens = optionalNumber(usage, 'completion_tokens')
@@ -228,6 +318,30 @@ export class OpenRouterModelAdapter implements ModelAdapter {
       ...(totalTokens === undefined ? {} : { totalTokens }),
       ...(routerMetadata === undefined ? {} : { routerMetadata }),
     }))
+  }
+
+  async complete(
+    request: ModelRequest,
+    options: ModelCompletionOptions = {},
+  ): Promise<ModelResponse> {
+    if (options.onTextDelta) return completeModel(this, request, options)
+    const response = await this.#fetchResponse(request, false, options.signal)
+    let payload: unknown
+    try {
+      payload = await response.json()
+    } catch (error) {
+      throw new OpenRouterResponseError('OpenRouter returned invalid JSON', { cause: error })
+    }
+    if (!isRecord(payload) || !Array.isArray(payload.choices) || !isRecord(payload.choices[0])) {
+      throw new OpenRouterResponseError('OpenRouter returned an invalid completion response')
+    }
+    const choice = payload.choices[0]
+    if (!isRecord(choice.message)) {
+      throw new OpenRouterResponseError('OpenRouter completion did not contain a message')
+    }
+    const message = choice.message
+
+    this.#emitDiagnostics(payload)
 
     if (Array.isArray(message.tool_calls) && message.tool_calls.length > 0) {
       return snapshot({ type: 'tool_calls', calls: message.tool_calls.map(readToolCall) })
@@ -238,5 +352,88 @@ export class OpenRouterModelAdapter implements ModelAdapter {
     throw new OpenRouterResponseError(
       'OpenRouter completion contained neither text nor tool calls',
     )
+  }
+
+  async *stream(
+    request: ModelRequest,
+    options: ModelStreamOptions = {},
+  ): AsyncIterable<ModelStreamChunk> {
+    const text: string[] = []
+    const toolCalls = new Map<number, PartialToolCall>()
+    let diagnostics: Record<string, unknown> = {}
+    let sawChoice = false
+    try {
+      const response = await this.#fetchResponse(request, true, options.signal)
+      if (!response.body) throw new OpenRouterResponseError('OpenRouter stream has no body')
+
+      for await (const value of readSsePayloads(response.body)) {
+        options.signal?.throwIfAborted()
+        if (!isRecord(value)) {
+          throw new OpenRouterResponseError('OpenRouter returned an invalid streaming response')
+        }
+        if (isRecord(value.error)) {
+          const message = typeof value.error.message === 'string'
+            ? value.error.message
+            : 'OpenRouter stream failed'
+          throw new OpenRouterResponseError(message)
+        }
+        diagnostics = { ...diagnostics, ...value }
+        if (!Array.isArray(value.choices) || value.choices.length === 0) continue
+        sawChoice = true
+        const choice = value.choices[0]
+        if (!isRecord(choice) || !isRecord(choice.delta)) {
+          throw new OpenRouterResponseError('OpenRouter returned an invalid streaming choice')
+        }
+        const delta = choice.delta
+        if (delta.content !== undefined && delta.content !== null) {
+          if (typeof delta.content !== 'string') {
+            throw new OpenRouterResponseError('OpenRouter returned invalid streaming text')
+          }
+          if (delta.content) {
+            text.push(delta.content)
+            yield snapshot({ type: 'text-delta', delta: delta.content })
+          }
+        }
+        if (delta.tool_calls !== undefined) {
+          if (!Array.isArray(delta.tool_calls)) {
+            throw new OpenRouterResponseError('OpenRouter returned invalid streaming tool calls')
+          }
+          delta.tool_calls.forEach((call) => applyToolCallDelta(toolCalls, call))
+        }
+      }
+
+      options.signal?.throwIfAborted()
+      if (!sawChoice) {
+        throw new OpenRouterResponseError('OpenRouter stream contained no completion choice')
+      }
+      this.#emitDiagnostics(diagnostics)
+      if (toolCalls.size > 0) {
+        const calls = [...toolCalls.entries()]
+          .sort(([left], [right]) => left - right)
+          .map(([, call]) => readToolCall({
+            id: call.id,
+            type: 'function',
+            function: { name: call.name, arguments: call.arguments },
+          }))
+        yield snapshot({
+          type: 'finish',
+          reason: 'completed',
+          response: { type: 'tool_calls', calls },
+        })
+      } else {
+        yield snapshot({
+          type: 'finish',
+          reason: 'completed',
+          response: { type: 'message', content: text.join('') },
+        })
+      }
+    } catch (error) {
+      if (options.signal?.aborted) {
+        yield { type: 'finish', reason: 'aborted' }
+        return
+      }
+      const message = error instanceof Error ? error.message : String(error)
+      yield { type: 'finish', reason: 'error', error: message }
+    }
   }
 }

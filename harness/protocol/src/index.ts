@@ -54,12 +54,12 @@ export type SessionEvent =
   | EventBase & {
     readonly type: 'step/end'
     readonly step: number
-    readonly outcome: 'tool_calls' | 'completed' | 'failed'
+    readonly outcome: 'tool_calls' | 'completed' | 'failed' | 'aborted'
   }
   | EventBase & { readonly type: 'turn/error'; readonly error: string }
   | EventBase & {
     readonly type: 'turn/end'
-    readonly status: 'completed' | 'failed'
+    readonly status: 'completed' | 'failed' | 'aborted'
   }
 
 export type SessionEventInput = SessionEvent extends infer Event
@@ -99,9 +99,15 @@ export type ModelResponse =
   | { readonly type: 'message'; readonly content: string }
   | { readonly type: 'tool_calls'; readonly calls: readonly ToolCall[] }
 
-export interface RunOptions {
-  readonly maxSteps?: number
-}
+export type ModelStreamChunk =
+  | { readonly type: 'text-delta'; readonly delta: string }
+  | {
+    readonly type: 'finish'
+    readonly reason: 'completed'
+    readonly response: ModelResponse
+  }
+  | { readonly type: 'finish'; readonly reason: 'error'; readonly error: string }
+  | { readonly type: 'finish'; readonly reason: 'aborted' }
 
 export interface RunResult {
   readonly turnId: string

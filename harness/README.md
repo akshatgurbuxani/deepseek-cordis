@@ -66,22 +66,24 @@ implementation remains the default for tests and ephemeral commands.
 
 ### `model`
 
-Owns the provider-neutral `ModelAdapter` contract. A deterministic replay
-adapter is exposed from a testing subpath so agent-loop tests do not depend on
-a network provider.
+Owns the provider-neutral `ModelAdapter` stream contract and shared terminal
+collector. A deterministic replay adapter is exposed from a testing subpath so
+agent-loop tests do not depend on a network provider.
 
 ### `tools`
 
 Owns the registry contract and in-memory registry. Registrations return
 idempotent disposers; schemas are immutable snapshots; missing tools and thrown
-handlers produce explicit execution results.
+handlers produce explicit execution results; cancellation remains a control
+signal rather than a model-visible tool failure.
 
 ### `agent-loop`
 
 Consumes session, model, and tool contracts. It owns turn/step progression,
 model-history projection, ordered tool execution, failure events, per-session
-run exclusion, and the maximum-step guard. It knows nothing about Cordis,
-OpenRouter, CLI arguments, or persistence.
+run exclusion, stream collection, cooperative cancellation, and the
+maximum-step guard. It knows nothing about Cordis, OpenRouter, CLI arguments,
+or persistence.
 
 ### `runtime-cordis`
 
@@ -509,13 +511,67 @@ same directory and proves the second boot resumes as turn two with both user
 messages in projected history. Together with PRs 1–5, 56 deterministic tests
 pass and one live OpenRouter smoke test remains opt-in.
 
+### PR 7: `feature/007-streaming-cancellation`
+
+Promote streaming to the provider-neutral model seam and carry one cooperative
+turn signal through model and tool execution. A stream emits text deltas and
+exactly one terminal finish: completed with a normalized response, failed with
+a safe message, or aborted. The shared model collector validates this boundary,
+forwards live text, and returns only the terminal response. The session log
+therefore remains the source of truth without treating transient partial text as
+committed history.
+
+Cancellation closes an open step and turn with the coarse `aborted` outcome. It
+does not persist the same-process abort cause, a `turn/error`, partial assistant
+text, or an interrupted tool result. The original cause remains available only
+as the runtime `TurnCancelledError.cause`. A signal aborted before admission
+leaves no session events. The per-session run lock and Cordis-owned provider
+connection still release at their existing convergence boundaries.
+
+OpenRouter's canonical path now requests server-sent events and terminal usage,
+handles keepalive comments and arbitrary network chunk boundaries, streams text,
+and assembles indexed tool-call fragments before publishing a completed finish.
+The CLI sends `SIGINT` through the turn signal, waits for durable closure and
+manifest cleanup, and exits 130. The existing non-streaming adapter method
+remains as a compatibility path for direct callers.
+
+#### Upstream motivation and adaptation boundary
+
+This feature was checked on August 30, 2026 against the Cordis paper at
+[`0d43a6f`](https://github.com/cordiverse/paper/commit/0d43a6f18004a7b5bf9662c31aa08c3712d232ec)
+and DeepSeek Harness at
+[`cd5ef81`](https://github.com/deepseek-ai/deepseek-harness/commit/cd5ef8148158c3a752a658978873241fdf8e2bbc).
+The paper supplies the ownership rule: live work and its cleanup must remain
+attributable to the component that introduced it. DeepSeek supplies the agent
+motivation: raw stream chunks have one terminal outcome, the active turn owns
+one abort signal shared with tools, and durable cancellation records a coarse
+aborted boundary rather than arbitrary signal data.
+
+This repository adapts those invariants to its smaller message/tool-call
+protocol. It does not copy DeepSeek's merge-extensible content blocks,
+reasoning chunks, usage chunks, retry routing, inbox/steering, agent registry,
+or full `BlockAssembler`. Cordis continues to own provider lifecycle through
+`runtime-cordis`; Feature 7 changes no Cordis internals or capability direction.
+
+#### PR 7 result
+
+Implemented the stream protocol, shared collector, deterministic replay stream,
+turn-scoped cancellation, signal-aware tool execution, OpenRouter SSE parsing,
+fragmented tool-call assembly, live CLI output, `SIGINT` handling, tracing, and
+durable aborted boundaries. Nine new deterministic tests cover chunk assembly,
+malformed and aborted streams, split SSE frames, streamed diagnostics,
+fragmented tool calls, model cancellation, tool cancellation, pre-admission
+cancellation, CLI cleanup, and signal identity. Together with PRs 1–6, 65
+deterministic tests pass and one live OpenRouter smoke test remains opt-in.
+
 ### Later milestones
 
-Add streaming and cancellation before parallel tools. Add compaction only after
-the persistent log can prove which history produced each summary. Add approval
-and sandbox boundaries before filesystem, shell, browser, or other
-consequential tools. Subagents, attachments, scheduling, and UI remain outside
-the first production milestone.
+Repair a genuinely open trailing turn on file-session startup before adding
+interactive resume. Add compaction only after the persistent log can prove
+which history produced each summary. Add approval and sandbox boundaries before
+filesystem, shell, browser, or other consequential tools. Parallel tools,
+subagents, attachments, scheduling, and UI remain outside the first production
+milestone.
 
 ## Promotion rules
 

@@ -1,7 +1,10 @@
-import type { ModelAdapter } from '@deepseek-cordis/model'
+import {
+  completeModel,
+  ModelStreamAbortedError,
+  type ModelAdapter,
+} from '@deepseek-cordis/model'
 import {
   type ModelResponse,
-  type RunOptions,
   type RunResult,
   snapshot,
 } from '@deepseek-cordis/protocol'
@@ -9,6 +12,23 @@ import type { Session, SessionStore } from '@deepseek-cordis/session'
 import type { ToolRegistry } from '@deepseek-cordis/tools'
 
 export class StepLimitError extends Error {}
+
+export class TurnCancelledError extends Error {
+  constructor(reason?: unknown) {
+    super('turn cancelled', reason === undefined ? undefined : { cause: reason })
+    this.name = 'TurnCancelledError'
+  }
+}
+
+export interface RunOptions {
+  readonly maxSteps?: number
+  readonly signal?: AbortSignal
+  readonly onTextDelta?: (delta: string) => void
+}
+
+function throwIfCancelled(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) throw new TurnCancelledError(signal.reason)
+}
 
 export class AgentLoop {
   readonly #running = new Set<Session>()
@@ -52,43 +72,51 @@ export class AgentLoop {
     if (!Number.isInteger(maxSteps) || maxSteps < 1) {
       throw new RangeError('maxSteps must be a positive integer')
     }
+    throwIfCancelled(options.signal)
     const turnNumber = session.events.filter((event) => event.type === 'turn/start').length + 1
     const turnId = `${session.id}:turn:${turnNumber}`
     this.#running.add(session)
     session.append({ type: 'turn/start', turnId })
     session.append({ type: 'user/message', turnId, content: input })
 
+    let openStep: number | undefined
     try {
       for (let step = 1; step <= maxSteps; step += 1) {
+        throwIfCancelled(options.signal)
         session.append({ type: 'step/start', turnId, step })
-        let response: ModelResponse
-        try {
-          response = await model.complete(snapshot({
+        openStep = step
+        const response: ModelResponse = await completeModel(
+          model,
+          snapshot({
             sessionId: session.id,
             turnId,
             step,
             messages: session.projectMessages(),
             tools: tools.schemas(),
-          }))
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error)
-          session.append({ type: 'step/end', turnId, step, outcome: 'failed' })
-          session.append({ type: 'turn/error', turnId, error: message })
-          session.append({ type: 'turn/end', turnId, status: 'failed' })
-          throw error
-        }
+          }),
+          {
+            ...(options.signal ? { signal: options.signal } : {}),
+            ...(options.onTextDelta ? { onTextDelta: options.onTextDelta } : {}),
+          },
+        )
+        throwIfCancelled(options.signal)
 
         if (response.type === 'message') {
           session.append({ type: 'assistant/message', turnId, content: response.content })
           session.append({ type: 'step/end', turnId, step, outcome: 'completed' })
+          openStep = undefined
           session.append({ type: 'turn/end', turnId, status: 'completed' })
           return { turnId, content: response.content, steps: step }
         }
 
         session.append({ type: 'assistant/tool-calls', turnId, calls: response.calls })
         for (const call of response.calls) {
+          throwIfCancelled(options.signal)
           session.append({ type: 'tool/call', turnId, call })
-          const execution = await tools.execute(call.name, call.arguments)
+          const execution = await tools.execute(call.name, call.arguments, {
+            ...(options.signal ? { signal: options.signal } : {}),
+          })
+          throwIfCancelled(options.signal)
           session.append(execution.ok
             ? {
                 type: 'tool/result',
@@ -108,12 +136,32 @@ export class AgentLoop {
               })
         }
         session.append({ type: 'step/end', turnId, step, outcome: 'tool_calls' })
+        openStep = undefined
       }
 
-      const error = new StepLimitError(`turn exceeded the maximum of ${maxSteps} model steps`)
-      session.append({ type: 'turn/error', turnId, error: error.message })
-      session.append({ type: 'turn/end', turnId, status: 'failed' })
-      throw error
+      throw new StepLimitError(`turn exceeded the maximum of ${maxSteps} model steps`)
+    } catch (error) {
+      const cancelled = options.signal?.aborted || error instanceof ModelStreamAbortedError
+      const failure = cancelled
+        ? new TurnCancelledError(options.signal?.reason)
+        : error
+      if (openStep !== undefined) {
+        session.append({
+          type: 'step/end',
+          turnId,
+          step: openStep,
+          outcome: cancelled ? 'aborted' : 'failed',
+        })
+      }
+      if (!cancelled) {
+        session.append({
+          type: 'turn/error',
+          turnId,
+          error: failure instanceof Error ? failure.message : String(failure),
+        })
+      }
+      session.append({ type: 'turn/end', turnId, status: cancelled ? 'aborted' : 'failed' })
+      throw failure
     } finally {
       this.#running.delete(session)
     }

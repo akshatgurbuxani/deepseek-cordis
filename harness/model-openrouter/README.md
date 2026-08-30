@@ -3,15 +3,19 @@
 Provider-neutral OpenRouter implementation of `ModelAdapter`.
 
 The adapter maps immutable harness messages and tool schemas to OpenRouter's
-non-streaming chat-completions API, normalizes text and local tool calls, and
-reports usage plus additive router metadata through a diagnostics callback.
+chat-completions API. Its canonical model seam consumes server-sent events,
+emits text deltas, assembles fragmented local tool calls, and terminates with a
+normalized finish. `complete()` remains available as a compatibility collector.
+Both paths report usage plus additive router metadata through a diagnostics
+callback.
 Credentials exist only in a private field and the HTTP authorization header;
 they never enter model requests, session events, diagnostics, or errors.
 
-The exact request shape is verified against current official OpenRouter docs.
+The exact request and streaming shapes are verified against current official
+OpenRouter docs.
 The endpoint and `fetch` implementation are injectable for deterministic tests.
-Streaming, reasoning-detail preservation, server tools, and provider routing
-policy are intentionally deferred.
+Reasoning-detail preservation, server tools, and provider routing policy are
+intentionally deferred.
 
 Current primary references:
 

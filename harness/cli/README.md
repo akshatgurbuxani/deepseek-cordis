@@ -27,6 +27,12 @@ model requests and responses, session events, router diagnostics, and runtime
 fiber transitions. API keys and authorization headers never enter traced
 objects.
 
+The process entry point streams assistant text to stdout and passes one
+turn-scoped signal through the loop. `Ctrl-C` cooperatively aborts model or tool
+work, waits for the durable aborted boundary and Cordis cleanup, then exits with
+status 130. Programmatic callers can inject the same signal and a text-delta
+observer through `runCli()`.
+
 Sessions remain ephemeral by default. Set `HARNESS_SESSION_DIR` to select the
 file provider and `HARNESS_SESSION_ID` to give the history a stable identity:
 
@@ -38,5 +44,5 @@ HARNESS_SESSION_DIR=.sessions HARNESS_SESSION_ID=demo \
 ```
 
 The second command resumes `demo` and records turn two. Interactive input,
-cross-process writer locking, streaming, cancellation, and provider replacement
+cross-process writer locking, parallel tool execution, and provider replacement
 during a running turn remain future work.

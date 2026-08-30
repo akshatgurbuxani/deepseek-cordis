@@ -36,6 +36,8 @@ export interface RunCliOptions {
   readonly trace?: TraceSink
   readonly output?: (content: string) => void
   readonly sessionId?: string
+  readonly signal?: AbortSignal
+  readonly onTextDelta?: (delta: string) => void
 }
 
 export function parseCliArguments(
@@ -162,7 +164,10 @@ export async function runCli(options: RunCliOptions = {}): Promise<RunResult> {
     })
     await boot.reconcile(manifestFor(sessions, model))
     const session = existingSession ?? boot.context.sessions.create(sessionId)
-    const result = await boot.context.agentLoop.run(session, configuration.input)
+    const result = await boot.context.agentLoop.run(session, configuration.input, {
+      ...(options.signal ? { signal: options.signal } : {}),
+      ...(options.onTextDelta ? { onTextDelta: options.onTextDelta } : {}),
+    })
     trace('cli/result', result)
     output(result.content)
     return result

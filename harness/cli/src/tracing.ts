@@ -1,5 +1,16 @@
-import type { ModelAdapter } from '@deepseek-cordis/model'
-import type { ModelRequest, ModelResponse, SessionEvent, SessionEventInput } from '@deepseek-cordis/protocol'
+import {
+  completeModel,
+  type ModelAdapter,
+  type ModelCompletionOptions,
+  type ModelStreamOptions,
+} from '@deepseek-cordis/model'
+import type {
+  ModelRequest,
+  ModelResponse,
+  ModelStreamChunk,
+  SessionEvent,
+  SessionEventInput,
+} from '@deepseek-cordis/protocol'
 import { InMemorySessionStore, type Session, type SessionStore } from '@deepseek-cordis/session'
 import {
   RuntimeFiberState,
@@ -80,11 +91,25 @@ export class TracingModelAdapter implements ModelAdapter {
     this.id = `trace:${inner.id}`
   }
 
-  async complete(request: ModelRequest): Promise<ModelResponse> {
+  async *stream(
+    request: ModelRequest,
+    options: ModelStreamOptions = {},
+  ): AsyncIterable<ModelStreamChunk> {
     this.#trace('model/request', request)
-    const response = await this.#inner.complete(request)
-    this.#trace('model/response', response)
-    return response
+    for await (const chunk of this.#inner.stream(request, options)) {
+      this.#trace('model/stream', chunk)
+      if (chunk.type === 'finish' && chunk.reason === 'completed') {
+        this.#trace('model/response', chunk.response)
+      }
+      yield chunk
+    }
+  }
+
+  async complete(
+    request: ModelRequest,
+    options: ModelCompletionOptions = {},
+  ): Promise<ModelResponse> {
+    return completeModel(this, request, options)
   }
 }
 

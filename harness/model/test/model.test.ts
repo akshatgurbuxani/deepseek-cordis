@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
+import {
+  completeModel,
+  ModelStreamAbortedError,
+  ModelStreamProtocolError,
+  type ModelAdapter,
+} from '@deepseek-cordis/model'
 import { ReplayModelAdapter } from '@deepseek-cordis/model/testing'
 import type { ModelRequest, ModelResponse } from '@deepseek-cordis/protocol'
 
@@ -34,4 +40,53 @@ test('replay adapters fail explicitly when the script is exhausted', async () =>
     messages: [],
     tools: [],
   }), /replay adapter "empty" exhausted/)
+})
+
+test('the shared collector exposes deltas and returns only the terminal response', async () => {
+  const adapter: ModelAdapter = {
+    id: 'chunked',
+    async *stream() {
+      yield { type: 'text-delta', delta: 'streamed ' }
+      yield { type: 'text-delta', delta: 'answer' }
+      yield {
+        type: 'finish',
+        reason: 'completed',
+        response: { type: 'message', content: 'streamed answer' },
+      }
+    },
+  }
+  const deltas: string[] = []
+  const response = await completeModel(adapter, {
+    sessionId: 'stream', turnId: 'stream:turn:1', step: 1, messages: [], tools: [],
+  }, { onTextDelta: (delta) => { deltas.push(delta) } })
+
+  assert.deepEqual(deltas, ['streamed ', 'answer'])
+  assert.deepEqual(response, { type: 'message', content: 'streamed answer' })
+})
+
+test('the shared collector rejects malformed and aborted streams', async () => {
+  const request: ModelRequest = {
+    sessionId: 'stream', turnId: 'stream:turn:1', step: 1, messages: [], tools: [],
+  }
+  const adapter = (stream: ModelAdapter['stream']): ModelAdapter => ({ id: 'invalid', stream })
+
+  await assert.rejects(completeModel(adapter(async function* () {}), request),
+    ModelStreamProtocolError)
+  await assert.rejects(completeModel(adapter(async function* () {
+    yield { type: 'text-delta', delta: 'partial' }
+    yield {
+      type: 'finish', reason: 'completed',
+      response: { type: 'message', content: 'different' },
+    }
+  }), request), /deltas do not match/)
+  await assert.rejects(completeModel(adapter(async function* () {
+    yield { type: 'finish', reason: 'aborted' }
+  }), request), ModelStreamAbortedError)
+  await assert.rejects(completeModel(adapter(async function* () {
+    yield {
+      type: 'finish', reason: 'completed',
+      response: { type: 'message', content: '' },
+    }
+    yield { type: 'text-delta', delta: 'late' }
+  }), request), /after finish/)
 })

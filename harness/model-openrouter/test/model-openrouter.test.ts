@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
+import { ModelStreamAbortedError } from '@deepseek-cordis/model'
 import {
   OpenRouterHttpError,
   OpenRouterModelAdapter,
@@ -28,6 +29,16 @@ const request: ModelRequest = {
     description: 'Add numbers',
     inputSchema: { type: 'object' },
   }],
+}
+
+function streamedResponse(parts: readonly string[]): Response {
+  const encoder = new TextEncoder()
+  return new Response(new ReadableStream({
+    start(controller) {
+      parts.forEach((part) => { controller.enqueue(encoder.encode(part)) })
+      controller.close()
+    },
+  }), { status: 200, headers: { 'Content-Type': 'text/event-stream' } })
 }
 
 test('maps complete history, tools, calls, attribution, usage, and routing metadata', async () => {
@@ -147,6 +158,93 @@ test('accepts final text and omits tool fields and optional attribution', async 
   assert.equal(headers?.['X-OpenRouter-Title'], undefined)
 })
 
+test('streams split SSE text, reports terminal diagnostics, and forwards cancellation', async () => {
+  const bodies: Array<Record<string, unknown>> = []
+  const signals: Array<AbortSignal | null | undefined> = []
+  let diagnostics: OpenRouterDiagnostics | undefined
+  const fakeFetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+    bodies.push(JSON.parse(String(init?.body)))
+    signals.push(init?.signal)
+    return streamedResponse([
+      ': keepalive\r\n\r\ndata: {"model":"provider/stream","choices":[{"delta":{"content":"hel',
+      'lo "}}]}\r\n\r\ndata: {"choices":[{"delta":{"content":"world"}}]}\n\n',
+      'data: {"choices":[],"usage":{"prompt_tokens":2,"completion_tokens":2,"total_tokens":4}}\n\n',
+      'data: [DONE]\n\n',
+    ])
+  }) as typeof fetch
+  const adapter = new OpenRouterModelAdapter({
+    apiKey: 'test', fetch: fakeFetch, onDiagnostics: (value) => { diagnostics = value },
+  })
+  const controller = new AbortController()
+  const deltas: string[] = []
+
+  assert.deepEqual(await adapter.complete(request, {
+    signal: controller.signal,
+    onTextDelta: (delta) => { deltas.push(delta) },
+  }), { type: 'message', content: 'hello world' })
+  assert.deepEqual(deltas, ['hello ', 'world'])
+  assert.equal(bodies[0]?.stream, true)
+  assert.deepEqual(bodies[0]?.stream_options, { include_usage: true })
+  assert.equal(signals[0], controller.signal)
+  assert.deepEqual(diagnostics, {
+    requestedModel: 'openrouter/free',
+    selectedModel: 'provider/stream',
+    promptTokens: 2,
+    completionTokens: 2,
+    totalTokens: 4,
+  })
+
+  const cancelled = new AbortController()
+  await assert.rejects(adapter.complete(request, {
+    signal: cancelled.signal,
+    onTextDelta: () => { cancelled.abort({ kind: 'user' }) },
+  }), ModelStreamAbortedError)
+})
+
+test('assembles fragmented streaming tool calls before publishing completion', async () => {
+  const fetch = (async () => streamedResponse([
+    'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","type":"function","function":{"name":"add","arguments":"{\\"a\\":20"}}]}}]}\n\n',
+    'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":",\\"b\\":22}"}}]}}]}\n\n',
+    'data: [DONE]\n\n',
+  ])) as typeof globalThis.fetch
+  const adapter = new OpenRouterModelAdapter({ apiKey: 'test', fetch })
+
+  assert.deepEqual(await adapter.complete(request, { onTextDelta: () => undefined }), {
+    type: 'tool_calls',
+    calls: [{ id: 'call-1', name: 'add', arguments: { a: 20, b: 22 } }],
+  })
+})
+
+test('rejects malformed streaming envelopes and tool-call fragments', async () => {
+  const malformed: ReadonlyArray<readonly [string, RegExp]> = [
+    ['data: {not json}\n\n', /invalid streaming JSON/],
+    ['data: 1\n\n', /invalid streaming response/],
+    ['data: {"error":{}}\n\n', /stream failed/],
+    ['data: {"error":{"message":"provider broke"}}\n\n', /provider broke/],
+    ['data: {"choices":[null]}\n\n', /invalid streaming choice/],
+    ['data: {"choices":[{"delta":{"content":1}}]}\n\n', /invalid streaming text/],
+    ['data: {"choices":[{"delta":{"tool_calls":{}}}]}\n\n', /invalid streaming tool calls/],
+    ['data: {"choices":[{"delta":{"tool_calls":[null]}}]}\n\n', /invalid streaming tool call/],
+    ['data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":1}]}}]}\n\n', /tool call id/],
+    ['data: {"choices":[{"delta":{"tool_calls":[{"index":0,"type":"other"}]}}]}\n\n', /tool call type/],
+    ['data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":1}]}}]}\n\n', /tool function/],
+    ['data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":1}}]}}]}\n\n', /tool name/],
+    ['data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":1}}]}}]}\n\n', /tool arguments/],
+    ['data: {"choices":[]}\n\ndata: [DONE]\n\n', /no completion choice/],
+  ]
+
+  for (const [body, expected] of malformed) {
+    const fetch = (async () => streamedResponse([body])) as typeof globalThis.fetch
+    const adapter = new OpenRouterModelAdapter({ apiKey: 'test', fetch })
+    await assert.rejects(adapter.complete(request, { onTextDelta: () => undefined }), expected)
+  }
+
+  const noBodyFetch = (async () => new Response(null, { status: 200 })) as typeof globalThis.fetch
+  await assert.rejects(new OpenRouterModelAdapter({
+    apiKey: 'test', fetch: noBodyFetch,
+  }).complete(request, { onTextDelta: () => undefined }), /stream has no body/)
+})
+
 test('normalizes missing keys, network failures, and HTTP failures without leaking secrets', async () => {
   assert.throws(
     () => new OpenRouterModelAdapter({ apiKey: '' }),
@@ -244,13 +342,15 @@ test('optional live completion returns text when explicitly enabled', {
     apiKey: process.env.OPENROUTER_API_KEY!,
     ...(process.env.OPENROUTER_MODEL ? { model: process.env.OPENROUTER_MODEL } : {}),
   })
+  const deltas: string[] = []
   const response = await adapter.complete({
     sessionId: 'live-smoke',
     turnId: 'live-smoke:turn:1',
     step: 1,
     messages: [{ role: 'user', content: 'Reply with exactly: live ok' }],
     tools: [],
-  })
+  }, { onTextDelta: (delta) => { deltas.push(delta) } })
   assert.equal(response.type, 'message')
   assert.ok(response.type === 'message' && response.content.length > 0)
+  assert.equal(deltas.join(''), response.type === 'message' ? response.content : '')
 })

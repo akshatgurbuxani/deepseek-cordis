@@ -10,16 +10,26 @@ their immutable JSON arguments. Tool results become `tool` messages linked by
 `tool_call_id`; failed local executions are represented as JSON error objects.
 Harness tool schemas become function tools with JSON Schema parameters.
 
-Requests use the non-streaming `/api/v1/chat/completions` endpoint. When tools
-exist, tool choice is automatic and parallel tool calls are disabled because
-the current `AgentLoop` executes calls in deterministic order. The harness
-session ID is forwarded as OpenRouter's supported `session_id` field.
+Requests use `/api/v1/chat/completions`. The canonical `stream()` path requests
+server-sent events plus terminal usage, tolerates keepalive comments and network
+chunk boundaries, emits normalized text deltas, and assembles indexed tool-call
+fragments before its completed finish. `complete()` retains the original JSON
+path unless a delta observer requests collection through the streaming seam.
 
-Responses are decoded defensively from `unknown`. A completion must contain a
-first choice and message, followed by either non-empty tool calls or text. Tool
-envelopes, function names, argument strings, parsed JSON values, and finite
-numbers are validated before they cross into the harness. Returned values and
-diagnostics are snapshotted and recursively frozen.
+When tools exist, tool choice is automatic and parallel tool calls are disabled
+because the current `AgentLoop` executes calls in deterministic order. The
+harness session ID is forwarded as OpenRouter's supported `session_id` field.
+
+Responses and SSE payloads are decoded defensively from `unknown`. A completion
+must contain a choice followed by tool calls or text. Tool envelopes, fragment
+indexes, function names, argument strings, parsed JSON values, and finite
+numbers are validated before they cross into the harness. Returned chunks,
+values, and diagnostics are snapshotted and recursively frozen.
+
+The request signal is passed directly to `fetch`. An abort becomes the stream's
+terminal `aborted` finish; network, HTTP, framing, and response failures become
+terminal error finishes. This follows the model contract's data boundary while
+the compatibility `complete()` method still throws its typed provider errors.
 
 The adapter opts into router metadata and reports selected model, token counts,
 and the metadata object without interpreting its additive fields. The API key

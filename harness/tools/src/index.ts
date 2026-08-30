@@ -6,14 +6,25 @@ import {
 } from '@deepseek-cordis/protocol'
 
 export interface ToolDefinition extends ToolSchema {
-  readonly execute: (argumentsValue: JsonValue) => JsonValue | Promise<JsonValue>
+  readonly execute: (
+    argumentsValue: JsonValue,
+    options: ToolExecutionOptions,
+  ) => JsonValue | Promise<JsonValue>
+}
+
+export interface ToolExecutionOptions {
+  readonly signal?: AbortSignal
 }
 
 export interface ToolRegistry {
   readonly size: number
   register(definition: ToolDefinition): () => void
   schemas(): readonly ToolSchema[]
-  execute(name: string, argumentsValue: JsonValue): Promise<ToolExecution>
+  execute(
+    name: string,
+    argumentsValue: JsonValue,
+    options?: ToolExecutionOptions,
+  ): Promise<ToolExecution>
 }
 
 export class InMemoryToolRegistry implements ToolRegistry {
@@ -44,16 +55,23 @@ export class InMemoryToolRegistry implements ToolRegistry {
     )
   }
 
-  async execute(name: string, argumentsValue: JsonValue): Promise<ToolExecution> {
+  async execute(
+    name: string,
+    argumentsValue: JsonValue,
+    options: ToolExecutionOptions = {},
+  ): Promise<ToolExecution> {
+    options.signal?.throwIfAborted()
     const definition = this.#definitions.get(name)
     if (!definition) {
       return { ok: false, error: `tool ${JSON.stringify(name)} is not registered` }
     }
     try {
       const isolatedArguments = snapshot(argumentsValue)
-      const output = await definition.execute(isolatedArguments)
+      const output = await definition.execute(isolatedArguments, options)
+      options.signal?.throwIfAborted()
       return { ok: true, output: snapshot(output) }
     } catch (error) {
+      options.signal?.throwIfAborted()
       return { ok: false, error: error instanceof Error ? error.message : String(error) }
     }
   }

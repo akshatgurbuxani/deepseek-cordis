@@ -1,9 +1,10 @@
 # How the first production command works
 
 `runCli()` separates command orchestration from the process entry point. Tests
-inject arguments, environment values, `fetch`, tracing, output, and session ID;
-`main.ts` supplies the real process values and converts rejection into a
-non-zero exit code.
+inject arguments, environment values, `fetch`, tracing, output, session ID,
+text-delta observation, and cancellation; `main.ts` supplies the real process
+values, streams text to stdout, and converts failure or cancellation into the
+appropriate non-zero exit code.
 
 Argument parsing selects deterministic replay mode with `--replay`; otherwise
 it selects OpenRouter. Replay extracts two numeric operands and scripts one
@@ -21,11 +22,13 @@ provider configured by `HARNESS_SESSION_DIR`. Its tracing store decorates that
 provider and caches wrappers, preserving the identity rule required by the
 agent loop. After reconciliation, it creates the configured session or resumes
 an existing `HARNESS_SESSION_ID`, runs one turn, traces the result, and prints
-its final content. `finally` always reconciles an empty manifest before removing
-the lifecycle listener. Success, model failure, configuration failure after
+its final content. The process entry point maps `SIGINT` to a runtime-only
+`{ kind: 'user' }` abort cause and exits 130 after durable turn closure.
+`finally` always reconciles an empty manifest before removing the lifecycle
+listener. Success, model failure, cancellation, configuration failure after
 mounting, and tool failure therefore share the same cleanup path.
 
 Tracing wraps public session and model contracts. It records session events,
-normalized requests and responses, OpenRouter diagnostics, and fiber state
-changes. It never receives the provider options, API key, HTTP headers, or raw
-environment object.
+normalized requests, stream chunks and responses, OpenRouter diagnostics, and
+fiber state changes. It never receives the provider options, API key, HTTP
+headers, or raw environment object.

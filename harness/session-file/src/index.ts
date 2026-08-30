@@ -122,7 +122,7 @@ function validateEvent(value: unknown, index: number, source: string): SessionEv
       break
     case 'step/end':
       validateStep(value.step, source)
-      if (!['tool_calls', 'completed', 'failed'].includes(String(value.outcome))) {
+      if (!['tool_calls', 'completed', 'failed', 'aborted'].includes(String(value.outcome))) {
         invalid(source, 'step/end has an invalid outcome')
       }
       break
@@ -130,7 +130,7 @@ function validateEvent(value: unknown, index: number, source: string): SessionEv
       if (typeof value.error !== 'string') invalid(source, 'turn/error has an invalid error')
       break
     case 'turn/end':
-      if (!['completed', 'failed'].includes(String(value.status))) {
+      if (!['completed', 'failed', 'aborted'].includes(String(value.status))) {
         invalid(source, 'turn/end has an invalid status')
       }
       break

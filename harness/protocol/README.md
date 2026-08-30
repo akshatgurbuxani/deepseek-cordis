@@ -7,3 +7,9 @@ integration.
 `snapshot()` creates a structured clone and recursively freezes it. Providers
 use this at ingress so later mutation of a caller-owned object cannot rewrite a
 recorded event, model request, tool schema, or tool result.
+
+The model stream vocabulary is also data: text deltas followed by exactly one
+`finish` whose reason is `completed`, `error`, or `aborted`. A completed finish
+carries the normalized message or tool calls. Session events remain coarser:
+only a completed assistant response is model-visible, while aborted steps and
+turns record their terminal boundary without serializing `AbortSignal.reason`.

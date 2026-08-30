@@ -43,6 +43,10 @@ test('sessions survive restart with immutable events and projected model history
   })
   session.append({ type: 'assistant/message', turnId: 'turn-1', content: '5' })
   session.append({ type: 'turn/end', turnId: 'turn-1', status: 'completed' })
+  session.append({ type: 'turn/start', turnId: 'turn-2' })
+  session.append({ type: 'step/start', turnId: 'turn-2', step: 1 })
+  session.append({ type: 'step/end', turnId: 'turn-2', step: 1, outcome: 'aborted' })
+  session.append({ type: 'turn/end', turnId: 'turn-2', status: 'aborted' })
 
   const filePath = sessionFilePath(directory, session.id)
   assert.equal(filePath.startsWith(`${resolve(directory)}/`), true)

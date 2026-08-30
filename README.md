@@ -5,7 +5,7 @@ Research and implementation workspace for understanding how [Cordis](https://git
 > [!IMPORTANT]
 > This project is about **Cordis**, the plugin meta-framework. It is not about the numerical CORDIC algorithm for trigonometric functions.
 
-This repository started from first principles: study the formal model, reproduce its smallest runtime mechanisms in isolated spikes, and only then promote proven behavior into a maintained `harness/` implementation. Spikes 000–007 completed that evaluation and selected a pinned upstream Cordis runtime. The production packages under [`harness/`](harness/README.md) now include a deterministic or OpenRouter-backed text CLI that can persist and resume its immutable event history across process restarts. The goal is not to clone DeepSeek Harness feature-for-feature; it is to build the smallest durable, composable harness whose behavior we can explain and test.
+This repository started from first principles: study the formal model, reproduce its smallest runtime mechanisms in isolated spikes, and only then promote proven behavior into a maintained `harness/` implementation. Spikes 000–007 completed that evaluation and selected a pinned upstream Cordis runtime. The production packages under [`harness/`](harness/README.md) now include a deterministic or OpenRouter-backed text CLI that streams completed text, supports cooperative turn cancellation, and can persist and resume its immutable event history across process restarts. The goal is not to clone DeepSeek Harness feature-for-feature; it is to build the smallest durable, composable harness whose behavior we can explain and test.
 
 ## Primary sources
 

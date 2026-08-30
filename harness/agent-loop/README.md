@@ -11,11 +11,15 @@ Disconnecting during a running turn fails and remains retryable after the turn
 settles.
 
 `run()` appends turn and user events, then repeatedly projects model-visible
-history from the session and reads current tool schemas. A final message closes
-the turn. Tool calls are recorded and executed in model order; every result is
-recorded before the next model request.
+history from the session and reads current tool schemas. Model text deltas are
+forwarded live while only the terminal response enters session history. Tool
+calls are recorded and executed in model order; every result is recorded before
+the next model request.
 
 Model failures and the maximum-step guard append durable failed-turn events.
+An optional turn signal propagates through model and tool work. Cancellation
+records aborted step and turn boundaries without persisting a runtime-only abort
+reason or partial assistant text.
 The per-session run lock is released in `finally`, so later turns remain
 possible after success or failure.
 
@@ -24,7 +28,8 @@ append user input
        ↓
 project session events + read live tool schemas
        ↓
-call model
+stream model
+  ├── text delta    → forward live
   ├── final message → record and finish
   └── tool calls    → record, execute, record results, repeat
 ```

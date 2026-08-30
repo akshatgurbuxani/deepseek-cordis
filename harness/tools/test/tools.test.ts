@@ -100,3 +100,22 @@ test('missing and throwing tools return explicit failures', async () => {
     error: 'string failed',
   })
 })
+
+test('execution propagates cancellation instead of converting it into a tool result', async () => {
+  const registry = new InMemoryToolRegistry()
+  const controller = new AbortController()
+  let receivedSignal: AbortSignal | undefined
+  registry.register({
+    name: 'cancel',
+    description: 'Observe cancellation',
+    inputSchema: {},
+    async execute(_value, { signal }) {
+      receivedSignal = signal
+      controller.abort({ kind: 'user' })
+      return 'must not publish'
+    },
+  })
+
+  await assert.rejects(registry.execute('cancel', null, { signal: controller.signal }))
+  assert.equal(receivedSignal, controller.signal)
+})
