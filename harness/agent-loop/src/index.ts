@@ -7,11 +7,19 @@ import {
   type ModelResponse,
   type RunResult,
   snapshot,
+  type ToolCall,
 } from '@deepseek-cordis/protocol'
 import type { Session, SessionStore } from '@deepseek-cordis/session'
 import type { ToolRegistry } from '@deepseek-cordis/tools'
 
 export class StepLimitError extends Error {}
+
+export const TOOL_CANCELLED_BEFORE_START = 'tool call was cancelled before execution started'
+export const TOOL_CANCELLED_OUTCOME_UNKNOWN =
+  'tool outcome is unknown because cancellation interrupted execution'
+export const TOOL_FAILED_BEFORE_START = 'tool call was not started because the turn failed'
+export const TOOL_FAILED_OUTCOME_UNKNOWN =
+  'tool outcome is unknown because the turn failed before a result was recorded'
 
 export class TurnCancelledError extends Error {
   constructor(reason?: unknown) {
@@ -80,6 +88,7 @@ export class AgentLoop {
     session.append({ type: 'user/message', turnId, content: input })
 
     let openStep: number | undefined
+    let pendingToolCalls = new Map<string, { readonly call: ToolCall; started: boolean }>()
     try {
       for (let step = 1; step <= maxSteps; step += 1) {
         throwIfCancelled(options.signal)
@@ -110,9 +119,15 @@ export class AgentLoop {
         }
 
         session.append({ type: 'assistant/tool-calls', turnId, calls: response.calls })
+        pendingToolCalls = new Map(response.calls.map((call) => [
+          call.id,
+          { call, started: false },
+        ]))
         for (const call of response.calls) {
           throwIfCancelled(options.signal)
           session.append({ type: 'tool/call', turnId, call })
+          const pending = pendingToolCalls.get(call.id)
+          if (pending) pending.started = true
           const execution = await tools.execute(call.name, call.arguments, {
             ...(options.signal ? { signal: options.signal } : {}),
           })
@@ -134,6 +149,7 @@ export class AgentLoop {
                 ok: false,
                 error: execution.error,
               })
+          pendingToolCalls.delete(call.id)
         }
         session.append({ type: 'step/end', turnId, step, outcome: 'tool_calls' })
         openStep = undefined
@@ -145,6 +161,19 @@ export class AgentLoop {
       const failure = cancelled
         ? new TurnCancelledError(options.signal?.reason)
         : error
+      for (const { call, started } of pendingToolCalls.values()) {
+        session.append({
+          type: 'tool/result',
+          turnId,
+          callId: call.id,
+          name: call.name,
+          ok: false,
+          error: cancelled
+            ? started ? TOOL_CANCELLED_OUTCOME_UNKNOWN : TOOL_CANCELLED_BEFORE_START
+            : started ? TOOL_FAILED_OUTCOME_UNKNOWN : TOOL_FAILED_BEFORE_START,
+        })
+      }
+      pendingToolCalls.clear()
       if (openStep !== undefined) {
         session.append({
           type: 'step/end',

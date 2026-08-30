@@ -160,11 +160,15 @@ step/end       outcome: aborted
 turn/end       status: aborted
 ```
 
-It does not append `turn/error`, a partial assistant message, an interrupted
-tool result, or `signal.reason`. The reason is trusted same-process control data
-and may not be JSON-serializable; the durable log retains only the coarse
-aborted outcome. `TurnCancelledError` carries the original reason as its
-runtime-only cause.
+It does not append `turn/error`, a partial assistant message, or
+`signal.reason`. The reason is trusted same-process control data and may not be
+JSON-serializable; the durable log retains only the coarse aborted outcome.
+When a recorded assistant tool-call batch is still pending, the loop first
+appends one conservative failed result per unanswered call. A started call says
+its outcome is unknown; a later call says execution never started. This keeps
+provider history structurally balanced without claiming that side effects were
+reverted. `TurnCancelledError` carries the original reason as its runtime-only
+cause.
 
 If every allowed step returns tool calls, the loop creates a `StepLimitError`,
 appends `turn/error` and a failed `turn/end`, and throws that error. The final

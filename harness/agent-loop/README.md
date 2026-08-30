@@ -19,7 +19,8 @@ the next model request.
 Model failures and the maximum-step guard append durable failed-turn events.
 An optional turn signal propagates through model and tool work. Cancellation
 records aborted step and turn boundaries without persisting a runtime-only abort
-reason or partial assistant text.
+reason or partial assistant text. Unanswered tool calls receive conservative
+failed results so projected history remains a valid model transcript.
 The per-session run lock is released in `finally`, so later turns remain
 possible after success or failure.
 

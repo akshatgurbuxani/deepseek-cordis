@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { AgentLoop, StepLimitError, TurnCancelledError } from '@deepseek-cordis/agent-loop'
+import {
+  AgentLoop,
+  StepLimitError,
+  TOOL_CANCELLED_BEFORE_START,
+  TOOL_CANCELLED_OUTCOME_UNKNOWN,
+  TurnCancelledError,
+} from '@deepseek-cordis/agent-loop'
 import type { ModelAdapter } from '@deepseek-cordis/model'
 import { ReplayModelAdapter } from '@deepseek-cordis/model/testing'
 import type { JsonValue, ModelRequest, ModelResponse } from '@deepseek-cordis/protocol'
@@ -356,10 +362,13 @@ test('model-stream cancellation closes the durable turn without committing parti
   assert.equal((await loop.run(session, 'retry')).content, 'next turn works')
 })
 
-test('tool cancellation receives the turn signal and records no invented result', async () => {
+test('tool cancellation receives the turn signal and records a conservative result', async () => {
   const adapter = new ReplayModelAdapter('cancel-tool', [{
     type: 'tool_calls',
-    calls: [{ id: 'wait-1', name: 'wait', arguments: null }],
+    calls: [
+      { id: 'wait-1', name: 'wait', arguments: null },
+      { id: 'later-1', name: 'later', arguments: null },
+    ],
   }])
   const { sessions, tools, loop } = setup(adapter)
   let started: (() => void) | undefined
@@ -383,8 +392,37 @@ test('tool cancellation receives the turn signal and records no invented result'
   controller.abort({ kind: 'user' })
 
   await assert.rejects(running, TurnCancelledError)
-  assert.equal(session.events.some((event) => event.type === 'tool/result'), false)
-  assert.deepEqual(session.events.slice(-2).map((event) => event.type), ['step/end', 'turn/end'])
+  const results = session.events.filter((event) => event.type === 'tool/result')
+  assert.deepEqual(results, [
+    {
+      type: 'tool/result', turnId: 'cancel-tool:turn:1', callId: 'wait-1',
+      name: 'wait', ok: false, error: TOOL_CANCELLED_OUTCOME_UNKNOWN, sequence: 6,
+    },
+    {
+      type: 'tool/result', turnId: 'cancel-tool:turn:1', callId: 'later-1',
+      name: 'later', ok: false, error: TOOL_CANCELLED_BEFORE_START, sequence: 7,
+    },
+  ])
+  assert.deepEqual(session.events.slice(-4).map((event) => event.type), [
+    'tool/result', 'tool/result', 'step/end', 'turn/end',
+  ])
+  assert.deepEqual(session.projectMessages().slice(-3), [
+    {
+      role: 'assistant',
+      toolCalls: [
+        { id: 'wait-1', name: 'wait', arguments: null },
+        { id: 'later-1', name: 'later', arguments: null },
+      ],
+    },
+    {
+      role: 'tool', callId: 'wait-1', name: 'wait', ok: false,
+      error: TOOL_CANCELLED_OUTCOME_UNKNOWN,
+    },
+    {
+      role: 'tool', callId: 'later-1', name: 'later', ok: false,
+      error: TOOL_CANCELLED_BEFORE_START,
+    },
+  ])
   const terminal = session.events.at(-1)
   assert.equal(terminal?.type === 'turn/end' ? terminal.status : undefined, 'aborted')
 })

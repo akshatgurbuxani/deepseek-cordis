@@ -523,10 +523,14 @@ committed history.
 
 Cancellation closes an open step and turn with the coarse `aborted` outcome. It
 does not persist the same-process abort cause, a `turn/error`, partial assistant
-text, or an interrupted tool result. The original cause remains available only
-as the runtime `TurnCancelledError.cause`. A signal aborted before admission
-leaves no session events. The per-session run lock and Cordis-owned provider
-connection still release at their existing convergence boundaries.
+text, or a claimed successful tool result. If cancellation interrupts a tool
+batch, the loop records conservative failed results for every unanswered call:
+started calls have unknown outcomes and later calls were not started. This keeps
+the projected provider transcript balanced without claiming that consequential
+work was reverted. The original cause remains available only as the runtime
+`TurnCancelledError.cause`. A signal aborted before admission leaves no session
+events. The per-session run lock and Cordis-owned provider connection still
+release at their existing convergence boundaries.
 
 OpenRouter's canonical path now requests server-sent events and terminal usage,
 handles keepalive comments and arbitrary network chunk boundaries, streams text,
