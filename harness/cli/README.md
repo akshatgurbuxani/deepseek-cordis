@@ -28,6 +28,24 @@ model requests and responses, session events, router diagnostics, and runtime
 fiber transitions. API keys and authorization headers never enter traced
 objects.
 
+Add `--interactive` for a persistent multi-turn process:
+
+```sh
+npm run cli:replay -- --interactive
+```
+
+Interactive input that begins with `/` is dispatched directly, never sent to
+the model. `/inspect` reports durable session state, `/compact [retain-turns]`
+uses the authoritative compactor, `/help` lists live registrations, and `/exit`
+records its command boundary before clean shutdown. Syntax and lookup misses
+append nothing. Replay mode derives a fresh deterministic calculator exchange
+for every turn; live mode reuses the configured OpenRouter adapter.
+
+The interactive channel also owns the one-shot approval prompt. Yes grants the
+exact request once, any other answer rejects it, EOF cancels it, and prompt
+failure is unavailable. The provider-neutral approval service never reads a
+terminal itself, so a future UI can supply the same closed answer contract.
+
 The process entry point streams assistant text to stdout and passes one
 turn-scoped signal through the loop. `Ctrl-C` cooperatively aborts model or tool
 work, waits for the durable aborted boundary and Cordis cleanup, then exits with
@@ -69,6 +87,5 @@ No capacity or token count is guessed from a model name.
 Traces expose successful `model/info` resolution and safe `model/info-error`
 failures without including credentials.
 
-Interactive commands (including manual inspect/compact), cross-process writer
-locking, parallel tool execution, and provider replacement during a running
-turn remain future work.
+Cross-process writer locking, parallel tool execution, and provider replacement
+during a running turn remain future work.

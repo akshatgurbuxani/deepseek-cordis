@@ -30,7 +30,7 @@ import {
   type SessionStore,
 } from '@deepseek-cordis/session'
 
-export const SESSION_FILE_SCHEMA_VERSION = 5
+export const SESSION_FILE_SCHEMA_VERSION = 6
 
 export interface SessionFileDocument {
   readonly schemaVersion: typeof SESSION_FILE_SCHEMA_VERSION
@@ -233,6 +233,36 @@ function validateEvent(value: unknown, index: number, source: string): SessionEv
         || !['full', 'partial'].includes(String(value.enforcement))
       ) invalid(source, 'sandbox/prepared has invalid fields')
       break
+    case 'command/run':
+      if (
+        typeof value.commandId !== 'string'
+        || value.commandId.length === 0
+        || value.turnId !== value.commandId
+        || typeof value.name !== 'string'
+        || !/^[a-z][a-z0-9_-]*$/.test(value.name)
+        || typeof value.rawInput !== 'string'
+      ) invalid(source, 'command/run has invalid fields')
+      break
+    case 'command/done':
+      if (
+        typeof value.commandId !== 'string'
+        || value.commandId.length === 0
+        || value.turnId !== value.commandId
+        || typeof value.name !== 'string'
+        || !/^[a-z][a-z0-9_-]*$/.test(value.name)
+        || !isRecord(value.result)
+        || !['success', 'error'].includes(String(value.result.kind))
+        || (value.result.text !== undefined && typeof value.result.text !== 'string')
+        || (value.result.kind === 'error' && typeof value.result.text !== 'string')
+        || (value.result.sourceSequence !== undefined && (
+          value.result.kind !== 'success'
+          || typeof value.result.sourceSequence !== 'number'
+          || !Number.isInteger(value.result.sourceSequence)
+          || value.result.sourceSequence < 1
+          || value.result.sourceSequence >= index + 1
+        ))
+      ) invalid(source, 'command/done has invalid fields')
+      break
     case 'tool/result':
       if (
         typeof value.callId !== 'string'
@@ -289,6 +319,7 @@ function decodeDocument(contents: string, source: string): DecodedDocument {
     || value.schemaVersion === 2
     || value.schemaVersion === 3
     || value.schemaVersion === 4
+    || value.schemaVersion === 5
   if (!migrated && value.schemaVersion !== SESSION_FILE_SCHEMA_VERSION) {
     throw new UnsupportedSessionSchemaError(value.schemaVersion, source)
   }
@@ -296,6 +327,19 @@ function decodeDocument(contents: string, source: string): DecodedDocument {
     invalid(source, 'document must contain a string id and events array')
   }
   const events = value.events.map((event, index) => validateEvent(event, index, source))
+  for (const event of events) {
+    if (
+      event.type !== 'command/done'
+      || event.result.kind !== 'success'
+      || event.result.sourceSequence === undefined
+    ) continue
+    const sourceEvent = events[event.result.sourceSequence - 1]
+    if (
+      sourceEvent === undefined
+      || sourceEvent.type === 'command/run'
+      || sourceEvent.type === 'command/done'
+    ) invalid(source, 'command/done references an invalid source event')
+  }
   if (
     (value.schemaVersion === undefined || value.schemaVersion === 1)
     && events.some((event) => event.type === 'compaction/summary')
@@ -307,13 +351,25 @@ function decodeDocument(contents: string, source: string): DecodedDocument {
     && events.some((event) => event.type === 'context-budget/decision')
   ) invalid(source, 'legacy schema contains an event introduced by a newer schema')
   if (
-    value.schemaVersion !== SESSION_FILE_SCHEMA_VERSION
+    (value.schemaVersion === undefined
+      || value.schemaVersion === 1
+      || value.schemaVersion === 2
+      || value.schemaVersion === 3
+      || value.schemaVersion === 4)
     && events.some((event) =>
       (event.type === 'assistant/message' || event.type === 'assistant/tool-calls')
       && event.usage !== undefined)
   ) invalid(source, 'legacy schema contains an event introduced by a newer schema')
   if (
     value.schemaVersion !== SESSION_FILE_SCHEMA_VERSION
+    && events.some((event) => event.type === 'command/run' || event.type === 'command/done')
+  ) invalid(source, 'legacy schema contains an event introduced by a newer schema')
+  if (
+    (value.schemaVersion === undefined
+      || value.schemaVersion === 1
+      || value.schemaVersion === 2
+      || value.schemaVersion === 3
+      || value.schemaVersion === 4)
     && events.some((event) =>
       event.type === 'approval/asked'
       || event.type === 'approval/decided'
@@ -342,6 +398,7 @@ function encodeDocument(id: string, events: readonly SessionEvent[]): string {
 
 export const TOOL_NOT_STARTED = 'tool call was interrupted before execution started'
 export const TOOL_OUTCOME_UNKNOWN = 'tool outcome is unknown because execution was interrupted'
+export const COMMAND_INTERRUPTED = 'command was interrupted before a result was recorded'
 
 interface PendingToolCall {
   readonly call: ToolCall
@@ -354,13 +411,60 @@ export function interruptedTurnClosers(
   events: readonly SessionEvent[],
   source = 'session event stream',
 ): readonly SessionEvent[] {
+  const closers: SessionEvent[] = []
+  const append = (input: SessionEventInput) => {
+    closers.push(snapshot({
+      ...input,
+      sequence: events.length + closers.length + 1,
+    }) as SessionEvent)
+  }
+  const openCommands = new Map<
+    string,
+    Extract<SessionEvent, { readonly type: 'command/run' }>
+  >()
+  let commandScanTurn: string | undefined
+  for (const event of events) {
+    if (event.type === 'turn/start') {
+      if (openCommands.size > 0) invalid(source, 'turn/start overlaps an open command')
+      commandScanTurn = event.turnId
+    }
+    if (event.type === 'turn/end' && event.turnId === commandScanTurn) {
+      commandScanTurn = undefined
+    }
+    if (event.type === 'command/run') {
+      if (commandScanTurn !== undefined) invalid(source, 'command/run appears inside a turn')
+      if (openCommands.size > 0) invalid(source, 'command/run overlaps another command')
+      openCommands.set(event.commandId, event)
+    }
+    if (event.type === 'command/done') {
+      if (commandScanTurn !== undefined) invalid(source, 'command/done appears inside a turn')
+      const run = openCommands.get(event.commandId)
+      if (!run || run.name !== event.name) {
+        invalid(source, `command/done ${JSON.stringify(event.commandId)} has no matching run`)
+      }
+      openCommands.delete(event.commandId)
+    }
+  }
+  for (const run of openCommands.values()) {
+    append({
+      type: 'command/done',
+      turnId: run.commandId,
+      commandId: run.commandId,
+      name: run.name,
+      result: { kind: 'error', text: COMMAND_INTERRUPTED },
+    })
+  }
+
   const lastTurnEnd = events.findLastIndex((event) => event.type === 'turn/end')
   const suffix = events.slice(lastTurnEnd + 1)
-  if (suffix.length === 0) return []
+  if (suffix.length === 0) return closers
   const nextTurn = suffix.findIndex((event) => event.type === 'turn/start')
   const isMaintenance = (event: SessionEvent) =>
-    event.type === 'compaction/summary' || event.type === 'context-budget/decision'
-  if (nextTurn === -1 && suffix.every(isMaintenance)) return []
+    event.type === 'compaction/summary'
+    || event.type === 'context-budget/decision'
+    || event.type === 'command/run'
+    || event.type === 'command/done'
+  if (nextTurn === -1 && suffix.every(isMaintenance)) return closers
   if (
     nextTurn === -1
     || suffix.slice(0, nextTurn).some((event) => !isMaintenance(event))
@@ -478,19 +582,15 @@ export function interruptedTurnClosers(
           invalid(source, 'context budget decision appears inside an open trailing step')
         }
         break
+      case 'command/run':
+      case 'command/done':
+        invalid(source, `${event.type} appears inside an open trailing turn`)
       case 'user/message':
       case 'turn/error':
         break
     }
   }
 
-  const closers: SessionEvent[] = []
-  const append = (input: SessionEventInput) => {
-    closers.push(snapshot({
-      ...input,
-      sequence: events.length + closers.length + 1,
-    }) as SessionEvent)
-  }
   for (const { call, started } of pending.values()) {
     append({
       type: 'tool/result',

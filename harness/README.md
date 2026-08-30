@@ -41,9 +41,11 @@ context-budget      ──> agent-loop + compaction + token-meter
 model               ──> protocol
 approval            ──> protocol
 sandbox             ──> protocol
+commands            ──> session + protocol
+command-session     ──> commands + compaction + session
 tools               ──> protocol + approval + sandbox
 agent-loop          ──> protocol + session + model + approval + sandbox + tools
-runtime-cordis      ──> agent-loop + approval + sandbox + compaction + token-meter + session + model + tools + cordis
+runtime-cordis      ──> agent-loop + approval + sandbox + commands + compaction + token-meter + session + model + tools + cordis
 app-boot            ──> runtime-cordis
 model-openrouter    ──> protocol + model
 tool/storage plugins──> protocol + their capability contract
@@ -870,13 +872,44 @@ checks, durable V5 audit events, cancellation-safe cleanup, Cordis provider
 replacement, and explicit CLI composition. Together with PRs 1–11, 112
 deterministic tests pass and one live OpenRouter smoke test remains opt-in.
 
+### Feature 13 — interactive control plane
+
+Feature 13 adds a provider-neutral slash-command registry, reversible Cordis
+registrations, direct `/inspect` and `/compact` session commands, and a genuine
+multi-turn `--interactive` CLI. Admitted commands have durable standalone
+`command/run` and `command/done` boundaries, never enter model projection, and
+are repaired conservatively after a crash. Manual compaction results cite the
+summary event that actually committed.
+
+Approval remains channel-neutral: the CLI supplies a one-shot answerer that
+maps terminal input into the closed approval vocabulary. Prompt failure and
+EOF fail closed, and late cancellation cannot become a grant. This completes
+the human decision path without coupling terminal I/O to tools or approval
+policy.
+
+#### Upstream motivation and adaptation boundary
+
+This feature follows DeepSeek Harness's command subsystem invariant that a
+recognized command runs directly rather than becoming model input, with a
+run/done lifecycle around its handler. It also follows the interaction-layer
+boundary where each UI supplies command and approval adapters. The local design
+keeps only the necessary registry, strict parser, session commands, and CLI
+adapter; it does not copy DeepSeek's application renderer, command waterfalls,
+or broader UI framework.
+
+#### PR 13 result
+
+Implemented direct multi-turn interaction, four built-in commands, durable V6
+command events and crash repair, source-event provenance, channel-owned
+approval, reversible command providers, and deterministic process-level tests.
+
 ### Later milestones
 
-Feature 13 should add a real interactive command dispatcher with manual
-inspect/compact commands and a channel-owned approval answerer. This completes
-the human decision path without coupling it to the tool registry. A following
-feature can then add the first consequential filesystem or shell provider with
-platform-backed isolation and honest `full`/`partial` reporting.
+Feature 14 should add the first useful consequential tool through a real
+platform-backed sandbox provider, starting with a narrowly scoped workspace
+filesystem operation. Its acceptance bar is honest `full` or `partial`
+enforcement, path-boundary tests, cancellation-safe lease cleanup, and an
+interactive allow/reject audit—not an in-process simulation of isolation.
 
 Cross-process writer coordination, parallel tools, subagents, attachments,
 scheduling, and UI remain outside the first production milestone.

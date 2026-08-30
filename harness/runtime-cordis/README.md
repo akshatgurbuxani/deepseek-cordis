@@ -3,11 +3,15 @@
 Cordis lifecycle adapter for the provider-neutral harness capabilities.
 
 This package publishes session stores, tool registries, model adapters,
-approval services, sandbox providers, an optional session compactor, optional
-token meter, and a stable agent-loop facade
-as typed Cordis services. Tool registration and loop
+approval services, sandbox providers, a command registry, an optional session
+compactor, optional token meter, and a stable agent-loop facade
+as typed Cordis services. Tool and command registration and loop
 connection are Cordis-owned effects, so withdrawing their plugin fibers
 reclaims the underlying capability registration or connection.
+
+Command definitions require the registry coeffect. They remain pending while
+it is absent, register against a replacement provider when it appears, and
+withdraw their exact registration before that provider is disposed.
 
 Approval and sandbox are independent required coeffects of the loop plugin.
 Withdrawing or replacing either provider drains the loop first and reconnects

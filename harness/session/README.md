@@ -32,6 +32,10 @@ Budget decisions never alter the surface. A decision that claims compaction
 must reference an earlier `compaction/summary`; this relationship is checked
 before either store accepts it.
 
+Standalone command lifecycles are log-only as well. They can inspect or
+transform session state through an explicit command handler, but neither the
+input nor its direct output becomes a model message.
+
 Assistant provider usage is also log-only. Its cited input sequences must equal
 the complete surface immediately before that response event; reordered,
 partial, or invented anchors are projection errors. Tool schemas remain with

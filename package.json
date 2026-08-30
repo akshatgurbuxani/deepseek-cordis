@@ -8,6 +8,8 @@
     "harness/model",
     "harness/approval",
     "harness/sandbox",
+    "harness/commands",
+    "harness/command-session",
     "harness/tools",
     "harness/agent-loop",
     "harness/runtime-cordis",

@@ -14,6 +14,7 @@ import test, { type TestContext } from 'node:test'
 
 import {
   atomicReplaceFile,
+  COMMAND_INTERRUPTED,
   FileSessionStore,
   SESSION_FILE_SCHEMA_VERSION,
   SessionPersistenceError,
@@ -127,7 +128,7 @@ test('a failed atomic append leaves memory and the committed file unchanged', (t
   assert.equal(readdirSync(directory).some((name) => name.endsWith('.tmp')), false)
 })
 
-test('V0 through V4 documents migrate once to the current schema', (t) => {
+test('V0 through V5 documents migrate once to the current schema', (t) => {
   const directory = temporaryDirectory(t)
   const id = 'legacy'
   const filePath = sessionFilePath(directory, id)
@@ -198,6 +199,76 @@ test('V0 through V4 documents migrate once to the current schema', (t) => {
     (JSON.parse(readFileSync(v3Path, 'utf8')) as Record<string, unknown>).schemaVersion,
     SESSION_FILE_SCHEMA_VERSION,
   )
+
+  const v5Id = 'schema-v5'
+  const v5Path = sessionFilePath(directory, v5Id)
+  writeFileSync(v5Path, JSON.stringify({
+    schemaVersion: 5,
+    id: v5Id,
+    events: [
+      { type: 'turn/start', turnId: 'schema-v5:turn:1', sequence: 1 },
+      { type: 'step/start', turnId: 'schema-v5:turn:1', step: 1, sequence: 2 },
+      {
+        type: 'approval/asked', turnId: 'schema-v5:turn:1', sequence: 3,
+        callId: 'call', name: 'write', risk: 'filesystem', reason: 'write a file',
+      },
+      {
+        type: 'approval/decided', turnId: 'schema-v5:turn:1', sequence: 4,
+        callId: 'call', name: 'write', outcome: 'rejected',
+      },
+      {
+        type: 'step/end', turnId: 'schema-v5:turn:1', step: 1,
+        outcome: 'completed', sequence: 5,
+      },
+      {
+        type: 'turn/end', turnId: 'schema-v5:turn:1',
+        status: 'completed', sequence: 6,
+      },
+    ],
+  }))
+  assert.ok(new FileSessionStore({ directory }).get(v5Id))
+  assert.equal(
+    (JSON.parse(readFileSync(v5Path, 'utf8')) as Record<string, unknown>).schemaVersion,
+    SESSION_FILE_SCHEMA_VERSION,
+  )
+})
+
+test('command events persist log-only and interrupted commands close durably', (t) => {
+  const directory = temporaryDirectory(t)
+  const store = new FileSessionStore({ directory })
+  const complete = store.create('complete-command')
+  complete.append({
+    type: 'command/run', turnId: 'complete-command:command:1',
+    commandId: 'complete-command:command:1', name: 'inspect', rawInput: '',
+  })
+  complete.append({
+    type: 'command/done', turnId: 'complete-command:command:1',
+    commandId: 'complete-command:command:1', name: 'inspect',
+    result: { kind: 'success', text: 'ready' },
+  })
+  const reloaded = new FileSessionStore({ directory }).get('complete-command')
+  assert.deepEqual(reloaded?.events, complete.events)
+  assert.deepEqual(reloaded?.projectMessages(), [])
+
+  const interruptedId = 'interrupted-command'
+  const interruptedPath = sessionFilePath(directory, interruptedId)
+  writeFileSync(interruptedPath, JSON.stringify({
+    schemaVersion: SESSION_FILE_SCHEMA_VERSION,
+    id: interruptedId,
+    events: [{
+      type: 'command/run', turnId: 'interrupted-command:command:1', sequence: 1,
+      commandId: 'interrupted-command:command:1', name: 'compact', rawInput: ' 2',
+    }],
+  }))
+  const repaired = new FileSessionStore({ directory }).get(interruptedId)
+  assert.deepEqual(repaired?.events.at(-1), {
+    type: 'command/done', turnId: 'interrupted-command:command:1', sequence: 2,
+    commandId: 'interrupted-command:command:1', name: 'compact',
+    result: { kind: 'error', text: COMMAND_INTERRUPTED },
+  })
+  const afterRepair = readFileSync(interruptedPath, 'utf8')
+  assert.ok(new FileSessionStore({ directory }).get(interruptedId))
+  assert.equal(readFileSync(interruptedPath, 'utf8'), afterRepair)
 })
 
 test('cold startup preserves an interrupted turn and durably synthesizes balanced closers', (t) => {
@@ -447,6 +518,37 @@ test('future schemas and corrupt documents fail explicitly without rewriting inp
   writeFileSync(filePath, legacySafety)
   assert.throws(() => new FileSessionStore({ directory }), /legacy schema.*newer schema/)
   assert.equal(readFileSync(filePath, 'utf8'), legacySafety)
+
+  const legacyCommand = JSON.stringify({
+    schemaVersion: 5,
+    id,
+    events: [{
+      type: 'command/run', turnId: 'command-1', sequence: 1,
+      commandId: 'command-1', name: 'inspect', rawInput: '',
+    }],
+  })
+  writeFileSync(filePath, legacyCommand)
+  assert.throws(() => new FileSessionStore({ directory }), /legacy schema.*newer schema/)
+  assert.equal(readFileSync(filePath, 'utf8'), legacyCommand)
+
+  const recursiveCommandProvenance = JSON.stringify({
+    schemaVersion: SESSION_FILE_SCHEMA_VERSION,
+    id,
+    events: [
+      {
+        type: 'command/run', turnId: 'command-1', sequence: 1,
+        commandId: 'command-1', name: 'compact', rawInput: '',
+      },
+      {
+        type: 'command/done', turnId: 'command-1', sequence: 2,
+        commandId: 'command-1', name: 'compact',
+        result: { kind: 'success', sourceSequence: 1 },
+      },
+    ],
+  })
+  writeFileSync(filePath, recursiveCommandProvenance)
+  assert.throws(() => new FileSessionStore({ directory }), /invalid source event/)
+  assert.equal(readFileSync(filePath, 'utf8'), recursiveCommandProvenance)
 })
 
 test('every persisted event variant is validated before it can become live state', (t) => {
@@ -491,6 +593,14 @@ test('every persisted event variant is validated before it can become live state
       type: 'sandbox/prepared', turnId: 'turn-1', sequence: 1,
       callId: 'call-1', name: 'write', profile: '', provider: '', enforcement: 'none',
     }, /sandbox\/prepared has invalid fields/],
+    [{
+      type: 'command/run', turnId: 'wrong', sequence: 1,
+      commandId: 'command-1', name: 'Bad', rawInput: 1,
+    }, /command\/run has invalid fields/],
+    [{
+      type: 'command/done', turnId: 'command-1', sequence: 1,
+      commandId: 'command-1', name: 'inspect', result: { kind: 'error' },
+    }, /command\/done has invalid fields/],
     [{ type: 'tool/result', turnId: 'turn-1', sequence: 1, ok: true }, /invalid envelope/],
     [{
       type: 'tool/result', turnId: 'turn-1', sequence: 1,

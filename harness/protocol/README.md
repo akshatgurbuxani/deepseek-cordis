@@ -36,3 +36,9 @@ model surface by applying the checkpoint.
 overflow action compacted, made no progress, or failed. A compacted outcome
 must reference an earlier summary event; projection rejects invented
 provenance.
+
+`command/run` and `command/done` are standalone, log-only control-plane
+boundaries. They record the exact parsed command suffix and its closed result;
+an optional `sourceSequence` links output such as manual compaction to the
+authoritative event that produced it. Commands are never projected as model
+messages.

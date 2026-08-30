@@ -11,6 +11,7 @@
   "include": ["src/**/*.ts"],
   "references": [
     { "path": "../approval" },
+    { "path": "../commands" },
     { "path": "../session" },
     { "path": "../sandbox" },
     { "path": "../model" },

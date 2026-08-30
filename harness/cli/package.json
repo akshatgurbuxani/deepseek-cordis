@@ -22,6 +22,9 @@
   "dependencies": {
     "@deepseek-cordis/agent-loop": "0.0.0",
     "@deepseek-cordis/app-boot": "0.0.0",
+    "@deepseek-cordis/approval": "0.0.0",
+    "@deepseek-cordis/command-session": "0.0.0",
+    "@deepseek-cordis/commands": "0.0.0",
     "@deepseek-cordis/compaction": "0.0.0",
     "@deepseek-cordis/context-budget": "0.0.0",
     "@deepseek-cordis/model": "0.0.0",

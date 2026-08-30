@@ -5,7 +5,14 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
-import { parseCliArguments, runCli } from '@deepseek-cordis/cli'
+import { completeModel, ModelStreamError } from '@deepseek-cordis/model'
+import {
+  InteractiveApprovalService,
+  InteractiveReplayModelAdapter,
+  parseCliArguments,
+  runCli,
+  runInteractiveCli,
+} from '@deepseek-cordis/cli'
 import {
   consoleTrace,
   type TraceSink,
@@ -43,15 +50,120 @@ function sseResponse(payloads: readonly unknown[]): Response {
 test('argument parsing selects replay or OpenRouter without exposing environment values', () => {
   assert.deepEqual(parseCliArguments(['--replay', 'add', '2', 'and', '3'], {}), {
     mode: 'replay',
+    interactive: false,
     input: 'add 2 and 3',
     model: 'replay/calculator',
   })
   assert.deepEqual(parseCliArguments([], { OPENROUTER_MODEL: 'provider/model' }), {
     mode: 'openrouter',
+    interactive: false,
     input: 'Use the add tool to calculate 17 + 25.',
     model: 'provider/model',
   })
+  assert.equal(parseCliArguments(['--interactive', '--replay'], {}).interactive, true)
   assert.throws(() => parseCliArguments(['--unknown'], {}), /unknown option "--unknown"/)
+})
+
+test('interactive replay runs multiple turns and direct control commands', async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'deepseek-cordis-interactive-'))
+  t.after(() => { rmSync(directory, { recursive: true, force: true }) })
+  const lines = [
+    'add 1 and 2',
+    'add 3 and 4',
+    '/inspect',
+    '/compact',
+    '/help',
+    '/missing',
+    '/exit',
+  ]
+  const output: string[] = []
+  const result = await runInteractiveCli({
+    argv: ['--interactive', '--replay'],
+    env: { HARNESS_SESSION_DIR: directory },
+    sessionId: 'interactive-cli',
+    trace: () => undefined,
+    readLine: () => lines.shift(),
+    output: (content) => { output.push(content) },
+  })
+
+  assert.deepEqual(result, { sessionId: 'interactive-cli', turns: 2, commands: 4 })
+  assert.match(output.join('\n'), /The answer is 3\./)
+  assert.match(output.join('\n'), /The answer is 7\./)
+  assert.match(output.join('\n'), /Session: interactive-cli/)
+  assert.match(output.join('\n'), /Compacted \d+ model-visible messages/)
+  assert.match(output.join('\n'), /\/inspect/)
+  assert.match(output.join('\n'), /Unknown command/)
+  assert.equal(output.at(-1), 'Session closed.')
+
+  const persisted = new FileSessionStore({ directory }).get('interactive-cli')
+  assert.ok(persisted)
+  assert.equal(persisted.events.filter((event) => event.type === 'command/run').length, 4)
+  assert.equal(persisted.events.filter((event) => event.type === 'command/done').length, 4)
+  assert.equal(persisted.projectMessages().some((message) =>
+    JSON.stringify(message).includes('/inspect')), false)
+})
+
+test('interactive approval maps channel answers and fails closed', async () => {
+  const request = {
+    sessionId: 'session', turnId: 'turn', callId: 'call', toolName: 'write',
+    risk: 'filesystem' as const, reason: 'write a file',
+  }
+  let presented: unknown
+  assert.equal(await new InteractiveApprovalService((value) => {
+    presented = value
+    return true
+  }).request(request), 'allowed-once')
+  assert.deepEqual(presented, request)
+  assert.equal(Object.isFrozen(presented), true)
+  assert.equal(
+    await new InteractiveApprovalService(() => false).request(request),
+    'rejected',
+  )
+  assert.equal(
+    await new InteractiveApprovalService(() => undefined).request(request),
+    'cancelled',
+  )
+  assert.equal(
+    await new InteractiveApprovalService(() => { throw new Error('channel closed') })
+      .request(request),
+    'unavailable',
+  )
+
+  const controller = new AbortController()
+  const pending = new InteractiveApprovalService(async () => {
+    controller.abort({ kind: 'user' })
+    return true
+  })
+  assert.equal(await pending.request({ ...request, signal: controller.signal }), 'cancelled')
+
+  const thrownController = new AbortController()
+  assert.equal(await new InteractiveApprovalService(() => {
+    thrownController.abort({ kind: 'user' })
+    throw new Error('closed while cancelling')
+  }).request({ ...request, signal: thrownController.signal }), 'cancelled')
+
+  const alreadyCancelled = new AbortController()
+  alreadyCancelled.abort(new Error('already cancelled'))
+  await assert.rejects(
+    new InteractiveApprovalService(() => true)
+      .request({ ...request, signal: alreadyCancelled.signal }),
+    /already cancelled/,
+  )
+})
+
+test('interactive replay reports invalid and unsupported conversation states', async () => {
+  const model = new InteractiveReplayModelAdapter(128)
+  assert.equal(model.contextWindow, 128)
+  const base = {
+    sessionId: 'replay', turnId: 'replay:turn:1', step: 1, tools: [],
+  }
+  assert.deepEqual(await completeModel(model, {
+    ...base, messages: [{ role: 'user', content: 'no operands' }],
+  }), { type: 'message', content: 'Replay mode expects two numbers.' })
+  await assert.rejects(completeModel(model, {
+    ...base, messages: [{ role: 'assistant', content: 'unexpected' }],
+  }), (error) => error instanceof ModelStreamError
+    && /unsupported conversation state/.test(error.message))
 })
 
 test('console and session tracing expose events while preserving store ownership rules', () => {
@@ -408,6 +520,20 @@ test('process entry point prints replay output and exits non-zero for invalid ar
   assert.equal(success.status, 0, success.stderr)
   assert.match(success.stdout, /The answer is 7\./)
   assert.match(success.stdout, /to: 'DISPOSED'/)
+
+  const interactive = spawnSync(process.execPath, [
+    'harness/cli/dist/main.js',
+    '--interactive',
+    '--replay',
+  ], {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+    env: {},
+    input: 'add 4 and 5\n/exit\n',
+  })
+  assert.equal(interactive.status, 0, interactive.stderr)
+  assert.match(interactive.stdout, /The answer is 9\./)
+  assert.match(interactive.stdout, /Session closed\./)
 
   const failure = spawnSync(process.execPath, [
     'harness/cli/dist/main.js',

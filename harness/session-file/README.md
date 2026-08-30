@@ -8,11 +8,11 @@ same-directory temporary file, fsyncs it, and atomically renames it over the
 committed file. The in-memory event list advances only after that commit point,
 so a failed write leaves both memory and the previous file unchanged.
 
-Schema V5 stores `schemaVersion`, `id`, and the complete immutable event list,
+Schema V6 stores `schemaVersion`, `id`, and the complete immutable event list,
 including provenance-bearing compaction checkpoints and context-budget
 decisions. It also permits validated provider-usage anchors on assistant events
-and log-only approval/sandbox audit events. Versionless V0 plus V1 through V4
-documents are rewritten as V5 during startup. Unknown versions,
+and log-only approval/sandbox and command lifecycle events. Versionless V0 plus
+V1 through V5 documents are rewritten as V6 during startup. Unknown versions,
 malformed JSON, invalid event fields,
 sequence gaps, and filename/ID mismatches fail explicitly and are never
 overwritten.
@@ -25,6 +25,11 @@ means execution may have produced an irreversible effect, so its synthetic
 result says the outcome is unknown; a requested call without `tool/call` is
 recorded as not started. The store never resumes partial execution or invents a
 successful result.
+
+A standalone `command/run` without `command/done` is repaired separately as an
+interrupted command. Commands cannot appear inside turns, matching IDs and names
+are mandatory, and optional result provenance must identify an earlier
+non-command event. Command output never enters the model surface.
 
 Migration and repair share one atomic replacement and occur before any loaded
 session is published. Reopening the repaired file is therefore idempotent. An

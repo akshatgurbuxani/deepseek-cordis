@@ -4,6 +4,11 @@ import {
   UnavailableApprovalService,
 } from '@deepseek-cordis/approval'
 import { SessionCompactor } from '@deepseek-cordis/compaction'
+import {
+  InMemoryCommandRegistry,
+  type CommandDefinition,
+  type CommandRegistry,
+} from '@deepseek-cordis/commands'
 import type { ModelAdapter } from '@deepseek-cordis/model'
 import {
   InMemorySessionStore,
@@ -48,6 +53,7 @@ declare module 'cordis' {
     tokenMeter: TokenMeter
     approval: ApprovalService
     sandbox: ToolSandbox
+    commands: CommandRegistry
   }
 }
 
@@ -103,6 +109,31 @@ export function createSandboxPlugin(
   namePlugin(plugin, 'sandbox')
   plugin.provide = 'sandbox'
   return { plugin, value: sandbox }
+}
+
+export function createCommandRegistryPlugin(
+  registry: CommandRegistry = new InMemoryCommandRegistry(),
+): PluginFactory<CommandRegistry> {
+  const plugin: Plugin.Function<void> = (context) => {
+    context.provide('commands', registry)
+  }
+  namePlugin(plugin, 'commands')
+  plugin.provide = 'commands'
+  return { plugin, value: registry }
+}
+
+export function createCommandRegistrationPlugin(
+  definition: CommandDefinition,
+): Plugin.Function<void> {
+  const plugin: Plugin.Function<void> = (context) => {
+    context.effect(
+      () => context.commands.register(definition),
+      `register command ${JSON.stringify(definition.name)}`,
+    )
+  }
+  namePlugin(plugin, `command:${definition.name}`)
+  plugin.inject = ['commands']
+  return plugin
 }
 
 export function createModelAdapterPlugin(

@@ -6,6 +6,8 @@
     { "path": "./harness/model" },
     { "path": "./harness/approval" },
     { "path": "./harness/sandbox" },
+    { "path": "./harness/commands" },
+    { "path": "./harness/command-session" },
     { "path": "./harness/tools" },
     { "path": "./harness/agent-loop" },
     { "path": "./harness/runtime-cordis" },

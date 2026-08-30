@@ -4,6 +4,7 @@ import test from 'node:test'
 import { ReplayModelAdapter } from '@deepseek-cordis/model/testing'
 import type { ApprovalService } from '@deepseek-cordis/approval'
 import { SessionCompactor } from '@deepseek-cordis/compaction'
+import { InMemoryCommandRegistry } from '@deepseek-cordis/commands'
 import type { JsonValue } from '@deepseek-cordis/protocol'
 import { InMemoryToolRegistry, type ToolDefinition } from '@deepseek-cordis/tools'
 import type { ToolSandbox } from '@deepseek-cordis/sandbox'
@@ -11,6 +12,8 @@ import {
   createAgentLoopPlugin,
   createApprovalServicePlugin,
   createCompactionPlugin,
+  createCommandRegistrationPlugin,
+  createCommandRegistryPlugin,
   createModelAdapterPlugin,
   createSessionStorePlugin,
   createSandboxPlugin,
@@ -396,6 +399,36 @@ test('compaction is an optional Cordis capability with stable provider identity'
 
   await fiber.dispose()
   assert.equal(context.get('compaction'), undefined)
+})
+
+test('command registrations follow provider availability and dispose reversibly', async () => {
+  const context = new Context()
+  const definition = {
+    name: 'status',
+    description: 'Show status',
+    handler: () => ({ kind: 'success' as const, text: 'ready' }),
+  }
+  const registrationFiber = context.plugin(createCommandRegistrationPlugin(definition))
+  assert.equal(registrationFiber.state, FiberState.PENDING)
+
+  const first = createCommandRegistryPlugin()
+  const firstFiber = await mount(context, first.plugin)
+  await registrationFiber
+  assert.equal(context.commands, first.value)
+  assert.equal(first.value.size, 1)
+
+  await firstFiber.dispose()
+  assert.equal(first.value.size, 0)
+  assert.equal(context.get('commands'), undefined)
+  const replacement = new InMemoryCommandRegistry()
+  const replacementFiber = await mount(context, createCommandRegistryPlugin(replacement).plugin)
+  await registrationFiber
+  assert.equal(context.commands, replacement)
+  assert.equal(replacement.size, 1)
+
+  await registrationFiber.dispose()
+  assert.equal(replacement.size, 0)
+  await replacementFiber.dispose()
 })
 
 test('token measurement is an independently withdrawable Cordis capability', async () => {

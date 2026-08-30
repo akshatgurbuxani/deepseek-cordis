@@ -43,6 +43,14 @@ export type ApprovalOutcome =
 
 export type SandboxEnforcement = 'full' | 'partial'
 
+export type CommandResult =
+  | {
+    readonly kind: 'success'
+    readonly text?: string
+    readonly sourceSequence?: number
+  }
+  | { readonly kind: 'error'; readonly text: string }
+
 interface EventBase {
   readonly sequence: number
   readonly turnId: string
@@ -78,6 +86,18 @@ export type SessionEvent =
     readonly profile: string
     readonly provider: string
     readonly enforcement: SandboxEnforcement
+  }
+  | EventBase & {
+    readonly type: 'command/run'
+    readonly commandId: string
+    readonly name: string
+    readonly rawInput: string
+  }
+  | EventBase & {
+    readonly type: 'command/done'
+    readonly commandId: string
+    readonly name: string
+    readonly result: CommandResult
   }
   | EventBase & {
     readonly type: 'tool/result'

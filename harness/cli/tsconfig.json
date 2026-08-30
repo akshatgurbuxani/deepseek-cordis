@@ -11,6 +11,9 @@
   "include": ["src/**/*.ts"],
   "references": [
     { "path": "../agent-loop" },
+    { "path": "../approval" },
+    { "path": "../commands" },
+    { "path": "../command-session" },
     { "path": "../protocol" },
     { "path": "../session" },
     { "path": "../session-file" },
