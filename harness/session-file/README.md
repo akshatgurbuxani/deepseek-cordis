@@ -8,9 +8,10 @@ same-directory temporary file, fsyncs it, and atomically renames it over the
 committed file. The in-memory event list advances only after that commit point,
 so a failed write leaves both memory and the previous file unchanged.
 
-Schema V2 stores `schemaVersion`, `id`, and the complete immutable event list,
-including provenance-bearing compaction checkpoints. Versionless V0 and V1
-documents are validated and rewritten as V2 during startup. Unknown versions,
+Schema V3 stores `schemaVersion`, `id`, and the complete immutable event list,
+including provenance-bearing compaction checkpoints and context-budget
+decisions. Versionless V0, V1, and V2 documents are validated and rewritten as
+V3 during startup. Unknown versions,
 malformed JSON, invalid event fields,
 sequence gaps, and filename/ID mismatches fail explicitly and are never
 overwritten.
@@ -32,6 +33,8 @@ write leaves the original document unchanged and unpublished.
 Compaction checkpoint fields and their exact surface-prefix relationship are
 validated before load or append. A checkpoint uses the same atomic append path
 as every other event, so its summary and provenance cannot commit separately.
+Compacted budget decisions must reference an earlier checkpoint and cannot
+smuggle the new event vocabulary into a legacy schema.
 
 The current provider assumes one active writer per directory. Atomic replacement
 protects against torn process writes; cross-process locking and merge semantics

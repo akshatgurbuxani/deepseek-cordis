@@ -1,16 +1,22 @@
 import { AppBoot, type ManifestEntry } from '@deepseek-cordis/app-boot'
+import { AgentLoop } from '@deepseek-cordis/agent-loop'
+import { ModelSummaryAdapter, SessionCompactor } from '@deepseek-cordis/compaction'
+import { ContextBudgetPolicy } from '@deepseek-cordis/context-budget'
 import type { ModelAdapter } from '@deepseek-cordis/model'
 import { ReplayModelAdapter } from '@deepseek-cordis/model/testing'
 import { OpenRouterModelAdapter } from '@deepseek-cordis/model-openrouter'
 import type { JsonValue, RunResult } from '@deepseek-cordis/protocol'
 import { InMemorySessionStore, type SessionStore } from '@deepseek-cordis/session'
 import { FileSessionStore } from '@deepseek-cordis/session-file'
+import { TokenMeter } from '@deepseek-cordis/token-meter'
 import {
   createAgentLoopPlugin,
+  createCompactionPlugin,
   createModelAdapterPlugin,
   createSessionStorePlugin,
   createToolRegistrationPlugin,
   createToolRegistryPlugin,
+  createTokenMeterPlugin,
 } from '@deepseek-cordis/runtime-cordis'
 
 import {
@@ -62,7 +68,16 @@ export function parseCliArguments(
   }
 }
 
-function replayModel(input: string): ReplayModelAdapter {
+function optionalPositiveInteger(value: string | undefined, name: string): number | undefined {
+  if (value === undefined) return undefined
+  const parsed = Number(value)
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    throw new Error(`${name} must be a positive integer`)
+  }
+  return parsed
+}
+
+function replayModel(input: string, contextWindow?: number): ReplayModelAdapter {
   const operands = input.match(/-?\d+(?:\.\d+)?/g)?.map(Number) ?? []
   const left = operands[0]
   const right = operands[1]
@@ -76,7 +91,7 @@ function replayModel(input: string): ReplayModelAdapter {
       calls: [{ id: 'replay-add-1', name: 'add', arguments: { a: left, b: right } }],
     },
     { type: 'message', content: `The answer is ${answer}.` },
-  ])
+  ], contextWindow === undefined ? {} : { contextWindow })
 }
 
 function calculator(argumentsValue: JsonValue): number {
@@ -95,10 +110,15 @@ function calculator(argumentsValue: JsonValue): number {
 function manifestFor(
   sessions: ReturnType<typeof createSessionStorePlugin>,
   model: ModelAdapter,
+  compactor: SessionCompactor,
+  meter: TokenMeter,
+  policy: ContextBudgetPolicy,
 ): readonly ManifestEntry[] {
   const tools = createToolRegistryPlugin()
   const modelPlugin = createModelAdapterPlugin(model)
-  const loop = createAgentLoopPlugin()
+  const loop = createAgentLoopPlugin(new AgentLoop(policy))
+  const compaction = createCompactionPlugin(compactor)
+  const tokenMeter = createTokenMeterPlugin(meter)
   return [
     { id: 'loop', revision: 'v1', load: () => loop.plugin },
     { id: 'add', revision: 'v1', load: () => createToolRegistrationPlugin({
@@ -118,6 +138,8 @@ function manifestFor(
     { id: 'sessions', revision: 'v1', load: () => sessions.plugin },
     { id: 'tools', revision: 'v1', load: () => tools.plugin },
     { id: 'model', revision: 'v1', load: () => modelPlugin.plugin },
+    { id: 'compaction', revision: 'v1', load: () => compaction.plugin },
+    { id: 'token-meter', revision: 'v1', load: () => tokenMeter.plugin },
   ]
 }
 
@@ -131,8 +153,12 @@ export async function runCli(options: RunCliOptions = {}): Promise<RunResult> {
   const stopLifecycleTrace = traceRuntimeLifecycle(boot.context, trace)
 
   try {
+    const contextWindow = optionalPositiveInteger(
+      env.HARNESS_CONTEXT_WINDOW ?? env.OPENROUTER_CONTEXT_WINDOW,
+      'HARNESS_CONTEXT_WINDOW',
+    )
     const innerModel = configuration.mode === 'replay'
-      ? replayModel(configuration.input)
+      ? replayModel(configuration.input, contextWindow)
       : new OpenRouterModelAdapter({
           apiKey: env.OPENROUTER_API_KEY ?? '',
           model: configuration.model,
@@ -146,6 +172,7 @@ export async function runCli(options: RunCliOptions = {}): Promise<RunResult> {
               : {}),
           ...(options.fetch ? { fetch: options.fetch } : {}),
           onDiagnostics: (diagnostics) => trace('openrouter/diagnostics', diagnostics),
+          ...(contextWindow === undefined ? {} : { contextWindow }),
         })
     const sessionStore: SessionStore = env.HARNESS_SESSION_DIR
       ? new FileSessionStore({ directory: env.HARNESS_SESSION_DIR })
@@ -153,6 +180,14 @@ export async function runCli(options: RunCliOptions = {}): Promise<RunResult> {
     const tracedSessions = new TracingSessionStore(trace, sessionStore)
     const sessions = createSessionStorePlugin(tracedSessions)
     const model = new TracingModelAdapter(innerModel, trace)
+    const summaryModel = configuration.mode === 'replay'
+      ? new TracingModelAdapter(new ReplayModelAdapter('summary', [
+          { type: 'message', content: 'Earlier conversation compacted for replay.' },
+        ]), trace)
+      : model
+    const compactor = new SessionCompactor(new ModelSummaryAdapter(summaryModel))
+    const meter = new TokenMeter()
+    const policy = new ContextBudgetPolicy({ compactor, meter })
     const sessionId = options.sessionId ?? env.HARNESS_SESSION_ID ?? `cli-${Date.now()}`
     const existingSession = tracedSessions.get(sessionId)
 
@@ -162,7 +197,7 @@ export async function runCli(options: RunCliOptions = {}): Promise<RunResult> {
       sessionStore: env.HARNESS_SESSION_DIR ? 'file' : 'memory',
       resumed: existingSession !== undefined,
     })
-    await boot.reconcile(manifestFor(sessions, model))
+    await boot.reconcile(manifestFor(sessions, model, compactor, meter, policy))
     const session = existingSession ?? boot.context.sessions.create(sessionId)
     const result = await boot.context.agentLoop.run(session, configuration.input, {
       ...(options.signal ? { signal: options.signal } : {}),

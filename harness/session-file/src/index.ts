@@ -29,7 +29,7 @@ import {
   type SessionStore,
 } from '@deepseek-cordis/session'
 
-export const SESSION_FILE_SCHEMA_VERSION = 2
+export const SESSION_FILE_SCHEMA_VERSION = 3
 
 export interface SessionFileDocument {
   readonly schemaVersion: typeof SESSION_FILE_SCHEMA_VERSION
@@ -124,6 +124,45 @@ function validateEvent(value: unknown, index: number, source: string): SessionEv
         || new Set(value.shadowedSequences).size !== value.shadowedSequences.length
       ) invalid(source, 'compaction/summary has invalid provenance')
       break
+    case 'context-budget/decision':
+      if (
+        !['pressure', 'context_overflow'].includes(String(value.trigger))
+        || typeof value.model !== 'string'
+        || value.model.trim().length === 0
+        || typeof value.measuredTokens !== 'number'
+        || !Number.isInteger(value.measuredTokens)
+        || value.measuredTokens < 0
+        || (value.contextWindow !== undefined && (
+          typeof value.contextWindow !== 'number'
+          || !Number.isInteger(value.contextWindow)
+          || value.contextWindow < 1
+        ))
+        || (value.thresholdTokens !== undefined && (
+          typeof value.thresholdTokens !== 'number'
+          || !Number.isInteger(value.thresholdTokens)
+          || value.thresholdTokens < 1
+        ))
+        || (value.trigger === 'pressure' && (
+          value.contextWindow === undefined
+          || value.thresholdTokens === undefined
+          || value.thresholdTokens > value.contextWindow
+        ))
+        || (value.trigger === 'context_overflow' && value.thresholdTokens !== undefined)
+        || !['compacted', 'no_progress', 'failed'].includes(String(value.outcome))
+        || (value.summarySequence !== undefined && (
+          typeof value.summarySequence !== 'number'
+          || !Number.isInteger(value.summarySequence)
+          || value.summarySequence < 1
+          || value.summarySequence >= index + 1
+        ))
+        || (value.error !== undefined && (
+          typeof value.error !== 'string'
+          || value.error.trim().length === 0
+        ))
+        || (value.outcome === 'compacted') !== (value.summarySequence !== undefined)
+        || (value.outcome === 'failed') !== (value.error !== undefined)
+      ) invalid(source, 'context-budget/decision has invalid fields')
+      break
     case 'tool/call':
       validateToolCall(value.call, source)
       break
@@ -178,7 +217,9 @@ function decodeDocument(contents: string, source: string): DecodedDocument {
   }
   if (!isRecord(value)) invalid(source, 'document is not an object')
 
-  const migrated = value.schemaVersion === undefined || value.schemaVersion === 1
+  const migrated = value.schemaVersion === undefined
+    || value.schemaVersion === 1
+    || value.schemaVersion === 2
   if (!migrated && value.schemaVersion !== SESSION_FILE_SCHEMA_VERSION) {
     throw new UnsupportedSessionSchemaError(value.schemaVersion, source)
   }
@@ -187,9 +228,13 @@ function decodeDocument(contents: string, source: string): DecodedDocument {
   }
   const events = value.events.map((event, index) => validateEvent(event, index, source))
   if (
-    value.schemaVersion !== SESSION_FILE_SCHEMA_VERSION
+    (value.schemaVersion === undefined || value.schemaVersion === 1)
     && events.some((event) => event.type === 'compaction/summary')
-  ) invalid(source, 'legacy schema contains a V2 compaction event')
+  ) invalid(source, 'legacy schema contains an event introduced by a newer schema')
+  if (
+    value.schemaVersion !== SESSION_FILE_SCHEMA_VERSION
+    && events.some((event) => event.type === 'context-budget/decision')
+  ) invalid(source, 'legacy schema contains an event introduced by a newer schema')
   try {
     deriveSessionSurface(events)
   } catch (error) {
@@ -227,10 +272,12 @@ export function interruptedTurnClosers(
   const suffix = events.slice(lastTurnEnd + 1)
   if (suffix.length === 0) return []
   const nextTurn = suffix.findIndex((event) => event.type === 'turn/start')
-  if (nextTurn === -1 && suffix.every((event) => event.type === 'compaction/summary')) return []
+  const isMaintenance = (event: SessionEvent) =>
+    event.type === 'compaction/summary' || event.type === 'context-budget/decision'
+  if (nextTurn === -1 && suffix.every(isMaintenance)) return []
   if (
     nextTurn === -1
-    || suffix.slice(0, nextTurn).some((event) => event.type !== 'compaction/summary')
+    || suffix.slice(0, nextTurn).some((event) => !isMaintenance(event))
   ) {
     invalid(source, 'events follow the last closed turn without a new turn/start')
   }
@@ -241,7 +288,11 @@ export function interruptedTurnClosers(
   const pending = new Map<string, PendingToolCall>()
 
   for (const event of tail.slice(1)) {
-    if (event.turnId !== turnId) {
+    if (
+      event.type !== 'compaction/summary'
+      && event.type !== 'context-budget/decision'
+      && event.turnId !== turnId
+    ) {
       invalid(source, 'open trailing turn contains a mismatched turn id')
     }
     switch (event.type) {
@@ -301,7 +352,15 @@ export function interruptedTurnClosers(
         }
         break
       case 'compaction/summary':
-        invalid(source, 'compaction appears inside an open trailing turn')
+        if (openStep !== undefined) {
+          invalid(source, 'compaction appears inside an open trailing step')
+        }
+        break
+      case 'context-budget/decision':
+        if (openStep !== undefined) {
+          invalid(source, 'context budget decision appears inside an open trailing step')
+        }
+        break
       case 'user/message':
       case 'turn/error':
         break
@@ -405,7 +464,9 @@ export class FileSession implements Session {
       sequence: this.#events.length + 1,
     }), this.#events.length, `session ${JSON.stringify(this.id)} append`)
     const candidate = [...this.#events, event]
-    if (event.type === 'compaction/summary') deriveSessionSurface(candidate)
+    if (event.type === 'compaction/summary' || event.type === 'context-budget/decision') {
+      deriveSessionSurface(candidate)
+    }
     this.#persist(candidate)
     this.#events.push(event)
     return event as AppendedSessionEvent<Input>

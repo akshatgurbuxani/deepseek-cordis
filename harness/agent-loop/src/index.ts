@@ -8,6 +8,7 @@ import {
   type RunResult,
   snapshot,
   type ToolCall,
+  type ToolSchema,
 } from '@deepseek-cordis/protocol'
 import type { Session, SessionStore } from '@deepseek-cordis/session'
 import type { ToolRegistry } from '@deepseek-cordis/tools'
@@ -34,6 +35,20 @@ export interface RunOptions {
   readonly onTextDelta?: (delta: string) => void
 }
 
+export interface AgentLoopPolicyContext {
+  readonly session: Session
+  readonly model: ModelAdapter
+  readonly tools: readonly ToolSchema[]
+  readonly turnId: string
+  readonly step: number
+  readonly signal?: AbortSignal
+}
+
+export interface AgentLoopPolicy {
+  beforeStep?(context: AgentLoopPolicyContext): Promise<void>
+  recoverModelError?(context: AgentLoopPolicyContext, error: unknown): Promise<boolean>
+}
+
 function throwIfCancelled(signal: AbortSignal | undefined): void {
   if (signal?.aborted) throw new TurnCancelledError(signal.reason)
 }
@@ -43,6 +58,11 @@ export class AgentLoop {
   #sessions: SessionStore | undefined
   #tools: ToolRegistry | undefined
   #model: ModelAdapter | undefined
+  readonly #policy: AgentLoopPolicy | undefined
+
+  constructor(policy?: AgentLoopPolicy) {
+    this.#policy = policy
+  }
 
   connect(sessions: SessionStore, tools: ToolRegistry, model: ModelAdapter): () => void {
     if (this.#sessions || this.#tools || this.#model) {
@@ -92,22 +112,51 @@ export class AgentLoop {
     try {
       for (let step = 1; step <= maxSteps; step += 1) {
         throwIfCancelled(options.signal)
+        const policyContext: AgentLoopPolicyContext = {
+          session,
+          model,
+          tools: tools.schemas(),
+          turnId,
+          step,
+          ...(options.signal ? { signal: options.signal } : {}),
+        }
+        await this.#policy?.beforeStep?.(policyContext)
+        throwIfCancelled(options.signal)
+        const requestPolicyContext: AgentLoopPolicyContext = {
+          ...policyContext,
+          tools: tools.schemas(),
+        }
         session.append({ type: 'step/start', turnId, step })
         openStep = step
-        const response: ModelResponse = await completeModel(
-          model,
-          snapshot({
-            sessionId: session.id,
-            turnId,
-            step,
-            messages: session.projectMessages(),
-            tools: tools.schemas(),
-          }),
-          {
-            ...(options.signal ? { signal: options.signal } : {}),
-            ...(options.onTextDelta ? { onTextDelta: options.onTextDelta } : {}),
-          },
-        )
+        let response: ModelResponse
+        try {
+          response = await completeModel(
+            model,
+            snapshot({
+              sessionId: session.id,
+              turnId,
+              step,
+              messages: session.projectMessages(),
+              tools: requestPolicyContext.tools,
+            }),
+            {
+              ...(options.signal ? { signal: options.signal } : {}),
+              ...(options.onTextDelta ? { onTextDelta: options.onTextDelta } : {}),
+            },
+          )
+        } catch (error) {
+          if (options.signal?.aborted || error instanceof ModelStreamAbortedError) throw error
+          session.append({ type: 'step/end', turnId, step, outcome: 'failed' })
+          openStep = undefined
+          let retry = false
+          try {
+            retry = await this.#policy?.recoverModelError?.(requestPolicyContext, error) ?? false
+          } catch (recoveryError) {
+            if (options.signal?.aborted) throw recoveryError
+          }
+          if (retry) continue
+          throw error
+        }
         throwIfCancelled(options.signal)
 
         if (response.type === 'message') {

@@ -11,6 +11,7 @@ import {
   type ToolRegistry,
 } from '@deepseek-cordis/tools'
 import type { Plugin } from 'cordis'
+import { TokenMeter } from '@deepseek-cordis/token-meter'
 
 export {
   Context as RuntimeContext,
@@ -36,6 +37,7 @@ declare module 'cordis' {
     model: ModelAdapter
     agentLoop: AgentLoop
     compaction: SessionCompactor
+    tokenMeter: TokenMeter
   }
 }
 
@@ -121,4 +123,15 @@ export function createCompactionPlugin(
   namePlugin(plugin, 'compaction')
   plugin.provide = 'compaction'
   return { plugin, value: compactor }
+}
+
+export function createTokenMeterPlugin(
+  meter = new TokenMeter(),
+): PluginFactory<TokenMeter> {
+  const plugin: Plugin.Function<void> = (context) => {
+    context.provide('tokenMeter', meter)
+  }
+  namePlugin(plugin, 'token-meter')
+  plugin.provide = 'tokenMeter'
+  return { plugin, value: meter }
 }

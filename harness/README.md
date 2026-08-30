@@ -36,10 +36,12 @@ tests that survive implementation replacement.
 session             ──> protocol
 session-file        ──> session + protocol
 compaction          ──> session + model + protocol
+token-meter         ──> session + protocol
+context-budget      ──> agent-loop + compaction + token-meter
 model               ──> protocol
 tools               ──> protocol
 agent-loop          ──> protocol + session + model + tools
-runtime-cordis      ──> agent-loop + compaction + session + model + tools + cordis
+runtime-cordis      ──> agent-loop + compaction + token-meter + session + model + tools + cordis
 app-boot            ──> runtime-cordis
 model-openrouter    ──> protocol + model
 tool/storage plugins──> protocol + their capability contract
@@ -73,11 +75,18 @@ agent-loop tests do not depend on a network provider.
 
 ### `compaction`
 
-Owns optional, idle-session history compaction. It selects a complete
+Owns optional history compaction at a maintenance boundary. It selects a complete
 closed-turn prefix, asks an injected summarizer for a checkpoint, revalidates
 the selected surface, and atomically appends exact sequence provenance. Its
-model-backed adapter uses the canonical model stream seam; pressure policy is
-not part of the agent-loop core.
+model-backed adapter uses the canonical model stream seam.
+
+### `token-meter` and `context-budget`
+
+`token-meter` produces revisioned, immutable pressure estimates over the exact
+derived surface and live tool schemas. `context-budget` combines that estimate
+with adapter-owned capacity and the optional compactor. It is an agent-loop
+policy, not hidden loop behavior: proactive actions, overflow recovery, and
+their outcomes are durable decisions with bounded retries.
 
 ### `tools`
 
@@ -670,8 +679,8 @@ of DeepSeek's multi-event lock, summary, surface-operation, and end bracket.
 Whole-turn prefix selection replaces its general positional range algorithm and
 preserves tool pairing by construction. It does not copy DeepSeek's token
 meter, pruning, automatic pressure/overflow hooks, raw provider output, usage
-accounting, manual command, or UI. Those require policy signals this repository
-does not yet have and are not simulated with character counts.
+accounting, manual command, or UI. Those were deliberately outside Feature 9;
+Feature 10 adds the policy signals without changing its provenance contract.
 
 #### PR 9 result
 
@@ -685,14 +694,64 @@ schema corruption, no-op selection, and provider disposal. Together with PRs
 1–8, 79 deterministic tests pass and one live OpenRouter smoke test remains
 opt-in.
 
+### PR 10: `feature/010-context-budget-policy`
+
+Add an explicitly versioned, provider-neutral token meter and an optional
+context-budget policy. The meter estimates the exact projected session surface
+plus live tool schemas and retains event-sequence positions across compaction.
+Its four-Unicode-characters heuristic is named `four-characters-v1`; it is a
+pressure signal, never tokenizer output, usage, or billing data. Exact capacity
+remains adapter-owned metadata.
+
+Before each model step, the policy compares the immutable measurement with an
+advertised context window and compacts at the configured threshold. Providers
+normalize only recognized context failures to `ModelContextOverflowError`.
+That error permits one bounded recovery attempt even without capacity metadata,
+but the loop retries only after compaction commits a new checkpoint. No useful
+prefix, compaction failure, an exhausted retry budget, or a noncanonical error
+preserves the original model failure. Cancellation remains authoritative.
+
+Every attempted action appends a log-only `context-budget/decision`. A
+successful decision must reference a real prior `compaction/summary`; failed
+and no-progress decisions cannot claim one. File schema V3 validates and
+migrates this vocabulary. The CLI composes the meter, compactor, and policy in
+both replay and OpenRouter modes when configured with exact capacity.
+
+#### Upstream motivation and adaptation boundary
+
+This feature was checked on August 30, 2026 against the Cordis paper at
+[`0d43a6f`](https://github.com/cordiverse/paper/commit/0d43a6f18004a7b5bf9662c31aa08c3712d232ec)
+and DeepSeek Harness at
+[`cd5ef81`](https://github.com/deepseek-ai/deepseek-harness/commit/cd5ef8148158c3a752a658978873241fdf8e2bbc),
+especially its
+[`token-meter`](https://github.com/deepseek-ai/deepseek-harness/blob/cd5ef8148158c3a752a658978873241fdf8e2bbc/docs/subsystems/token-meter.md)
+contract and
+[implemented after-call pressure/overflow recovery note](https://github.com/deepseek-ai/deepseek-harness/blob/cd5ef8148158c3a752a658978873241fdf8e2bbc/.agents/notes/implemented/architecture/2026-07-10-after-call-compaction-pressure-and-overflow-recovery.md).
+DeepSeek
+supplies the separation between measurement, adapter capacity, compaction, and
+bounded recovery. Cordis supplies the rule that optional capabilities remain
+independently owned and withdrawable.
+
+This repository adapts those invariants to its smaller synchronous projection
+and one-shot CLI. It does not copy upstream tokenizer registries, async signal
+graphs, usage anchoring, model catalogs, command system, or UI. The estimator is
+explicitly heuristic; OpenRouter capacity is configured rather than guessed.
+
+#### PR 10 result
+
+Implemented the meter, policy hooks, canonical overflow type, conservative
+OpenRouter normalization, between-step compaction, bounded retry, durable V3
+decisions, independent Cordis meter service, and end-to-end persistent CLI
+pressure coverage. Together with PRs 1–9, 91 deterministic tests pass and one
+live OpenRouter smoke test remains opt-in.
+
 ### Later milestones
 
-Feature 10 should add a provider-neutral token meter and explicit context-budget
-policy, then invoke compaction between turns or after a canonical context
-overflow. It must record the routed model/budget decision, preserve the original
-provider error when no useful checkpoint commits, and test retry limits without
-using character counts as fake tokens. A manual CLI command can share that
-policy seam.
+Feature 11 should replace configured capacity and heuristic-only pressure with
+a provider metadata resolver and tokenizer/usage anchoring while retaining the
+same immutable measurement contract. It can also expose inspect/compact through
+a real command seam; the current one-shot CLI has no interactive dispatcher, so
+Feature 10 does not disguise a special flag as that abstraction.
 
 After that, add approval and sandbox boundaries before filesystem, shell,
 browser, or other consequential tools. Interactive input, cross-process writer

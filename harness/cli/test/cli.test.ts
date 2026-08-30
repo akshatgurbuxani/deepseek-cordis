@@ -146,6 +146,40 @@ test('file-backed CLI resumes the same session across fresh application boots', 
   )
 })
 
+test('file-backed CLI applies configured context pressure before the next request', async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'deepseek-cordis-cli-budget-'))
+  t.after(() => { rmSync(directory, { recursive: true, force: true }) })
+  const baseEnv = { HARNESS_SESSION_DIR: directory, HARNESS_SESSION_ID: 'budget-cli' }
+  await runCli({
+    argv: ['--replay', 'add 1 and 2'], env: baseEnv,
+    trace: () => undefined, output: () => undefined,
+  })
+  await runCli({
+    argv: ['--replay', 'add 3 and 4'], env: baseEnv,
+    trace: () => undefined, output: () => undefined,
+  })
+  const { records, trace } = recorder()
+
+  const result = await runCli({
+    argv: ['--replay', 'add 5 and 6'],
+    env: { ...baseEnv, HARNESS_CONTEXT_WINDOW: '40' },
+    trace,
+    output: () => undefined,
+  })
+
+  assert.equal(result.turnId, 'budget-cli:turn:3')
+  const resumed = new FileSessionStore({ directory }).get('budget-cli')
+  assert.ok(resumed)
+  assert.equal(resumed.events.some((event) => event.type === 'compaction/summary'), true)
+  const decision = resumed.events.find((event) => event.type === 'context-budget/decision')
+  assert.ok(decision?.type === 'context-budget/decision')
+  assert.equal(decision.outcome, 'compacted')
+  assert.equal(decision.contextWindow, 40)
+  assert.ok(records.some(({ label, value }) =>
+    label === 'model/request'
+    && JSON.stringify(value).includes('Earlier conversation compacted for replay.')))
+})
+
 test('file-backed CLI repairs an interrupted cold turn before resuming', async (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'deepseek-cordis-cli-repair-'))
   t.after(() => { rmSync(directory, { recursive: true, force: true }) })

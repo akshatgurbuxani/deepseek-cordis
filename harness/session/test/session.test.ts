@@ -104,3 +104,19 @@ test('summary checkpoints replace only the exact current surface prefix', () => 
   }), SessionProjectionError)
   assert.deepEqual(session.events, before)
 })
+
+test('compacted budget decisions must reference an existing summary checkpoint', () => {
+  const session = new InMemorySessionStore().create('budget-reference')
+  session.append({ type: 'turn/start', turnId: 'turn-1' })
+
+  assert.throws(() => session.append({
+    type: 'context-budget/decision',
+    turnId: 'turn-1',
+    trigger: 'context_overflow',
+    model: 'test-model',
+    measuredTokens: 100,
+    outcome: 'compacted',
+    summarySequence: 1,
+  }), /does not reference a compaction event/)
+  assert.equal(session.events.length, 1)
+})

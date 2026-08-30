@@ -36,6 +36,7 @@ export function deriveSessionSurface(
   const surface: SessionSurfaceNode[] = []
   const closedTurns = new Set<string>()
   let openTurn: string | undefined
+  let openStep: number | undefined
   for (const event of events) {
     let message: ModelMessage | undefined
     switch (event.type) {
@@ -45,6 +46,12 @@ export function deriveSessionSurface(
       case 'turn/end':
         if (openTurn === event.turnId) openTurn = undefined
         closedTurns.add(event.turnId)
+        break
+      case 'step/start':
+        openStep = event.step
+        break
+      case 'step/end':
+        if (openStep === event.step) openStep = undefined
         break
       case 'user/message':
         message = { role: 'user', content: event.content }
@@ -73,9 +80,9 @@ export function deriveSessionSurface(
             }
         break
       case 'compaction/summary': {
-        if (openTurn !== undefined || !closedTurns.has(event.turnId)) {
+        if (openStep !== undefined || !closedTurns.has(event.turnId)) {
           throw new SessionProjectionError(
-            `compaction event ${event.sequence} is not between closed turns`,
+            `compaction event ${event.sequence} is not at a maintenance boundary`,
           )
         }
         const actual = surface
@@ -101,6 +108,17 @@ export function deriveSessionSurface(
           turnId: event.turnId,
           message: { role: 'user', content: event.summary },
         })
+        break
+      }
+      case 'context-budget/decision': {
+        if (event.outcome === 'compacted') {
+          const checkpoint = events[event.summarySequence - 1]
+          if (checkpoint?.type !== 'compaction/summary') {
+            throw new SessionProjectionError(
+              `context budget decision ${event.sequence} does not reference a compaction event`,
+            )
+          }
+        }
         break
       }
       default:
@@ -134,7 +152,7 @@ export class InMemorySession implements Session {
       ...input,
       sequence: this.#events.length + 1,
     }) as unknown as SessionEvent
-    if (event.type === 'compaction/summary') {
+    if (event.type === 'compaction/summary' || event.type === 'context-budget/decision') {
       deriveSessionSurface([...this.#events, event])
     }
     this.#events.push(event)

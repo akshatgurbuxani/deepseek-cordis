@@ -14,11 +14,22 @@ import {
 
 export class ReplayModelAdapter implements ModelAdapter {
   readonly id: string
+  readonly contextWindow?: number
   readonly requests: ModelRequest[] = []
   readonly #responses: ModelResponse[]
 
-  constructor(id: string, responses: readonly ModelResponse[]) {
+  constructor(
+    id: string,
+    responses: readonly ModelResponse[],
+    options: { readonly contextWindow?: number } = {},
+  ) {
     this.id = id
+    if (options.contextWindow !== undefined) {
+      if (!Number.isInteger(options.contextWindow) || options.contextWindow < 1) {
+        throw new RangeError('contextWindow must be a positive integer')
+      }
+      this.contextWindow = options.contextWindow
+    }
     this.#responses = responses.map((response) => snapshot(response))
   }
 

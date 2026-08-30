@@ -48,5 +48,20 @@ disappeared during a turn, file-store construction first durably repairs that
 turn as interrupted and balances any unanswered tool calls. The command then
 starts a new turn; it never resumes partial model or tool execution.
 
-Interactive input, cross-process writer locking, parallel tool execution, and
-provider replacement during a running turn remain future work.
+Set exact provider capacity to enable proactive pressure compaction:
+
+```sh
+HARNESS_CONTEXT_WINDOW=128000 npm run cli -- "continue the task"
+```
+
+`OPENROUTER_CONTEXT_WINDOW` is accepted as an OpenRouter-specific alias. The
+CLI measures the persisted surface and live calculator schema before each
+request, compacts at 80% pressure, and permits one retry after a canonical
+provider overflow only when a new checkpoint commits. Replay mode uses a
+deterministic summary response; live mode uses the configured model through the
+same adapter. Decisions and checkpoint provenance remain in the session file.
+No capacity is guessed from a model name.
+
+Interactive commands (including manual inspect/compact), cross-process writer
+locking, parallel tool execution, and provider replacement during a running
+turn remain future work.

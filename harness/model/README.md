@@ -5,6 +5,11 @@ Every adapter yields text deltas followed by exactly one terminal finish:
 completed with a normalized response, failed with a safe error message, or
 aborted. Provider packages translate their wire formats at this boundary.
 
+Adapters may advertise an exact `contextWindow`. Capacity is provider metadata,
+not inferred from a pressure estimate. A coded stream failure becomes
+`ModelContextOverflowError`, allowing policy to distinguish context pressure
+from unrelated provider failures without parsing arbitrary errors in the loop.
+
 `completeModel()` is the shared collector used by the agent loop and tests. It
 forwards text deltas to an optional observer, rejects malformed streams, and
 returns only a completed response. Partial text is live output, not durable

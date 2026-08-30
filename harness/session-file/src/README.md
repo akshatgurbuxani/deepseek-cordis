@@ -19,7 +19,7 @@ message otherwise. It then emits an interrupted `step/end` when needed and an
 interrupted `turn/end`. Already committed events are never rewritten or
 discarded, and closed documents produce no repair.
 
-Migration and repair are combined into one V2 candidate document and one writer
+Migration and repair are combined into one V3 candidate document and one writer
 call. Only after that call succeeds does the store publish the repaired
 `FileSession`; reopening sees a closed turn and performs no second write. This
 is a cold-only boundary: the store owns no live agent loop while its constructor
@@ -27,7 +27,7 @@ scans files, and it does not attempt partial-turn resume. The store publishes no
 session until the full scan succeeds.
 
 `FileSession.append()` snapshots the next sequenced event and builds a candidate
-event list without mutating live memory. Its persistence callback encodes a V2
+event list without mutating live memory. Its persistence callback encodes a V3
 document and calls the configured writer. Only a successful return pushes the
 event into memory. Injecting a writer lets deterministic tests prove that a
 failure before commit leaves the session and its previous document unchanged.
@@ -38,9 +38,11 @@ rename as the atomic commit point. It removes uncommitted temporary files on
 failure. Directory fsync is best-effort because some platforms reject it; no
 error is reported after a rename has already committed.
 
-Versionless V0 and schema V1 documents pass through the same event validation
-and are immediately rewritten as V2. V2 adds the `compaction/summary` event and
-validates its sequence references by deriving the surface before publication.
+Versionless V0 plus schema V1 and V2 documents pass through the same event
+validation and are immediately rewritten as V3. V2 adds the
+`compaction/summary` event; V3 adds `context-budget/decision`. Both provenance
+relationships are validated by deriving the surface before publication, and a
+legacy document cannot contain a newer event variant.
 Future or unknown versions stop startup without modification. New migrations
 must be explicit, deterministic, tested from fixtures, and advance one version
 at a time.

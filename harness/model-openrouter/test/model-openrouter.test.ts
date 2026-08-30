@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { ModelStreamAbortedError } from '@deepseek-cordis/model'
+import {
+  ModelContextOverflowError,
+  ModelStreamAbortedError,
+} from '@deepseek-cordis/model'
 import {
   OpenRouterHttpError,
   OpenRouterModelAdapter,
@@ -279,6 +282,44 @@ test('normalizes missing keys, network failures, and HTTP failures without leaki
   await assert.rejects(
     new OpenRouterModelAdapter({ apiKey: 'test', fetch: emptyFailure }).complete(request),
     /OpenRouter request failed \(503\): Unavailable/,
+  )
+})
+
+test('normalizes HTTP and streamed context-limit failures for policy recovery', async () => {
+  const http = new OpenRouterModelAdapter({
+    apiKey: 'test',
+    contextWindow: 128_000,
+    fetch: (async () => new Response('maximum context length exceeded', {
+      status: 400,
+    })) as typeof fetch,
+  })
+  assert.equal(http.contextWindow, 128_000)
+  await assert.rejects(http.complete(request), ModelContextOverflowError)
+
+  const unrelatedLargeRequest = new OpenRouterModelAdapter({
+    apiKey: 'test',
+    fetch: (async () => new Response('request body is too large', {
+      status: 413,
+    })) as typeof fetch,
+  })
+  await assert.rejects(
+    unrelatedLargeRequest.complete(request),
+    (error) => error instanceof OpenRouterHttpError && error.status === 413,
+  )
+
+  const streamed = new OpenRouterModelAdapter({
+    apiKey: 'test',
+    fetch: (async () => streamedResponse([
+      'data: {"error":{"code":"context_length_exceeded","message":"too many tokens"}}\n\n',
+    ])) as typeof fetch,
+  })
+  await assert.rejects(
+    streamed.complete(request, { onTextDelta: () => undefined }),
+    ModelContextOverflowError,
+  )
+  assert.throws(
+    () => new OpenRouterModelAdapter({ apiKey: 'test', contextWindow: 0 }),
+    /context window must be a positive integer/,
   )
 })
 

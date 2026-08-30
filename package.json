@@ -13,7 +13,9 @@
     "harness/model-openrouter",
     "harness/cli",
     "harness/session-file",
-    "harness/compaction"
+    "harness/compaction",
+    "harness/token-meter",
+    "harness/context-budget"
   ],
   "scripts": {
     "build": "tsc -b",

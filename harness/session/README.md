@@ -27,3 +27,7 @@ applies `compaction/summary` only when its `shadowedSequences` exactly match the
 current surface prefix. It replaces that prefix with one user-role checkpoint
 node while preserving every source event. Invalid or reordered provenance is a
 projection error and is rejected before either reference store commits it.
+
+Budget decisions never alter the surface. A decision that claims compaction
+must reference an earlier `compaction/summary`; this relationship is checked
+before either store accepts it.

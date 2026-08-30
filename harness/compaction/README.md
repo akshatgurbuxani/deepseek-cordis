@@ -9,9 +9,11 @@ model messages and event sequences selected, then appends one atomic
 summary text, and exact surface sequence list it shadows. Original events stay
 in the append-only log; only derived model history changes.
 
-Compaction runs only while the session is idle. It rejects concurrent attempts,
-revalidates the selected prefix after asynchronous summarization, propagates
-cancellation, and commits nothing on failure or empty output. Whole-turn prefix
+Compaction normally requires an idle session. Policy may explicitly allow an
+open turn only between steps; an open step is always rejected. It rejects
+concurrent attempts, revalidates the selected prefix and execution boundary
+after asynchronous summarization, propagates cancellation, and commits nothing
+on failure or empty output. Whole-turn prefix
 selection preserves tool-call/result pairing without requiring the larger
 DeepSeek surface-range protocol.
 

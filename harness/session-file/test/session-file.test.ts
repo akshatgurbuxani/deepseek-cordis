@@ -107,7 +107,7 @@ test('a failed atomic append leaves memory and the committed file unchanged', (t
   assert.equal(readdirSync(directory).some((name) => name.endsWith('.tmp')), false)
 })
 
-test('V0 and V1 documents migrate once to the current schema', (t) => {
+test('V0, V1, and V2 documents migrate once to the current schema', (t) => {
   const directory = temporaryDirectory(t)
   const id = 'legacy'
   const filePath = sessionFilePath(directory, id)
@@ -129,6 +129,37 @@ test('V0 and V1 documents migrate once to the current schema', (t) => {
   assert.ok(new FileSessionStore({ directory }).get(v1Id))
   const migratedV1 = JSON.parse(readFileSync(v1Path, 'utf8')) as Record<string, unknown>
   assert.equal(migratedV1.schemaVersion, SESSION_FILE_SCHEMA_VERSION)
+
+  const v2Id = 'schema-v2'
+  const v2Path = sessionFilePath(directory, v2Id)
+  writeFileSync(v2Path, JSON.stringify({
+    schemaVersion: 2,
+    id: v2Id,
+    events: [
+      { type: 'turn/start', turnId: 'schema-v2:turn:1', sequence: 1 },
+      {
+        type: 'user/message', turnId: 'schema-v2:turn:1',
+        content: 'old', sequence: 2,
+      },
+      {
+        type: 'turn/end', turnId: 'schema-v2:turn:1',
+        status: 'completed', sequence: 3,
+      },
+      {
+        type: 'compaction/summary', turnId: 'schema-v2:turn:1',
+        summary: 'checkpoint', shadowedSequences: [2],
+        summarizer: 'legacy/v2', sequence: 4,
+      },
+    ],
+  }))
+  const migratedV2 = new FileSessionStore({ directory }).get(v2Id)
+  assert.deepEqual(migratedV2?.projectMessages(), [
+    { role: 'user', content: 'checkpoint' },
+  ])
+  assert.equal(
+    (JSON.parse(readFileSync(v2Path, 'utf8')) as Record<string, unknown>).schemaVersion,
+    SESSION_FILE_SCHEMA_VERSION,
+  )
 })
 
 test('cold startup preserves an interrupted turn and durably synthesizes balanced closers', (t) => {
@@ -310,6 +341,10 @@ test('every persisted event variant is validated before it can become live state
       summary: '', shadowedSequences: [], summarizer: '',
     }, /invalid provenance/],
     [{
+      type: 'context-budget/decision', turnId: 'turn-1', sequence: 1,
+      trigger: 'pressure', model: '', measuredTokens: -1, outcome: 'compacted',
+    }, /invalid fields/],
+    [{
       type: 'assistant/tool-calls', turnId: 'turn-1', sequence: 1,
       calls: [{ id: 'call-1', name: 'add' }],
     }, /invalid tool call/],
@@ -385,7 +420,7 @@ test('persisted compaction provenance must match the derived surface prefix', (t
     '"turnId":"wrong-turn","sequence":5',
   ).replace('"shadowedSequences":[3]', '"shadowedSequences":[2,3]')
   writeFileSync(filePath, wrongBoundary)
-  assert.throws(() => new FileSessionStore({ directory }), /not between closed turns/)
+  assert.throws(() => new FileSessionStore({ directory }), /not at a maintenance boundary/)
   assert.equal(readFileSync(filePath, 'utf8'), wrongBoundary)
 
   const legacy = JSON.stringify({
@@ -402,7 +437,7 @@ test('persisted compaction provenance must match the derived surface prefix', (t
     ],
   })
   writeFileSync(filePath, legacy)
-  assert.throws(() => new FileSessionStore({ directory }), /legacy schema.*V2 compaction/)
+  assert.throws(() => new FileSessionStore({ directory }), /legacy schema.*newer schema/)
   assert.equal(readFileSync(filePath, 'utf8'), legacy)
 })
 

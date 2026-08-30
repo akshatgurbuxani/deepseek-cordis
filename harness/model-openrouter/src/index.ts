@@ -2,6 +2,7 @@ import {
   completeModel,
   type ModelAdapter,
   type ModelCompletionOptions,
+  ModelContextOverflowError,
   type ModelStreamOptions,
 } from '@deepseek-cordis/model'
 import {
@@ -31,6 +32,7 @@ export interface OpenRouterAdapterOptions {
   readonly appTitle?: string
   readonly fetch?: typeof globalThis.fetch
   readonly onDiagnostics?: (diagnostics: OpenRouterDiagnostics) => void
+  readonly contextWindow?: number
 }
 
 export class OpenRouterRequestError extends Error {}
@@ -135,6 +137,12 @@ function optionalNumber(record: Record<string, unknown>, name: string): number |
   return typeof record[name] === 'number' ? record[name] : undefined
 }
 
+function isContextOverflow(status: number, detail: string): boolean {
+  return (status === 400 || status === 413) && (
+    /context[_ -]?(?:length|window)|maximum context|too many (?:input )?tokens/i.test(detail)
+  )
+}
+
 async function* readSsePayloads(body: ReadableStream<Uint8Array>): AsyncIterable<unknown> {
   const reader = body.getReader()
   const decoder = new TextDecoder()
@@ -219,6 +227,7 @@ function applyToolCallDelta(calls: Map<number, PartialToolCall>, value: unknown)
 
 export class OpenRouterModelAdapter implements ModelAdapter {
   readonly id: string
+  readonly contextWindow?: number
   readonly #apiKey: string
   readonly #model: string
   readonly #endpoint: string
@@ -236,6 +245,11 @@ export class OpenRouterModelAdapter implements ModelAdapter {
     this.#appTitle = options.appTitle
     this.#fetch = options.fetch ?? globalThis.fetch
     this.#onDiagnostics = options.onDiagnostics
+    if (
+      options.contextWindow !== undefined
+      && (!Number.isInteger(options.contextWindow) || options.contextWindow < 1)
+    ) throw new OpenRouterRequestError('OpenRouter context window must be a positive integer')
+    if (options.contextWindow !== undefined) this.contextWindow = options.contextWindow
     this.id = `openrouter:${this.#model}`
   }
 
@@ -297,6 +311,9 @@ export class OpenRouterModelAdapter implements ModelAdapter {
 
     if (!response.ok) {
       const detail = (await response.text()).slice(0, 1_000)
+      if (isContextOverflow(response.status, detail)) {
+        throw new ModelContextOverflowError(detail || 'OpenRouter context window exceeded')
+      }
       throw new OpenRouterHttpError(response.status, detail || response.statusText)
     }
     return response
@@ -375,6 +392,11 @@ export class OpenRouterModelAdapter implements ModelAdapter {
           const message = typeof value.error.message === 'string'
             ? value.error.message
             : 'OpenRouter stream failed'
+          if (
+            value.error.code === 'context_length_exceeded'
+            || value.error.code === 'context_window_exceeded'
+            || isContextOverflow(400, message)
+          ) throw new ModelContextOverflowError(message)
           throw new OpenRouterResponseError(message)
         }
         diagnostics = { ...diagnostics, ...value }
@@ -433,7 +455,14 @@ export class OpenRouterModelAdapter implements ModelAdapter {
         return
       }
       const message = error instanceof Error ? error.message : String(error)
-      yield { type: 'finish', reason: 'error', error: message }
+      yield {
+        type: 'finish',
+        reason: 'error',
+        error: message,
+        ...(error instanceof ModelContextOverflowError
+          ? { code: 'context_window_exceeded' as const }
+          : {}),
+      }
     }
   }
 }

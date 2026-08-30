@@ -14,13 +14,28 @@ export interface ModelCompletionOptions extends ModelStreamOptions {
 
 export interface ModelAdapter {
   readonly id: string
+  readonly contextWindow?: number
   stream(
     request: ModelRequest,
     options?: ModelStreamOptions,
   ): AsyncIterable<ModelStreamChunk>
 }
 
-export class ModelStreamError extends Error {}
+export class ModelStreamError extends Error {
+  readonly code: string | undefined
+
+  constructor(message: string, options: ErrorOptions & { readonly code?: string } = {}) {
+    super(message, options)
+    this.code = options.code
+  }
+}
+
+export class ModelContextOverflowError extends ModelStreamError {
+  constructor(message = 'model context window exceeded', options: ErrorOptions = {}) {
+    super(message, { ...options, code: 'context_window_exceeded' })
+    this.name = 'ModelContextOverflowError'
+  }
+}
 
 export class ModelStreamAbortedError extends ModelStreamError {
   constructor() {
@@ -52,7 +67,12 @@ export async function completeModel(
   }
 
   if (!finish) throw new ModelStreamProtocolError('model stream ended without finish')
-  if (finish.reason === 'error') throw new ModelStreamError(finish.error)
+  if (finish.reason === 'error') {
+    if (finish.code === 'context_window_exceeded') {
+      throw new ModelContextOverflowError(finish.error)
+    }
+    throw new ModelStreamError(finish.error)
+  }
   if (finish.reason === 'aborted') throw new ModelStreamAbortedError()
 
   if (finish.response.type === 'message') {

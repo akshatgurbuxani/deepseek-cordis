@@ -58,6 +58,38 @@ export type SessionEvent =
     readonly summarizer: string
   }
   | EventBase & {
+    readonly type: 'context-budget/decision'
+    readonly model: string
+    readonly measuredTokens: number
+  } & (
+    | {
+      readonly trigger: 'pressure'
+      readonly contextWindow: number
+      readonly thresholdTokens: number
+    }
+    | {
+      readonly trigger: 'context_overflow'
+      readonly contextWindow?: number
+      readonly thresholdTokens?: never
+    }
+  ) & (
+    | {
+      readonly outcome: 'compacted'
+      readonly summarySequence: number
+      readonly error?: never
+    }
+    | {
+      readonly outcome: 'no_progress'
+      readonly summarySequence?: never
+      readonly error?: never
+    }
+    | {
+      readonly outcome: 'failed'
+      readonly summarySequence?: never
+      readonly error: string
+    }
+  )
+  | EventBase & {
     readonly type: 'step/end'
     readonly step: number
     readonly outcome: 'tool_calls' | 'completed' | 'failed' | 'aborted' | 'interrupted'
@@ -112,7 +144,12 @@ export type ModelStreamChunk =
     readonly reason: 'completed'
     readonly response: ModelResponse
   }
-  | { readonly type: 'finish'; readonly reason: 'error'; readonly error: string }
+  | {
+    readonly type: 'finish'
+    readonly reason: 'error'
+    readonly error: string
+    readonly code?: 'context_window_exceeded'
+  }
   | { readonly type: 'finish'; readonly reason: 'aborted' }
 
 export interface RunResult {

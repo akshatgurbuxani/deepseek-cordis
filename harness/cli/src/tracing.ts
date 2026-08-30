@@ -87,6 +87,7 @@ export class TracingSessionStore implements SessionStore {
 
 export class TracingModelAdapter implements ModelAdapter {
   readonly id: string
+  readonly contextWindow?: number
   readonly #inner: ModelAdapter
   readonly #trace: TraceSink
 
@@ -94,6 +95,7 @@ export class TracingModelAdapter implements ModelAdapter {
     this.#inner = inner
     this.#trace = trace
     this.id = `trace:${inner.id}`
+    if (inner.contextWindow !== undefined) this.contextWindow = inner.contextWindow
   }
 
   async *stream(

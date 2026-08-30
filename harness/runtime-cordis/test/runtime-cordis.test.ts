@@ -12,6 +12,7 @@ import {
   createSessionStorePlugin,
   createToolRegistrationPlugin,
   createToolRegistryPlugin,
+  createTokenMeterPlugin,
 } from '@deepseek-cordis/runtime-cordis'
 import { Context, FiberState, type Fiber, type Plugin } from 'cordis'
 
@@ -306,4 +307,14 @@ test('compaction is an optional Cordis capability with stable provider identity'
 
   await fiber.dispose()
   assert.equal(context.get('compaction'), undefined)
+})
+
+test('token measurement is an independently withdrawable Cordis capability', async () => {
+  const context = new Context()
+  const factory = createTokenMeterPlugin()
+  const fiber = await mount(context, factory.plugin)
+
+  assert.equal(context.tokenMeter, factory.value)
+  await fiber.dispose()
+  assert.equal(context.get('tokenMeter'), undefined)
 })

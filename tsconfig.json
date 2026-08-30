@@ -11,6 +11,8 @@
     { "path": "./harness/model-openrouter" },
     { "path": "./harness/session-file" },
     { "path": "./harness/compaction" },
+    { "path": "./harness/token-meter" },
+    { "path": "./harness/context-budget" },
     { "path": "./harness/cli" }
   ]
 }

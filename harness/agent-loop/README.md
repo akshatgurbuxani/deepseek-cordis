@@ -24,6 +24,12 @@ failed results so projected history remains a valid model transcript.
 The per-session run lock is released in `finally`, so later turns remain
 possible after success or failure.
 
+An optional `AgentLoopPolicy` runs at the maintenance boundary before request
+derivation and may inspect a failed model call. Tool schemas are read again
+after policy work, so a slow policy cannot freeze a stale registry snapshot.
+Recovery starts a new durable step only when the policy reports a surface
+change; the failed attempt remains closed in the log.
+
 ```text
 append user input
        ↓

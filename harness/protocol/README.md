@@ -17,7 +17,17 @@ turns record their terminal boundary without serializing `AbortSignal.reason`.
 `interrupted` is reserved for durable boundaries synthesized during cold-start
 repair when the prior process disappeared without closing its turn.
 
+A failed model finish may carry the canonical
+`context_window_exceeded` code. Provider packages assign it conservatively;
+the shared collector turns it into the provider-neutral overflow error used by
+policy.
+
 `compaction/summary` is the sole surface-transforming checkpoint. It records
 summary text, summarizer identity, and the exact current surface sequence prefix
 it shadows. The source events remain in the log; consumers derive the shorter
 model surface by applying the checkpoint.
+
+`context-budget/decision` is log-only. It records whether a pressure or
+overflow action compacted, made no progress, or failed. A compacted outcome
+must reference an earlier summary event; projection rejects invented
+provenance.

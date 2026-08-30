@@ -63,6 +63,7 @@ export class ModelSummaryAdapter implements SummaryAdapter {
 export interface CompactionOptions {
   readonly retainTurns?: number
   readonly signal?: AbortSignal
+  readonly allowOpenTurn?: boolean
 }
 
 export interface CompactionResult {
@@ -78,10 +79,24 @@ function throwIfAborted(signal: AbortSignal | undefined): void {
   if (signal?.aborted) throw signal.reason
 }
 
-function hasOpenTurn(events: readonly SessionEvent[]): boolean {
-  const lastStart = events.findLastIndex((event) => event.type === 'turn/start')
-  const lastEnd = events.findLastIndex((event) => event.type === 'turn/end')
-  return lastStart > lastEnd
+interface ExecutionState {
+  readonly openTurn?: string
+  readonly openStep?: number
+}
+
+function executionState(events: readonly SessionEvent[]): ExecutionState {
+  let openTurn: string | undefined
+  let openStep: number | undefined
+  for (const event of events) {
+    if (event.type === 'turn/start') openTurn = event.turnId
+    if (event.type === 'turn/end' && event.turnId === openTurn) openTurn = undefined
+    if (event.type === 'step/start') openStep = event.step
+    if (event.type === 'step/end' && event.step === openStep) openStep = undefined
+  }
+  return {
+    ...(openTurn ? { openTurn } : {}),
+    ...(openStep ? { openStep } : {}),
+  }
 }
 
 function closedTurnIds(events: readonly SessionEvent[]): readonly string[] {
@@ -111,7 +126,11 @@ export class SessionCompactor {
     if (this.#running.has(session)) {
       throw new CompactionBusyError(`session ${JSON.stringify(session.id)} is already compacting`)
     }
-    if (hasOpenTurn(session.events)) {
+    const initialState = executionState(session.events)
+    if (initialState.openStep !== undefined) {
+      throw new CompactionBusyError(`session ${JSON.stringify(session.id)} has an open step`)
+    }
+    if (initialState.openTurn !== undefined && !options.allowOpenTurn) {
       throw new CompactionBusyError(`session ${JSON.stringify(session.id)} has an open turn`)
     }
 
@@ -141,8 +160,12 @@ export class SessionCompactor {
       }
       throwIfAborted(options.signal)
       if (summary.trim().length === 0) throw new Error('summarizer returned an empty summary')
-      if (hasOpenTurn(session.events)) {
-        throw new CompactionChangedError('session opened a turn while compaction was running')
+      const currentState = executionState(session.events)
+      if (
+        currentState.openTurn !== initialState.openTurn
+        || currentState.openStep !== initialState.openStep
+      ) {
+        throw new CompactionChangedError('session execution changed while compaction was running')
       }
       const currentPrefix = deriveSessionSurface(session.events)
         .slice(0, request.sourceSequences.length)

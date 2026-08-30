@@ -3,6 +3,7 @@ import test from 'node:test'
 
 import {
   completeModel,
+  ModelContextOverflowError,
   ModelStreamAbortedError,
   ModelStreamProtocolError,
   type ModelAdapter,
@@ -40,6 +41,11 @@ test('replay adapters fail explicitly when the script is exhausted', async () =>
     messages: [],
     tools: [],
   }), /replay adapter "empty" exhausted/)
+
+  assert.throws(
+    () => new ReplayModelAdapter('invalid-capacity', [], { contextWindow: 0 }),
+    /contextWindow must be a positive integer/,
+  )
 })
 
 test('the shared collector exposes deltas and returns only the terminal response', async () => {
@@ -82,6 +88,13 @@ test('the shared collector rejects malformed and aborted streams', async () => {
   await assert.rejects(completeModel(adapter(async function* () {
     yield { type: 'finish', reason: 'aborted' }
   }), request), ModelStreamAbortedError)
+  await assert.rejects(completeModel(adapter(async function* () {
+    yield {
+      type: 'finish', reason: 'error', error: 'context too large',
+      code: 'context_window_exceeded',
+    }
+  }), request), (error) => error instanceof ModelContextOverflowError
+    && error.code === 'context_window_exceeded')
   await assert.rejects(completeModel(adapter(async function* () {
     yield {
       type: 'finish', reason: 'completed',
