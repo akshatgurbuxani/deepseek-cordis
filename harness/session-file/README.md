@@ -14,6 +14,20 @@ V1 during startup. Unknown versions, malformed JSON, invalid event fields,
 sequence gaps, and filename/ID mismatches fail explicitly and are never
 overwritten.
 
+Startup also repairs one structurally valid trailing turn that lacks its
+terminal boundary. It preserves every committed event, appends a failed
+`tool/result` for each unanswered assistant tool call, closes an open step as
+`interrupted`, and closes the turn as `interrupted`. A recorded `tool/call`
+means execution may have produced an irreversible effect, so its synthetic
+result says the outcome is unknown; a requested call without `tool/call` is
+recorded as not started. The store never resumes partial execution or invents a
+successful result.
+
+Migration and repair share one atomic replacement and occur before any loaded
+session is published. Reopening the repaired file is therefore idempotent. An
+ambiguous tail is corruption rather than repair input, and a failed repair
+write leaves the original document unchanged and unpublished.
+
 The current provider assumes one active writer per directory. Atomic replacement
 protects against torn process writes; cross-process locking and merge semantics
 are deliberately not claimed. Temporary files left by process death are ignored

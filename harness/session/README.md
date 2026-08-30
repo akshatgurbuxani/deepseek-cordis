@@ -8,7 +8,11 @@ before storage. `projectMessages()` derives only the history visible to a model;
 turn and step bookkeeping remains durable without becoming prompt content.
 There is no second mutable transcript.
 
-Failed and aborted boundaries are bookkeeping rather than model messages.
+Failed, aborted, and interrupted boundaries are bookkeeping rather than model
+messages. A file provider may project synthetic failed tool results from an
+interrupted turn so a resumed provider transcript never contains an unanswered
+assistant tool call. Those results conservatively distinguish calls known to
+have started, whose outcome is unknown, from calls that never started.
 Streaming text is appended as `assistant/message` only after the model's
 completed terminal finish, so cancellation cannot leave partial assistant text
 in resumed history.

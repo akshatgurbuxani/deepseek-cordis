@@ -17,12 +17,14 @@ its manifest. The manifest deliberately lists the agent loop before its
 providers, demonstrating that Cordis keeps it pending until the traced session
 store, tool registry, calculator, and traced model are available.
 
-Before reconciliation, the command selects the in-memory store or the file
-provider configured by `HARNESS_SESSION_DIR`. Its tracing store decorates that
-provider and caches wrappers, preserving the identity rule required by the
-agent loop. After reconciliation, it creates the configured session or resumes
-an existing `HARNESS_SESSION_ID`, runs one turn, traces the result, and prints
-its final content. The process entry point maps `SIGINT` to a runtime-only
+Before reconciliation, the command selects the in-memory store or constructs
+the file provider configured by `HARNESS_SESSION_DIR`. Construction validates
+and durably closes any unambiguous interrupted tail before the store becomes a
+Cordis capability. Its tracing store decorates that provider and caches
+wrappers, preserving the identity rule required by the agent loop. After
+reconciliation, it creates the configured session or resumes an existing
+`HARNESS_SESSION_ID` with a new turn, runs it, traces the result, and prints its
+final content. The process entry point maps `SIGINT` to a runtime-only
 `{ kind: 'user' }` abort cause and exits 130 after durable turn closure.
 `finally` always reconciles an empty manifest before removing the lifecycle
 listener. Success, model failure, cancellation, configuration failure after

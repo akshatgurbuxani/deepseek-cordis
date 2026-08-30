@@ -43,6 +43,10 @@ HARNESS_SESSION_DIR=.sessions HARNESS_SESSION_ID=demo \
   npm run cli:replay -- "add 8 and 9"
 ```
 
-The second command resumes `demo` and records turn two. Interactive input,
-cross-process writer locking, parallel tool execution, and provider replacement
-during a running turn remain future work.
+The second command resumes `demo` and records turn two. If the previous process
+disappeared during a turn, file-store construction first durably repairs that
+turn as interrupted and balances any unanswered tool calls. The command then
+starts a new turn; it never resumes partial model or tool execution.
+
+Interactive input, cross-process writer locking, parallel tool execution, and
+provider replacement during a running turn remain future work.

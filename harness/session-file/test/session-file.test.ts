@@ -18,6 +18,8 @@ import {
   SESSION_FILE_SCHEMA_VERSION,
   SessionPersistenceError,
   sessionFilePath,
+  TOOL_NOT_STARTED,
+  TOOL_OUTCOME_UNKNOWN,
   UnsupportedSessionSchemaError,
 } from '@deepseek-cordis/session-file'
 
@@ -90,7 +92,11 @@ test('a failed atomic append leaves memory and the committed file unchanged', (t
   assert.equal(session.events.length, 1)
   assert.equal(readFileSync(sessionFilePath(directory, session.id), 'utf8'), committed)
   assert.equal(readdirSync(directory).some((name) => name.endsWith('.tmp')), false)
-  assert.equal(new FileSessionStore({ directory }).get(session.id)?.events.length, 1)
+  const repaired = new FileSessionStore({ directory }).get(session.id)
+  assert.equal(repaired?.events.length, 2)
+  assert.deepEqual(repaired?.events.at(-1), {
+    type: 'turn/end', turnId: 'turn-1', status: 'interrupted', sequence: 2,
+  })
 
   const destinationDirectory = join(directory, 'cannot-replace-directory')
   mkdirSync(destinationDirectory)
@@ -111,9 +117,144 @@ test('versionless V0 documents migrate once to the current schema', (t) => {
   }))
 
   const session = new FileSessionStore({ directory }).get(id)
-  assert.equal(session?.events.length, 1)
+  assert.equal(session?.events.length, 2)
+  assert.equal(session?.events.at(-1)?.type, 'turn/end')
   const migrated = JSON.parse(readFileSync(filePath, 'utf8')) as Record<string, unknown>
   assert.equal(migrated.schemaVersion, SESSION_FILE_SCHEMA_VERSION)
+  assert.equal((migrated.events as unknown[]).length, 2)
+})
+
+test('cold startup preserves an interrupted turn and durably synthesizes balanced closers', (t) => {
+  const directory = temporaryDirectory(t)
+  const id = 'interrupted-tools'
+  const filePath = sessionFilePath(directory, id)
+  const prefix = [
+    { type: 'turn/start', turnId: 'interrupted-tools:turn:1', sequence: 1 },
+    {
+      type: 'user/message', turnId: 'interrupted-tools:turn:1',
+      content: 'run three tools', sequence: 2,
+    },
+    { type: 'step/start', turnId: 'interrupted-tools:turn:1', step: 1, sequence: 3 },
+    {
+      type: 'assistant/tool-calls', turnId: 'interrupted-tools:turn:1', sequence: 4,
+      calls: [
+        { id: 'completed', name: 'read', arguments: null },
+        { id: 'unknown', name: 'write', arguments: { value: 1 } },
+        { id: 'not-started', name: 'read', arguments: null },
+      ],
+    },
+    {
+      type: 'tool/call', turnId: 'interrupted-tools:turn:1', sequence: 5,
+      call: { id: 'completed', name: 'read', arguments: null },
+    },
+    {
+      type: 'tool/result', turnId: 'interrupted-tools:turn:1', sequence: 6,
+      callId: 'completed', name: 'read', ok: true, output: 'done',
+    },
+    {
+      type: 'tool/call', turnId: 'interrupted-tools:turn:1', sequence: 7,
+      call: { id: 'unknown', name: 'write', arguments: { value: 1 } },
+    },
+  ]
+  writeFileSync(filePath, JSON.stringify({ schemaVersion: 1, id, events: prefix }))
+
+  const session = new FileSessionStore({ directory }).get(id)
+  assert.ok(session)
+  assert.deepEqual(session.events.slice(0, prefix.length), prefix)
+  assert.deepEqual(session.events.slice(prefix.length), [
+    {
+      type: 'tool/result', turnId: 'interrupted-tools:turn:1', sequence: 8,
+      callId: 'unknown', name: 'write', ok: false, error: TOOL_OUTCOME_UNKNOWN,
+    },
+    {
+      type: 'tool/result', turnId: 'interrupted-tools:turn:1', sequence: 9,
+      callId: 'not-started', name: 'read', ok: false, error: TOOL_NOT_STARTED,
+    },
+    {
+      type: 'step/end', turnId: 'interrupted-tools:turn:1', step: 1,
+      outcome: 'interrupted', sequence: 10,
+    },
+    {
+      type: 'turn/end', turnId: 'interrupted-tools:turn:1',
+      status: 'interrupted', sequence: 11,
+    },
+  ])
+  assert.equal(Object.isFrozen(session.events.at(-1)), true)
+  assert.deepEqual(session.projectMessages().slice(-2), [
+    {
+      role: 'tool', callId: 'unknown', name: 'write', ok: false,
+      error: TOOL_OUTCOME_UNKNOWN,
+    },
+    {
+      role: 'tool', callId: 'not-started', name: 'read', ok: false,
+      error: TOOL_NOT_STARTED,
+    },
+  ])
+
+  const committed = readFileSync(filePath, 'utf8')
+  const secondLoad = new FileSessionStore({ directory }).get(id)
+  assert.deepEqual(secondLoad?.events, session.events)
+  assert.equal(readFileSync(filePath, 'utf8'), committed)
+})
+
+test('failed crash repair leaves the original document unchanged and unpublished', (t) => {
+  const directory = temporaryDirectory(t)
+  const id = 'repair-failure'
+  const filePath = sessionFilePath(directory, id)
+  const original = JSON.stringify({
+    schemaVersion: 1,
+    id,
+    events: [{ type: 'turn/start', turnId: 'repair-failure:turn:1', sequence: 1 }],
+  })
+  writeFileSync(filePath, original)
+
+  assert.throws(() => new FileSessionStore({
+    directory,
+    writer: () => { throw new SessionPersistenceError('repair storage unavailable') },
+  }), /repair storage unavailable/)
+  assert.equal(readFileSync(filePath, 'utf8'), original)
+})
+
+test('ambiguous trailing execution structure is corruption, not repair input', (t) => {
+  const directory = temporaryDirectory(t)
+  const id = 'ambiguous-tail'
+  const filePath = sessionFilePath(directory, id)
+  const turn = { type: 'turn/start', turnId: 'turn-1', sequence: 1 }
+  const step = { type: 'step/start', turnId: 'turn-1', step: 1, sequence: 2 }
+  const call = {
+    type: 'assistant/tool-calls', turnId: 'turn-1', sequence: 3,
+    calls: [{ id: 'call-1', name: 'write', arguments: null }],
+  }
+  const cases: ReadonlyArray<readonly [readonly unknown[], RegExp]> = [
+    [[{ type: 'user/message', turnId: 'turn-1', content: 'orphan', sequence: 1 }],
+      /without a new turn\/start/],
+    [[turn, { type: 'turn/start', turnId: 'turn-2', sequence: 2 }], /mismatched turn id/],
+    [[turn, step, { ...step, sequence: 3 }], /nested step\/start/],
+    [[turn, { ...call, sequence: 2 }], /outside an open step/],
+    [[turn, step, {
+      type: 'tool/call', turnId: 'turn-1', sequence: 3,
+      call: { id: 'unknown', name: 'write', arguments: null },
+    }], /has no pending call/],
+    [[turn, step, {
+      type: 'tool/result', turnId: 'turn-1', sequence: 3,
+      callId: 'unknown', name: 'write', ok: true, output: null,
+    }], /has no pending call/],
+    [[turn, step, {
+      type: 'step/end', turnId: 'turn-1', step: 2, outcome: 'completed', sequence: 3,
+    }], /does not match/],
+    [[turn, { type: 'assistant/message', turnId: 'turn-1', content: 'orphan', sequence: 2 }],
+      /outside an open step/],
+    [[turn, step, call, {
+      type: 'step/end', turnId: 'turn-1', step: 1, outcome: 'tool_calls', sequence: 4,
+    }], /unanswered tool calls/],
+  ]
+
+  for (const [events, expected] of cases) {
+    const original = JSON.stringify({ schemaVersion: 1, id, events })
+    writeFileSync(filePath, original)
+    assert.throws(() => new FileSessionStore({ directory }), expected)
+    assert.equal(readFileSync(filePath, 'utf8'), original)
+  }
 })
 
 test('future schemas and corrupt documents fail explicitly without rewriting input', (t) => {

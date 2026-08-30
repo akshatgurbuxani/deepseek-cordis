@@ -568,14 +568,61 @@ fragmented tool calls, model cancellation, tool cancellation, pre-admission
 cancellation, CLI cleanup, and signal identity. Together with PRs 1–6, 65
 deterministic tests pass and one live OpenRouter smoke test remains opt-in.
 
+### PR 8: `feature/008-session-crash-repair`
+
+Repair an unambiguously open trailing turn while the file session store is
+cold. The repair is append-only: it preserves every committed event, emits a
+failed result for each unanswered assistant tool call, closes an open step as
+`interrupted`, and closes the turn as `interrupted`. Calls with a durable
+`tool/call` have unknown outcomes because their external effects may have
+occurred; calls requested by the assistant but never started are recorded
+separately. A later process always starts a new turn rather than resuming
+partial execution.
+
+Repair shares the file provider's atomic whole-document replacement with V0
+migration and completes before a session is published. It is idempotent after
+commit. Unknown tool transitions, nested boundaries, mismatched IDs, and other
+ambiguous tails fail as corruption without rewriting the source document.
+
+#### Upstream motivation and adaptation boundary
+
+This feature was checked on August 30, 2026 against the Cordis paper at
+[`0d43a6f`](https://github.com/cordiverse/paper/commit/0d43a6f18004a7b5bf9662c31aa08c3712d232ec)
+and DeepSeek Harness at
+[`cd5ef81`](https://github.com/deepseek-ai/deepseek-harness/commit/cd5ef8148158c3a752a658978873241fdf8e2bbc),
+especially its
+[`session-persistence`](https://github.com/deepseek-ai/deepseek-harness/blob/cd5ef8148158c3a752a658978873241fdf8e2bbc/packages/session/session-persistence/README.md)
+and
+[`session`](https://github.com/deepseek-ai/deepseek-harness/blob/cd5ef8148158c3a752a658978873241fdf8e2bbc/docs/subsystems/session.md)
+documentation. DeepSeek supplies the recovery invariant: preserve the
+interrupted final turn, synthesize enough terminal events for a valid durable
+trajectory, and never partially resume it. The paper explains why tool effects
+cannot be assumed reversible after process loss and why cleanup must stay at an
+explicit ownership boundary.
+
+This repository adapts that behavior to its smaller event protocol and
+single-writer JSON provider. It does not copy DeepSeek's persistence engine,
+block protocol, branch/fork machinery, storage registration, or recovery UI.
+The repair is deterministic derivation over committed events, not evidence that
+an interrupted external action was rolled back.
+
+#### PR 8 result
+
+Implemented cold-tail analysis, conservative tool-result synthesis, distinct
+interrupted step/turn outcomes, atomic migration-plus-repair, and CLI resume
+coverage. Four new deterministic tests cover durable and idempotent repair,
+started-versus-unstarted tool calls, failed-write rollback, malformed-tail
+rejection, and a fresh CLI process resuming only after repair. Together with
+PRs 1–7, 69 deterministic tests pass and one live OpenRouter smoke test remains
+opt-in.
+
 ### Later milestones
 
-Repair a genuinely open trailing turn on file-session startup before adding
-interactive resume. Add compaction only after the persistent log can prove
-which history produced each summary. Add approval and sandbox boundaries before
-filesystem, shell, browser, or other consequential tools. Parallel tools,
-subagents, attachments, scheduling, and UI remain outside the first production
-milestone.
+Add compaction only after the persistent log can prove which history produced
+each summary. Add approval and sandbox boundaries before filesystem, shell,
+browser, or other consequential tools. Interactive input, cross-process writer
+coordination, parallel tools, subagents, attachments, scheduling, and UI remain
+outside the first production milestone.
 
 ## Promotion rules
 

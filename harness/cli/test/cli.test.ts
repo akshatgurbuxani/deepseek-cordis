@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -11,7 +11,12 @@ import {
   type TraceSink,
   TracingSessionStore,
 } from '@deepseek-cordis/cli/tracing'
-import { FileSessionStore } from '@deepseek-cordis/session-file'
+import {
+  FileSessionStore,
+  SESSION_FILE_SCHEMA_VERSION,
+  sessionFilePath,
+  TOOL_OUTCOME_UNKNOWN,
+} from '@deepseek-cordis/session-file'
 
 interface TraceRecord {
   readonly label: string
@@ -139,6 +144,51 @@ test('file-backed CLI resumes the same session across fresh application boots', 
       { role: 'user', content: 'add 4 and 5' },
     ],
   )
+})
+
+test('file-backed CLI repairs an interrupted cold turn before resuming', async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'deepseek-cordis-cli-repair-'))
+  t.after(() => { rmSync(directory, { recursive: true, force: true }) })
+  const id = 'repair-cli'
+  writeFileSync(sessionFilePath(directory, id), JSON.stringify({
+    schemaVersion: SESSION_FILE_SCHEMA_VERSION,
+    id,
+    events: [
+      { type: 'turn/start', turnId: 'repair-cli:turn:1', sequence: 1 },
+      {
+        type: 'user/message', turnId: 'repair-cli:turn:1',
+        content: 'interrupted work', sequence: 2,
+      },
+      { type: 'step/start', turnId: 'repair-cli:turn:1', step: 1, sequence: 3 },
+      {
+        type: 'assistant/tool-calls', turnId: 'repair-cli:turn:1', sequence: 4,
+        calls: [{ id: 'old-call', name: 'write', arguments: null }],
+      },
+      {
+        type: 'tool/call', turnId: 'repair-cli:turn:1', sequence: 5,
+        call: { id: 'old-call', name: 'write', arguments: null },
+      },
+    ],
+  }))
+  const { records, trace } = recorder()
+
+  const result = await runCli({
+    argv: ['--replay', 'add 6 and 7'],
+    env: { HARNESS_SESSION_DIR: directory, HARNESS_SESSION_ID: id },
+    trace,
+    output: () => undefined,
+  })
+
+  assert.equal(result.turnId, 'repair-cli:turn:2')
+  const resumed = new FileSessionStore({ directory }).get(id)
+  assert.ok(resumed)
+  assert.deepEqual(
+    resumed.events.filter((event) => event.type === 'turn/end').map((event) => event.status),
+    ['interrupted', 'completed'],
+  )
+  assert.ok(records.some(({ label, value }) =>
+    label === 'model/request'
+    && JSON.stringify(value).includes(TOOL_OUTCOME_UNKNOWN)))
 })
 
 test('live-mode composition maps a tool round trip and never traces its API key', async () => {

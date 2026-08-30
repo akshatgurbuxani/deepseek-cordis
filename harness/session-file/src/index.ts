@@ -19,6 +19,7 @@ import {
   type SessionEvent,
   type SessionEventInput,
   snapshot,
+  type ToolCall,
 } from '@deepseek-cordis/protocol'
 import {
   projectSessionMessages,
@@ -122,7 +123,9 @@ function validateEvent(value: unknown, index: number, source: string): SessionEv
       break
     case 'step/end':
       validateStep(value.step, source)
-      if (!['tool_calls', 'completed', 'failed', 'aborted'].includes(String(value.outcome))) {
+      if (![
+        'tool_calls', 'completed', 'failed', 'aborted', 'interrupted',
+      ].includes(String(value.outcome))) {
         invalid(source, 'step/end has an invalid outcome')
       }
       break
@@ -130,7 +133,7 @@ function validateEvent(value: unknown, index: number, source: string): SessionEv
       if (typeof value.error !== 'string') invalid(source, 'turn/error has an invalid error')
       break
     case 'turn/end':
-      if (!['completed', 'failed', 'aborted'].includes(String(value.status))) {
+      if (!['completed', 'failed', 'aborted', 'interrupted'].includes(String(value.status))) {
         invalid(source, 'turn/end has an invalid status')
       }
       break
@@ -178,6 +181,119 @@ function encodeDocument(id: string, events: readonly SessionEvent[]): string {
     events,
   }
   return `${JSON.stringify(document, null, 2)}\n`
+}
+
+export const TOOL_NOT_STARTED = 'tool call was interrupted before execution started'
+export const TOOL_OUTCOME_UNKNOWN = 'tool outcome is unknown because execution was interrupted'
+
+interface PendingToolCall {
+  readonly call: ToolCall
+  started: boolean
+}
+
+export function interruptedTurnClosers(
+  events: readonly SessionEvent[],
+  source = 'session event stream',
+): readonly SessionEvent[] {
+  const lastTurnEnd = events.findLastIndex((event) => event.type === 'turn/end')
+  const tail = events.slice(lastTurnEnd + 1)
+  if (tail.length === 0) return []
+  if (tail[0]?.type !== 'turn/start') {
+    invalid(source, 'events follow the last closed turn without a new turn/start')
+  }
+
+  const turnId = tail[0].turnId
+  let openStep: number | undefined
+  const pending = new Map<string, PendingToolCall>()
+
+  for (const event of tail.slice(1)) {
+    if (event.turnId !== turnId) {
+      invalid(source, 'open trailing turn contains a mismatched turn id')
+    }
+    switch (event.type) {
+      case 'turn/start':
+      case 'turn/end':
+        invalid(source, 'open trailing turn contains a nested turn boundary')
+      case 'step/start':
+        if (openStep !== undefined) {
+          invalid(source, 'open trailing turn contains nested step/start events')
+        }
+        openStep = event.step
+        break
+      case 'assistant/tool-calls':
+        if (openStep === undefined) {
+          invalid(source, 'assistant tool calls appear outside an open step')
+        }
+        if (pending.size > 0) {
+          invalid(source, 'open step contains overlapping assistant tool-call batches')
+        }
+        for (const call of event.calls) {
+          if (pending.has(call.id)) {
+            invalid(source, `open step duplicates tool call id ${JSON.stringify(call.id)}`)
+          }
+          pending.set(call.id, { call, started: false })
+        }
+        break
+      case 'tool/call': {
+        if (openStep === undefined) invalid(source, 'tool/call appears outside an open step')
+        const entry = pending.get(event.call.id)
+        if (!entry || entry.call.name !== event.call.name || entry.started) {
+          invalid(source, `tool/call ${JSON.stringify(event.call.id)} has no pending call`)
+        }
+        entry.started = true
+        break
+      }
+      case 'tool/result': {
+        if (openStep === undefined) invalid(source, 'tool/result appears outside an open step')
+        const entry = pending.get(event.callId)
+        if (!entry || entry.call.name !== event.name) {
+          invalid(source, `tool/result ${JSON.stringify(event.callId)} has no pending call`)
+        }
+        pending.delete(event.callId)
+        break
+      }
+      case 'step/end':
+        if (openStep !== event.step) {
+          invalid(source, 'step/end does not match the open step')
+        }
+        if (pending.size > 0) {
+          invalid(source, 'closed trailing step still has unanswered tool calls')
+        }
+        openStep = undefined
+        break
+      case 'assistant/message':
+        if (openStep === undefined) {
+          invalid(source, 'assistant message appears outside an open step')
+        }
+        break
+      case 'user/message':
+      case 'turn/error':
+        break
+    }
+  }
+
+  const closers: SessionEvent[] = []
+  const append = (input: SessionEventInput) => {
+    closers.push(snapshot({
+      ...input,
+      sequence: events.length + closers.length + 1,
+    }) as SessionEvent)
+  }
+  for (const { call, started } of pending.values()) {
+    append({
+      type: 'tool/result',
+      turnId,
+      callId: call.id,
+      name: call.name,
+      ok: false,
+      error: started ? TOOL_OUTCOME_UNKNOWN : TOOL_NOT_STARTED,
+    })
+  }
+  if (openStep !== undefined) {
+    append({ type: 'step/end', turnId, step: openStep, outcome: 'interrupted' })
+  }
+  append({ type: 'turn/end', turnId, status: 'interrupted' })
+  return closers
 }
 
 export function sessionFilePath(directory: string, id: string): string {
@@ -315,10 +431,12 @@ export class FileSessionStore implements SessionStore {
       const persist = (events: readonly SessionEvent[]) => {
         this.#writer(filePath, encodeDocument(decoded.id, events))
       }
-      if (decoded.migrated) persist(decoded.events)
+      const closers = interruptedTurnClosers(decoded.events, filePath)
+      const events = [...decoded.events, ...closers]
+      if (decoded.migrated || closers.length > 0) persist(events)
       this.#sessions.set(
         decoded.id,
-        new FileSession(decoded.id, decoded.events, persist),
+        new FileSession(decoded.id, events, persist),
       )
     }
   }

@@ -54,12 +54,12 @@ export type SessionEvent =
   | EventBase & {
     readonly type: 'step/end'
     readonly step: number
-    readonly outcome: 'tool_calls' | 'completed' | 'failed' | 'aborted'
+    readonly outcome: 'tool_calls' | 'completed' | 'failed' | 'aborted' | 'interrupted'
   }
   | EventBase & { readonly type: 'turn/error'; readonly error: string }
   | EventBase & {
     readonly type: 'turn/end'
-    readonly status: 'completed' | 'failed' | 'aborted'
+    readonly status: 'completed' | 'failed' | 'aborted' | 'interrupted'
   }
 
 export type SessionEventInput = SessionEvent extends infer Event

@@ -13,3 +13,6 @@ The model stream vocabulary is also data: text deltas followed by exactly one
 carries the normalized message or tool calls. Session events remain coarser:
 only a completed assistant response is model-visible, while aborted steps and
 turns record their terminal boundary without serializing `AbortSignal.reason`.
+`aborted` means a live process observed cooperative cancellation;
+`interrupted` is reserved for durable boundaries synthesized during cold-start
+repair when the prior process disappeared without closing its turn.
