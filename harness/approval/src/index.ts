@@ -22,3 +22,11 @@ export class UnavailableApprovalService implements ApprovalService {
     return 'unavailable'
   }
 }
+
+/** Explicit policy provider that rejects every live request. */
+export class DenyApprovalService implements ApprovalService {
+  async request(request: ApprovalRequest): Promise<ApprovalOutcome> {
+    request.signal?.throwIfAborted()
+    return 'rejected'
+  }
+}

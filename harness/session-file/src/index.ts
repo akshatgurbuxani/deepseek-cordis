@@ -110,6 +110,7 @@ function validateAssistantUsage(value: unknown, index: number, source: string): 
       || sequence >= index + 1)
     || new Set(value.inputSurfaceSequences).size !== value.inputSurfaceSequences.length
     || !Array.isArray(value.inputTools)
+    || (value.inputSystemPrompt !== undefined && typeof value.inputSystemPrompt !== 'string')
   ) invalid(source, 'assistant event has invalid provider usage')
   value.inputTools.forEach((tool) => validateToolSchema(tool, source))
 }

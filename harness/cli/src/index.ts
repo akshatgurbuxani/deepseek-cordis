@@ -1,6 +1,13 @@
+import { readFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
+
 import { AppBoot, type ManifestEntry } from '@deepseek-cordis/app-boot'
 import { AgentLoop } from '@deepseek-cordis/agent-loop'
-import { UnavailableApprovalService, type ApprovalService } from '@deepseek-cordis/approval'
+import {
+  DenyApprovalService,
+  UnavailableApprovalService,
+  type ApprovalService,
+} from '@deepseek-cordis/approval'
 import {
   createCompactCommand,
   createInspectCommand,
@@ -11,18 +18,36 @@ import {
   SessionCompactor,
   type SummaryAdapter,
 } from '@deepseek-cordis/compaction'
+import {
+  DEFAULT_HARNESS_PROFILE,
+  parseHarnessProfile,
+  type HarnessProfile,
+  type HarnessToolId,
+} from '@deepseek-cordis/configuration'
 import { ContextBudgetPolicy } from '@deepseek-cordis/context-budget'
+import {
+  createWorkspaceFilesystemTools,
+  NodeWorkspaceFileSystem,
+  WORKSPACE_EDIT_FILE_TOOL,
+  WORKSPACE_FILESYSTEM_PROMPT_SECTION,
+  WORKSPACE_LIST_DIRECTORY_TOOL,
+  WORKSPACE_READ_FILE_TOOL,
+  WORKSPACE_STAT_PATH_TOOL,
+  WORKSPACE_WRITE_FILE_TOOL,
+  WorkspaceFilesystemSandbox,
+} from '@deepseek-cordis/filesystem-workspace'
 import type { ModelAdapter } from '@deepseek-cordis/model'
 import { ReplayModelAdapter } from '@deepseek-cordis/model/testing'
 import { OpenRouterModelAdapter } from '@deepseek-cordis/model-openrouter'
 import type { JsonValue, RunResult } from '@deepseek-cordis/protocol'
 import { InMemorySessionStore, type SessionStore } from '@deepseek-cordis/session'
 import { FileSessionStore } from '@deepseek-cordis/session-file'
-import type { ToolSandbox } from '@deepseek-cordis/sandbox'
+import { UnavailableToolSandbox, type ToolSandbox } from '@deepseek-cordis/sandbox'
 import { TokenMeter } from '@deepseek-cordis/token-meter'
+import { HARNESS_IDENTITY_SECTION } from '@deepseek-cordis/system-prompt'
 import {
   createWorkspaceFileTool,
-  WorkspaceFileSandbox,
+  WORKSPACE_CREATE_FILE_TOOL,
 } from '@deepseek-cordis/sandbox-workspace'
 import {
   createAgentLoopPlugin,
@@ -31,8 +56,10 @@ import {
   createCommandRegistrationPlugin,
   createCommandRegistryPlugin,
   createModelAdapterPlugin,
+  createPromptSectionPlugin,
   createSessionStorePlugin,
   createSandboxPlugin,
+  createSystemPromptPlugin,
   createToolRegistrationPlugin,
   createToolRegistryPlugin,
   createTokenMeterPlugin,
@@ -59,6 +86,15 @@ export interface CliConfiguration {
   readonly interactive: boolean
   readonly input: string
   readonly model: string
+  readonly profilePath?: string
+}
+
+export interface ResolvedCliConfiguration extends CliConfiguration {
+  readonly profile: HarnessProfile
+  readonly profilePath?: string
+  readonly workspaceRoot: string
+  readonly sessionDirectory?: string
+  readonly contextWindow?: number
 }
 
 export interface RunCliOptions {
@@ -78,23 +114,45 @@ export function parseCliArguments(
 ): CliConfiguration {
   let replay = false
   let interactive = false
+  let profilePath = env.HARNESS_PROFILE
+  let commandLineProfile = false
   const inputParts: string[] = []
-  for (const argument of argv) {
+  for (let index = 0; index < argv.length; index += 1) {
+    const argument = argv[index]!
     if (argument === '--replay') {
       replay = true
     } else if (argument === '--interactive') {
       interactive = true
+    } else if (argument === '--profile') {
+      const value = argv[index + 1]
+      if (value === undefined || value.startsWith('--') || value.trim().length === 0) {
+        throw new Error('--profile requires a path')
+      }
+      if (commandLineProfile) throw new Error('--profile may be specified only once')
+      profilePath = value
+      commandLineProfile = true
+      index += 1
+    } else if (argument.startsWith('--profile=')) {
+      const value = argument.slice('--profile='.length)
+      if (value.trim().length === 0) throw new Error('--profile requires a path')
+      if (commandLineProfile) throw new Error('--profile may be specified only once')
+      profilePath = value
+      commandLineProfile = true
     } else if (argument.startsWith('--')) {
       throw new Error(`unknown option ${JSON.stringify(argument)}`)
     } else {
       inputParts.push(argument)
     }
   }
+  if (profilePath !== undefined && profilePath.trim().length === 0) {
+    throw new Error('HARNESS_PROFILE must be a non-empty path')
+  }
   return {
     mode: replay ? 'replay' : 'openrouter',
     interactive,
     input: inputParts.join(' ') || defaultInput,
     model: replay ? 'replay/calculator' : env.OPENROUTER_MODEL ?? 'openrouter/free',
+    ...(profilePath === undefined ? {} : { profilePath }),
   }
 }
 
@@ -105,6 +163,56 @@ function optionalPositiveInteger(value: string | undefined, name: string): numbe
     throw new Error(`${name} must be a positive integer`)
   }
   return parsed
+}
+
+function launchPath(value: string, baseDirectory: string): string {
+  return resolve(baseDirectory, value)
+}
+
+/** Load and compose one profile below explicit CLI/environment launch overlays. */
+export function resolveCliConfiguration(
+  parsed: CliConfiguration,
+  env: Readonly<Record<string, string | undefined>>,
+): ResolvedCliConfiguration {
+  const absoluteProfilePath = parsed.profilePath === undefined
+    ? undefined
+    : resolve(parsed.profilePath)
+  const profile = absoluteProfilePath === undefined
+    ? DEFAULT_HARNESS_PROFILE
+    : parseHarnessProfile(readFileSync(absoluteProfilePath, 'utf8'), absoluteProfilePath)
+  const profileBase = absoluteProfilePath === undefined
+    ? process.cwd()
+    : dirname(absoluteProfilePath)
+  const replay = parsed.mode === 'replay' || profile.model.provider === 'replay'
+  const model = replay
+    ? 'replay/calculator'
+    : env.OPENROUTER_MODEL ?? (profile.model.provider === 'openrouter'
+      ? profile.model.id
+      : 'openrouter/free')
+  const environmentContextWindow = optionalPositiveInteger(
+    env.HARNESS_CONTEXT_WINDOW ?? env.OPENROUTER_CONTEXT_WINDOW,
+    'HARNESS_CONTEXT_WINDOW',
+  )
+  const sessionDirectory = env.HARNESS_SESSION_DIR
+    ? launchPath(env.HARNESS_SESSION_DIR, process.cwd())
+    : profile.persistence.kind === 'file'
+      ? launchPath(profile.persistence.directory, profileBase)
+      : undefined
+  const workspaceRoot = env.HARNESS_WORKSPACE_ROOT
+    ? launchPath(env.HARNESS_WORKSPACE_ROOT, process.cwd())
+    : launchPath(profile.workspace.root, profileBase)
+  return {
+    ...parsed,
+    mode: replay ? 'replay' : 'openrouter',
+    model,
+    profile,
+    ...(absoluteProfilePath === undefined ? {} : { profilePath: absoluteProfilePath }),
+    workspaceRoot,
+    ...(sessionDirectory === undefined ? {} : { sessionDirectory }),
+    ...(environmentContextWindow === undefined && profile.model.contextWindow === undefined
+      ? {}
+      : { contextWindow: environmentContextWindow ?? profile.model.contextWindow }),
+  }
 }
 
 function replayModel(input: string, contextWindow?: number): ReplayModelAdapter {
@@ -137,6 +245,15 @@ function calculator(argumentsValue: JsonValue): number {
   return argumentsValue.a + argumentsValue.b
 }
 
+const workspaceToolIds = new Map<string, HarnessToolId>([
+  [WORKSPACE_CREATE_FILE_TOOL, 'workspace.create'],
+  [WORKSPACE_READ_FILE_TOOL, 'workspace.read'],
+  [WORKSPACE_LIST_DIRECTORY_TOOL, 'workspace.list'],
+  [WORKSPACE_STAT_PATH_TOOL, 'workspace.stat'],
+  [WORKSPACE_WRITE_FILE_TOOL, 'workspace.write'],
+  [WORKSPACE_EDIT_FILE_TOOL, 'workspace.edit'],
+])
+
 function openRouterModel(
   configuration: CliConfiguration,
   env: Readonly<Record<string, string | undefined>>,
@@ -162,6 +279,7 @@ function openRouterModel(
 }
 
 function manifestFor(
+  profile: HarnessProfile,
   sessions: ReturnType<typeof createSessionStorePlugin>,
   model: ModelAdapter,
   compactor: SessionCompactor,
@@ -176,30 +294,72 @@ function manifestFor(
   const loop = createAgentLoopPlugin(new AgentLoop(policy))
   const compaction = createCompactionPlugin(compactor)
   const tokenMeter = createTokenMeterPlugin(meter)
+  const systemPrompt = createSystemPromptPlugin()
+  const filesystemTools = createWorkspaceFilesystemTools()
+  const enabledTools = new Set(profile.tools.enabled)
+  const personaSection = Object.freeze({
+    name: 'profile:persona',
+    order: -500,
+    text: profile.prompt.persona ?? '',
+  })
   return [
     { id: 'loop', revision: 'v1', load: () => loop.plugin },
-    { id: 'add', revision: 'v1', load: () => createToolRegistrationPlugin({
-      name: 'add',
-      description: 'Add two numbers. Use this tool for arithmetic addition.',
-      inputSchema: {
-        type: 'object',
-        properties: {
-          a: { type: 'number' },
-          b: { type: 'number' },
+    {
+      id: 'add',
+      revision: 'v1',
+      enabled: enabledTools.has('add'),
+      load: () => createToolRegistrationPlugin({
+        name: 'add',
+        description: 'Add two numbers. Use this tool for arithmetic addition.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            a: { type: 'number' },
+            b: { type: 'number' },
+          },
+          required: ['a', 'b'],
+          additionalProperties: false,
         },
-        required: ['a', 'b'],
-        additionalProperties: false,
-      },
-      safety: { risk: 'none' },
-      execute: calculator,
-    }) },
-    { id: 'create-workspace-file', revision: 'v1', load: () =>
-      createToolRegistrationPlugin(createWorkspaceFileTool()) },
+        safety: { risk: 'none' },
+        execute: calculator,
+      }),
+    },
+    {
+      id: 'create-workspace-file',
+      revision: 'v1',
+      enabled: enabledTools.has('workspace.create'),
+      load: () => createToolRegistrationPlugin(createWorkspaceFileTool()),
+    },
+    ...filesystemTools.map((definition) => ({
+      id: definition.name,
+      revision: 'v1',
+      enabled: enabledTools.has(workspaceToolIds.get(definition.name)!),
+      load: () => createToolRegistrationPlugin(definition),
+    })),
     { id: 'sessions', revision: 'v1', load: () => sessions.plugin },
     { id: 'tools', revision: 'v1', load: () => tools.plugin },
     { id: 'model', revision: 'v1', load: () => modelPlugin.plugin },
     { id: 'approval', revision: 'v1', load: () => createApprovalServicePlugin(approval).plugin },
     { id: 'sandbox', revision: 'v1', load: () => createSandboxPlugin(sandbox).plugin },
+    { id: 'system-prompt', revision: 'v1', load: () => systemPrompt.plugin },
+    {
+      id: 'prompt-identity',
+      revision: 'v1',
+      enabled: profile.prompt.identity,
+      load: () => createPromptSectionPlugin(HARNESS_IDENTITY_SECTION),
+    },
+    {
+      id: 'prompt-persona',
+      revision: 'v1',
+      enabled: profile.prompt.persona !== undefined,
+      load: () => createPromptSectionPlugin(personaSection),
+    },
+    {
+      id: 'prompt-workspace-filesystem',
+      revision: 'v1',
+      enabled: profile.prompt.workspaceGuidance,
+      load: () => createPromptSectionPlugin(WORKSPACE_FILESYSTEM_PROMPT_SECTION),
+    },
     { id: 'compaction', revision: 'v1', load: () => compaction.plugin },
     { id: 'token-meter', revision: 'v1', load: () => tokenMeter.plugin },
     { id: 'commands', revision: 'v1', load: () => commands.plugin },
@@ -233,7 +393,7 @@ interface MountedCliRuntime {
 }
 
 async function mountCliRuntime(
-  configuration: CliConfiguration,
+  configuration: ResolvedCliConfiguration,
   options: RunCliOptions,
   innerModel: ModelAdapter,
   createSummary: (model: ModelAdapter) => SummaryAdapter,
@@ -244,28 +404,49 @@ async function mountCliRuntime(
   const boot = new AppBoot()
   const stopLifecycleTrace = traceRuntimeLifecycle(boot.context, trace)
   try {
-    const sandbox = new WorkspaceFileSandbox({
-      root: env.HARNESS_WORKSPACE_ROOT ?? process.cwd(),
-    })
-    const sessionStore: SessionStore = env.HARNESS_SESSION_DIR
-      ? new FileSessionStore({ directory: env.HARNESS_SESSION_DIR })
+    const workspaceEnabled = configuration.profile.tools.enabled
+      .some((id) => id.startsWith('workspace.'))
+    const sandbox: ToolSandbox = workspaceEnabled
+      ? new WorkspaceFilesystemSandbox({
+          filesystem: new NodeWorkspaceFileSystem({
+            root: configuration.workspaceRoot,
+            maxFileBytes: configuration.profile.workspace.maxFileBytes,
+          }),
+        })
+      : new UnavailableToolSandbox()
+    const sessionStore: SessionStore = configuration.sessionDirectory
+      ? new FileSessionStore({ directory: configuration.sessionDirectory })
       : new InMemorySessionStore()
     const tracedSessions = new TracingSessionStore(trace, sessionStore)
     const sessions = createSessionStorePlugin(tracedSessions)
     const model = new TracingModelAdapter(innerModel, trace)
     const compactor = new SessionCompactor(createSummary(model))
     const meter = new TokenMeter()
-    const policy = new ContextBudgetPolicy({ compactor, meter })
+    const policy = new ContextBudgetPolicy({
+      compactor,
+      meter,
+      thresholdRatio: configuration.profile.context.thresholdRatio,
+      retainTurns: configuration.profile.context.retainTurns,
+      maxOverflowRetries: configuration.profile.context.maxOverflowRetries,
+    })
     const sessionId = options.sessionId ?? env.HARNESS_SESSION_ID ?? `cli-${Date.now()}`
     const existingSession = tracedSessions.get(sessionId)
 
     trace('cli/start', {
-      ...configuration,
+      mode: configuration.mode,
+      interactive: configuration.interactive,
+      input: configuration.input,
+      model: configuration.model,
+      profile: configuration.profile.name,
+      profileSource: configuration.profilePath === undefined ? 'default' : 'file',
+      tools: configuration.profile.tools.enabled,
+      approvalDefault: configuration.profile.approval.default,
       sessionId,
-      sessionStore: env.HARNESS_SESSION_DIR ? 'file' : 'memory',
+      sessionStore: configuration.sessionDirectory ? 'file' : 'memory',
       resumed: existingSession !== undefined,
     })
     await boot.reconcile(manifestFor(
+      configuration.profile,
       sessions,
       model,
       compactor,
@@ -297,20 +478,17 @@ export async function runCli(options: RunCliOptions = {}): Promise<RunResult> {
   const env = options.env ?? process.env
   const trace = options.trace ?? consoleTrace
   const output = options.output ?? console.log
-  const configuration = parseCliArguments(argv, env)
-  if (configuration.interactive) {
+  const parsed = parseCliArguments(argv, env)
+  if (parsed.interactive) {
     throw new Error('--interactive must be run through the interactive CLI adapter')
   }
+  const configuration = resolveCliConfiguration(parsed, env)
 
   let runtime: MountedCliRuntime | undefined
   try {
-    const contextWindow = optionalPositiveInteger(
-      env.HARNESS_CONTEXT_WINDOW ?? env.OPENROUTER_CONTEXT_WINDOW,
-      'HARNESS_CONTEXT_WINDOW',
-    )
     const innerModel = configuration.mode === 'replay'
-      ? replayModel(configuration.input, contextWindow)
-      : openRouterModel(configuration, env, options, trace, contextWindow)
+      ? replayModel(configuration.input, configuration.contextWindow)
+      : openRouterModel(configuration, env, options, trace, configuration.contextWindow)
     runtime = await mountCliRuntime(
       configuration,
       options,
@@ -320,6 +498,9 @@ export async function runCli(options: RunCliOptions = {}): Promise<RunResult> {
             { type: 'message', content: 'Earlier conversation compacted for replay.' },
           ]), trace)
         : model),
+      configuration.profile.approval.default === 'deny'
+        ? new DenyApprovalService()
+        : new UnavailableApprovalService(),
     )
     const result = await runtime.boot.context.agentLoop.run(runtime.session, configuration.input, {
       ...(options.signal ? { signal: options.signal } : {}),
@@ -352,14 +533,10 @@ export async function runInteractiveCli(
   const trace = options.trace ?? consoleTrace
   const output = options.output ?? console.log
   const parsed = parseCliArguments(argv, env)
-  const configuration = { ...parsed, interactive: true }
-  const contextWindow = optionalPositiveInteger(
-    env.HARNESS_CONTEXT_WINDOW ?? env.OPENROUTER_CONTEXT_WINDOW,
-    'HARNESS_CONTEXT_WINDOW',
-  )
+  const configuration = resolveCliConfiguration({ ...parsed, interactive: true }, env)
   const innerModel = configuration.mode === 'replay'
-    ? new InteractiveReplayModelAdapter(contextWindow)
-    : openRouterModel(configuration, env, options, trace, contextWindow)
+    ? new InteractiveReplayModelAdapter(configuration.contextWindow)
+    : openRouterModel(configuration, env, options, trace, configuration.contextWindow)
   const promptApproval: ApprovalPrompt = options.approve ?? (async (request) => {
     const answer = await options.readLine(
       `[approval] ${request.toolName} (${request.risk}): ${request.reason}\n`
@@ -368,7 +545,9 @@ export async function runInteractiveCli(
     if (answer === undefined) return undefined
     return /^(?:y|yes)$/i.test(answer.trim())
   })
-  const approval = new InteractiveApprovalService(promptApproval)
+  const approval = configuration.profile.approval.default === 'ask'
+    ? new InteractiveApprovalService(promptApproval)
+    : new DenyApprovalService()
   let runtime: MountedCliRuntime | undefined
   try {
     runtime = await mountCliRuntime(

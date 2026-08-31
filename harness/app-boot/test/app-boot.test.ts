@@ -11,6 +11,7 @@ import {
   createModelAdapterPlugin,
   createSessionStorePlugin,
   createSandboxPlugin,
+  createSystemPromptPlugin,
   createToolRegistrationPlugin,
   createToolRegistryPlugin,
   type RuntimePlugin,
@@ -77,10 +78,11 @@ test('initial boot follows Cordis dependencies and an identical manifest is a no
     model: model.plugin,
     approval: createApprovalServicePlugin().plugin,
     sandbox: createSandboxPlugin().plugin,
+    prompt: createSystemPromptPlugin().plugin,
     add: addTool(),
   }
   const manifest = [
-    'loop', 'add', 'sessions', 'tools', 'model', 'approval', 'sandbox',
+    'loop', 'add', 'sessions', 'tools', 'model', 'approval', 'sandbox', 'prompt',
   ].map((id): ManifestEntry => ({
     id,
     revision: 'v1',
@@ -98,13 +100,13 @@ test('initial boot follows Cordis dependencies and an identical manifest is a no
     'add 2 and 3',
   )
 
-  const ids = ['add', 'approval', 'loop', 'model', 'sandbox', 'sessions', 'tools']
+  const ids = ['add', 'approval', 'loop', 'model', 'prompt', 'sandbox', 'sessions', 'tools']
   assert.deepEqual([...first.added].sort(), ids)
   assert.deepEqual([...second.preserved].sort(), ids)
   assert.deepEqual(second.added, [])
   assert.deepEqual(second.updated, [])
   assert.equal(boot.entry('loop')?.fiber, loopFiber)
-  assert.equal(loads, 7)
+  assert.equal(loads, 8)
   assert.equal(result.content, '5')
 
   await boot.dispose()
@@ -134,6 +136,7 @@ test('tool replacement changes execution while preserving the loop and session h
     entry('model', 'v1', model.plugin),
     entry('approval', 'v1', createApprovalServicePlugin().plugin),
     entry('sandbox', 'v1', createSandboxPlugin().plugin),
+    entry('prompt', 'v1', createSystemPromptPlugin().plugin),
     entry('loop', 'v1', loop.plugin),
   ]
   await boot.reconcile([...base, entry('add', 'v1', addTool())])
@@ -169,6 +172,7 @@ test('model replacement preserves history and a failed candidate restores the wo
     entry('model', 'v1', stableModel.plugin),
     entry('approval', 'v1', createApprovalServicePlugin().plugin),
     entry('sandbox', 'v1', createSandboxPlugin().plugin),
+    entry('prompt', 'v1', createSystemPromptPlugin().plugin),
     entry('loop', 'v1', loop.plugin),
   ]
   await boot.reconcile(stableManifest)

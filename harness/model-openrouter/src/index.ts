@@ -63,6 +63,7 @@ interface WireToolCall {
 }
 
 type WireMessage =
+  | { readonly role: 'system'; readonly content: string }
   | { readonly role: 'user'; readonly content: string }
   | { readonly role: 'assistant'; readonly content: string }
   | { readonly role: 'assistant'; readonly content: null; readonly tool_calls: WireToolCall[] }
@@ -346,7 +347,12 @@ export class OpenRouterModelAdapter implements ModelAdapter {
     }))
     const body = {
       model: this.#model,
-      messages: request.messages.map(toWireMessage),
+      messages: [
+        ...(request.systemPrompt === undefined
+          ? []
+          : [{ role: 'system' as const, content: request.systemPrompt }]),
+        ...request.messages.map(toWireMessage),
+      ],
       session_id: request.sessionId,
       ...(stream ? { stream: true, stream_options: { include_usage: true } } : {}),
       ...(wireTools.length === 0 ? {} : {

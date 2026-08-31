@@ -83,7 +83,10 @@ test('maps complete history, tools, calls, attribution, usage, and routing metad
     onDiagnostics: (value) => { diagnostics = value },
   })
 
-  const result = await adapter.complete(request)
+  const result = await adapter.complete({
+    ...request,
+    systemPrompt: 'You are a careful coding agent.',
+  })
   const headers = receivedInit?.headers as Record<string, string>
   const body = JSON.parse(String(receivedInit?.body))
 
@@ -96,6 +99,7 @@ test('maps complete history, tools, calls, attribution, usage, and routing metad
   assert.equal(JSON.stringify(body).includes('test-secret'), false)
   assert.equal(body.session_id, 'session-1')
   assert.deepEqual(body.messages, [
+    { role: 'system', content: 'You are a careful coding agent.' },
     { role: 'user', content: 'add two numbers' },
     {
       role: 'assistant',

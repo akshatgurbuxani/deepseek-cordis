@@ -42,7 +42,8 @@ as every other event, so its summary and provenance cannot commit separately.
 Compacted budget decisions must reference an earlier checkpoint and cannot
 smuggle the new event vocabulary into a legacy schema.
 Usage anchors cite the exact pre-response surface and preserve their tool
-schemas atomically with the assistant event.
+schemas and optional system prompt atomically with the assistant event. Prompt
+text is therefore durable request provenance and must never contain secrets.
 Approval outcomes use a closed vocabulary, sandbox preparation records provider
 identity and enforcement strength, and neither event family enters model
 projection. Legacy documents cannot smuggle these V5 events into older schemas.

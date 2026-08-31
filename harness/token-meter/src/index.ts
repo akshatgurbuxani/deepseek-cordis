@@ -21,6 +21,7 @@ export interface TokenMeasurement {
   readonly source: 'heuristic' | 'provider_anchored'
   readonly surfaceTokens: number
   readonly toolTokens: number
+  readonly systemPromptTokens: number
   readonly totalTokens: number
   readonly nodes: readonly TokenSurfaceNode[]
   readonly anchor?: {
@@ -32,6 +33,7 @@ export interface TokenMeasurement {
 
 export interface TokenMeasurementOptions {
   readonly model?: string
+  readonly systemPrompt?: string
 }
 
 function textTokens(value: string): number {
@@ -59,6 +61,10 @@ export function estimateTools(tools: readonly ToolSchema[]): number {
     + textTokens(JSON.stringify(tool.inputSchema)), 0)
 }
 
+export function estimateSystemPrompt(systemPrompt: string | undefined): number {
+  return systemPrompt === undefined ? 0 : 4 + textTokens(systemPrompt)
+}
+
 export class TokenMeter {
   measure(
     session: Session,
@@ -72,11 +78,12 @@ export class TokenMeter {
     }))
     const surfaceTokens = nodes.reduce((total, node) => total + node.tokens, 0)
     const toolTokens = estimateTools(tools)
+    const systemPromptTokens = estimateSystemPrompt(options.systemPrompt)
     const usageEvent = events.findLast((event) =>
       (event.type === 'assistant/message' || event.type === 'assistant/tool-calls')
       && event.usage !== undefined
       && (options.model === undefined || event.usage.model === options.model))
-    let totalTokens = surfaceTokens + toolTokens
+    let totalTokens = surfaceTokens + toolTokens + systemPromptTokens
     let anchor: TokenMeasurement['anchor']
     if (
       usageEvent?.type === 'assistant/message'
@@ -88,10 +95,10 @@ export class TokenMeter {
         const inputHeuristic = inputSurface.reduce(
           (total, node) => total + estimateMessage(node.message),
           0,
-        ) + estimateTools(usage.inputTools)
+        ) + estimateTools(usage.inputTools) + estimateSystemPrompt(usage.inputSystemPrompt)
         totalTokens = Math.max(
           0,
-          usage.inputTokens + surfaceTokens + toolTokens - inputHeuristic,
+          usage.inputTokens + surfaceTokens + toolTokens + systemPromptTokens - inputHeuristic,
         )
         anchor = {
           eventSequence: usageEvent.sequence,
@@ -106,6 +113,7 @@ export class TokenMeter {
       source: anchor ? 'provider_anchored' : 'heuristic',
       surfaceTokens,
       toolTokens,
+      systemPromptTokens,
       totalTokens,
       nodes,
       ...(anchor ? { anchor } : {}),

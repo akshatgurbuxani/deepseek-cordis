@@ -20,6 +20,10 @@ import {
   UnavailableToolSandbox,
 } from '@deepseek-cordis/sandbox'
 import type { ToolRegistry } from '@deepseek-cordis/tools'
+import {
+  EmptySystemPrompt,
+  type SystemPromptService,
+} from '@deepseek-cordis/system-prompt'
 
 export class StepLimitError extends Error {}
 
@@ -48,14 +52,22 @@ export interface AgentLoopPolicyContext {
   readonly model: ModelAdapter
   readonly tools: readonly ToolSchema[]
   readonly readTools: () => readonly ToolSchema[]
+  readonly readSystemPrompt: () => Promise<string | undefined>
   readonly turnId: string
   readonly step: number
+  readonly systemPrompt?: string
   readonly signal?: AbortSignal
 }
 
 export interface AgentLoopPolicy {
   beforeStep?(context: AgentLoopPolicyContext): Promise<void>
   recoverModelError?(context: AgentLoopPolicyContext, error: unknown): Promise<boolean>
+}
+
+interface CachedPromptAssembly {
+  readonly toolsKey: string
+  readonly tools: readonly ToolSchema[]
+  readonly systemPrompt: string | undefined
 }
 
 function throwIfCancelled(signal: AbortSignal | undefined): void {
@@ -69,6 +81,7 @@ export class AgentLoop {
   #model: ModelAdapter | undefined
   #approval: ApprovalService | undefined
   #sandbox: ToolSandbox | undefined
+  #systemPrompt: SystemPromptService | undefined
   readonly #policy: AgentLoopPolicy | undefined
 
   constructor(policy?: AgentLoopPolicy) {
@@ -82,6 +95,7 @@ export class AgentLoop {
     boundaries: {
       readonly approval?: ApprovalService
       readonly sandbox?: ToolSandbox
+      readonly systemPrompt?: SystemPromptService
     } = {},
   ): () => void {
     if (this.#sessions || this.#tools || this.#model) {
@@ -92,6 +106,7 @@ export class AgentLoop {
     this.#model = model
     this.#approval = boundaries.approval ?? new UnavailableApprovalService()
     this.#sandbox = boundaries.sandbox ?? new UnavailableToolSandbox()
+    this.#systemPrompt = boundaries.systemPrompt ?? new EmptySystemPrompt()
     let disposed = false
     return () => {
       if (disposed) return
@@ -104,6 +119,7 @@ export class AgentLoop {
       this.#model = undefined
       this.#approval = undefined
       this.#sandbox = undefined
+      this.#systemPrompt = undefined
     }
   }
 
@@ -113,7 +129,8 @@ export class AgentLoop {
     const model = this.#model
     const approval = this.#approval
     const sandbox = this.#sandbox
-    if (!sessions || !tools || !model || !approval || !sandbox) {
+    const systemPrompt = this.#systemPrompt
+    if (!sessions || !tools || !model || !approval || !sandbox || !systemPrompt) {
       throw new Error('agent loop is not connected')
     }
     if (sessions.get(session.id) !== session) {
@@ -139,20 +156,46 @@ export class AgentLoop {
     try {
       for (let step = 1; step <= maxSteps; step += 1) {
         throwIfCancelled(options.signal)
+        let cachedPrompt: CachedPromptAssembly | undefined
+        const assemblePrompt = async (): Promise<CachedPromptAssembly> => {
+          const promptTools = tools.schemas()
+          const toolsKey = JSON.stringify(promptTools)
+          if (cachedPrompt?.toolsKey === toolsKey) return cachedPrompt
+          const assembly = await systemPrompt.assemble({
+            sessionId: session.id,
+            turnId,
+            step,
+            tools: promptTools,
+            ...(options.signal ? { signal: options.signal } : {}),
+          })
+          cachedPrompt = { toolsKey, tools: promptTools, systemPrompt: assembly.systemPrompt }
+          return cachedPrompt
+        }
+        const readSystemPrompt = async (): Promise<string | undefined> =>
+          (await assemblePrompt()).systemPrompt
+        const policyTools = tools.schemas()
         const policyContext: AgentLoopPolicyContext = {
           session,
           model,
-          tools: tools.schemas(),
+          tools: policyTools,
           readTools: () => tools.schemas(),
+          readSystemPrompt,
           turnId,
           step,
           ...(options.signal ? { signal: options.signal } : {}),
         }
         await this.#policy?.beforeStep?.(policyContext)
         throwIfCancelled(options.signal)
+        const requestPrompt = await assemblePrompt()
+        const requestTools = requestPrompt.tools
+        const requestSystemPrompt = requestPrompt.systemPrompt
+        throwIfCancelled(options.signal)
         const requestPolicyContext: AgentLoopPolicyContext = {
           ...policyContext,
-          tools: tools.schemas(),
+          tools: requestTools,
+          ...(requestSystemPrompt === undefined
+            ? {}
+            : { systemPrompt: requestSystemPrompt }),
         }
         session.append({ type: 'step/start', turnId, step })
         openStep = step
@@ -163,6 +206,9 @@ export class AgentLoop {
           step,
           messages: inputSurface.map((node) => node.message),
           tools: requestPolicyContext.tools,
+          ...(requestPolicyContext.systemPrompt === undefined
+            ? {}
+            : { systemPrompt: requestPolicyContext.systemPrompt }),
         })
         let response: ModelResponse
         let usage: Awaited<ReturnType<typeof completeModelResult>>['usage']
@@ -198,6 +244,9 @@ export class AgentLoop {
             model: model.id,
             inputSurfaceSequences: inputSurface.map((node) => node.sequence),
             inputTools: request.tools,
+            ...(request.systemPrompt === undefined
+              ? {}
+              : { inputSystemPrompt: request.systemPrompt }),
           },
         }
 

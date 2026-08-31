@@ -566,6 +566,13 @@ test('every persisted event variant is validated before it can become live state
         inputSurfaceSequences: [], inputTools: [],
       },
     }, /invalid provider usage/],
+    [{
+      type: 'assistant/message', turnId: 'turn-1', sequence: 1, content: 'bad prompt usage',
+      usage: {
+        model: 'provider/model', inputTokens: 1, outputTokens: 0,
+        inputSurfaceSequences: [], inputTools: [], inputSystemPrompt: 42,
+      },
+    }, /invalid provider usage/],
     [{ type: 'step/start', turnId: 'turn-1', sequence: 1, step: 0 }, /invalid step number/],
     [{ type: 'assistant/tool-calls', turnId: 'turn-1', sequence: 1 }, /invalid calls/],
     [{

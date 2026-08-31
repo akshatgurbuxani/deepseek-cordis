@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "tsBuildInfoFile": "../../.cache/tsbuildinfo/filesystem-workspace.tsbuildinfo"
+  },
+  "include": ["src/**/*.ts"],
+  "references": [
+    { "path": "../filesystem" },
+    { "path": "../protocol" },
+    { "path": "../sandbox" },
+    { "path": "../system-prompt" },
+    { "path": "../tools" }
+  ]
+}

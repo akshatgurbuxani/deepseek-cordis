@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import test from 'node:test'
 
 import { completeModel, ModelStreamError } from '@deepseek-cordis/model'
@@ -10,6 +10,7 @@ import {
   InteractiveApprovalService,
   InteractiveReplayModelAdapter,
   parseCliArguments,
+  resolveCliConfiguration,
   runCli,
   runInteractiveCli,
 } from '@deepseek-cordis/cli'
@@ -47,6 +48,12 @@ function sseResponse(payloads: readonly unknown[]): Response {
   })
 }
 
+function writeProfile(directory: string, value: unknown): string {
+  const filename = join(directory, 'profile.json')
+  writeFileSync(filename, JSON.stringify(value, undefined, 2))
+  return filename
+}
+
 test('argument parsing selects replay or OpenRouter without exposing environment values', () => {
   assert.deepEqual(parseCliArguments(['--replay', 'add', '2', 'and', '3'], {}), {
     mode: 'replay',
@@ -61,7 +68,153 @@ test('argument parsing selects replay or OpenRouter without exposing environment
     model: 'provider/model',
   })
   assert.equal(parseCliArguments(['--interactive', '--replay'], {}).interactive, true)
+  assert.equal(parseCliArguments(['--profile', 'coding.json'], {}).profilePath, 'coding.json')
+  assert.equal(parseCliArguments(['--profile=coding.json'], {}).profilePath, 'coding.json')
+  assert.equal(parseCliArguments([], { HARNESS_PROFILE: 'environment.json' }).profilePath,
+    'environment.json')
+  assert.equal(parseCliArguments(['--profile', 'cli.json'], {
+    HARNESS_PROFILE: 'environment.json',
+  }).profilePath, 'cli.json')
+  assert.throws(() => parseCliArguments(['--profile'], {}), /requires a path/)
+  assert.throws(() => parseCliArguments(['--profile='], {}), /requires a path/)
+  assert.throws(() => parseCliArguments([], { HARNESS_PROFILE: ' ' }), /non-empty path/)
+  assert.equal(parseCliArguments(['--profile=valid.json'], {
+    HARNESS_PROFILE: ' ',
+  }).profilePath, 'valid.json')
+  assert.throws(() => parseCliArguments([
+    '--profile=same.json', '--profile=same.json',
+  ], {}), /only once/)
   assert.throws(() => parseCliArguments(['--unknown'], {}), /unknown option "--unknown"/)
+})
+
+test('profile paths resolve at their owning layer and launch overlays win explicitly', (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'deepseek-cordis-profile-resolution-'))
+  t.after(() => { rmSync(directory, { recursive: true, force: true }) })
+  const filename = writeProfile(directory, {
+    schemaVersion: 1,
+    name: 'profile-resolution',
+    model: { provider: 'openrouter', id: 'profile/model', contextWindow: 4096 },
+    workspace: { root: './workspace', maxFileBytes: 2048 },
+    persistence: { kind: 'file', directory: './sessions' },
+  })
+
+  const fromProfile = resolveCliConfiguration(
+    parseCliArguments(['--profile', filename, 'hello'], {}),
+    {},
+  )
+  assert.equal(fromProfile.model, 'profile/model')
+  assert.equal(fromProfile.contextWindow, 4096)
+  assert.equal(fromProfile.workspaceRoot, join(directory, 'workspace'))
+  assert.equal(fromProfile.sessionDirectory, join(directory, 'sessions'))
+  assert.equal(fromProfile.profilePath, filename)
+
+  const overlaid = resolveCliConfiguration(
+    parseCliArguments(['--profile', filename, '--replay', 'add 1 and 2'], {
+      OPENROUTER_MODEL: 'environment/model',
+    }),
+    {
+      OPENROUTER_MODEL: 'environment/model',
+      HARNESS_CONTEXT_WINDOW: '8192',
+      HARNESS_WORKSPACE_ROOT: './launch-workspace',
+      HARNESS_SESSION_DIR: './launch-sessions',
+    },
+  )
+  assert.equal(overlaid.mode, 'replay')
+  assert.equal(overlaid.model, 'replay/calculator')
+  assert.equal(overlaid.contextWindow, 8192)
+  assert.equal(overlaid.workspaceRoot, resolve('./launch-workspace'))
+  assert.equal(overlaid.sessionDirectory, resolve('./launch-sessions'))
+})
+
+test('the documented coding profile remains valid and complete', () => {
+  const filename = resolve('harness/cli/profile.example.json')
+  const configuration = resolveCliConfiguration(
+    parseCliArguments(['--profile', filename], {}),
+    {},
+  )
+
+  assert.equal(configuration.profile.name, 'coding')
+  assert.equal(configuration.model, 'openrouter/free')
+  assert.equal(configuration.contextWindow, 128_000)
+  assert.equal(configuration.profile.tools.enabled.includes('workspace.edit'), true)
+  assert.equal(configuration.profile.approval.default, 'ask')
+})
+
+test('a profile controls the exact model, tools, and assembled prompt', async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'deepseek-cordis-profile-composition-'))
+  t.after(() => { rmSync(directory, { recursive: true, force: true }) })
+  const filename = writeProfile(directory, {
+    schemaVersion: 1,
+    name: 'minimal-persona',
+    model: { provider: 'openrouter', id: 'profile/model', contextWindow: 64_000 },
+    workspace: { root: './does-not-exist' },
+    tools: { enabled: [] },
+    prompt: {
+      identity: false,
+      workspaceGuidance: true,
+      persona: 'Answer with verified facts only.',
+    },
+  })
+  let body: Record<string, unknown> | undefined
+  const { records, trace } = recorder()
+  const fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+    body = JSON.parse(String(init?.body)) as Record<string, unknown>
+    return sseResponse([{
+      model: 'profile/model',
+      choices: [{ delta: { content: 'Verified.' } }],
+    }])
+  }) as typeof globalThis.fetch
+
+  const result = await runCli({
+    argv: ['--profile', filename, 'answer this'],
+    env: { OPENROUTER_API_KEY: 'profile-secret' },
+    fetch,
+    trace,
+    output: () => undefined,
+    sessionId: 'profile-composition',
+  })
+
+  assert.equal(result.content, 'Verified.')
+  assert.equal(body?.model, 'profile/model')
+  assert.equal(body?.tools, undefined)
+  assert.deepEqual(body?.messages, [
+    { role: 'system', content: 'Answer with verified facts only.' },
+    { role: 'user', content: 'answer this' },
+  ])
+  const start = records.find(({ label }) => label === 'cli/start')?.value
+  assert.deepEqual(start, {
+    mode: 'openrouter', interactive: false, input: 'answer this', model: 'profile/model',
+    profile: 'minimal-persona', profileSource: 'file', tools: [], approvalDefault: 'ask',
+    sessionId: 'profile-composition', sessionStore: 'memory', resumed: false,
+  })
+  assert.equal(JSON.stringify(records).includes('does-not-exist'), false)
+  assert.equal(JSON.stringify(records).includes('profile-secret'), false)
+})
+
+test('profile-relative file persistence works while disabled workspace tools stay unconstructed', async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'deepseek-cordis-profile-persistence-'))
+  t.after(() => { rmSync(directory, { recursive: true, force: true }) })
+  const filename = writeProfile(directory, {
+    schemaVersion: 1,
+    name: 'replay-persistent',
+    model: { provider: 'replay' },
+    workspace: { root: './missing-workspace' },
+    persistence: { kind: 'file', directory: './sessions' },
+    tools: { enabled: ['add'] },
+  })
+
+  await runCli({
+    argv: ['--profile', filename, 'add 4 and 5'],
+    env: {},
+    trace: () => undefined,
+    output: () => undefined,
+    sessionId: 'profile-persisted',
+  })
+
+  const persisted = new FileSessionStore({ directory: join(directory, 'sessions') })
+    .get('profile-persisted')
+  assert.ok(persisted)
+  assert.equal(persisted.events.at(-1)?.type, 'turn/end')
 })
 
 test('interactive replay runs multiple turns and direct control commands', async (t) => {
@@ -260,35 +413,52 @@ test('file-backed CLI resumes the same session across fresh application boots', 
   )
 })
 
-test('file-backed CLI applies configured context pressure before the next request', async (t) => {
+test('file-backed CLI applies profile context policy before the next request', async (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'deepseek-cordis-cli-budget-'))
   t.after(() => { rmSync(directory, { recursive: true, force: true }) })
-  const baseEnv = { HARNESS_SESSION_DIR: directory, HARNESS_SESSION_ID: 'budget-cli' }
+  const profile = writeProfile(directory, {
+    schemaVersion: 1,
+    name: 'small-context',
+    model: { provider: 'replay', contextWindow: 40 },
+    persistence: { kind: 'file', directory: './sessions' },
+    tools: { enabled: ['add'] },
+    context: { thresholdRatio: 0.5, retainTurns: 2, maxOverflowRetries: 0 },
+  })
+  const argv = (left: number, right: number) => [
+    '--profile', profile, `add ${left} and ${right}`,
+  ]
+  const baseEnv = { HARNESS_SESSION_ID: 'budget-cli' }
   await runCli({
-    argv: ['--replay', 'add 1 and 2'], env: baseEnv,
+    argv: argv(1, 2), env: baseEnv,
     trace: () => undefined, output: () => undefined,
   })
   await runCli({
-    argv: ['--replay', 'add 3 and 4'], env: baseEnv,
+    argv: argv(3, 4), env: baseEnv,
+    trace: () => undefined, output: () => undefined,
+  })
+  await runCli({
+    argv: argv(5, 6), env: baseEnv,
     trace: () => undefined, output: () => undefined,
   })
   const { records, trace } = recorder()
 
   const result = await runCli({
-    argv: ['--replay', 'add 5 and 6'],
-    env: { ...baseEnv, HARNESS_CONTEXT_WINDOW: '40' },
+    argv: argv(7, 8),
+    env: baseEnv,
     trace,
     output: () => undefined,
   })
 
-  assert.equal(result.turnId, 'budget-cli:turn:3')
-  const resumed = new FileSessionStore({ directory }).get('budget-cli')
+  assert.equal(result.turnId, 'budget-cli:turn:4')
+  const resumed = new FileSessionStore({ directory: join(directory, 'sessions') }).get('budget-cli')
   assert.ok(resumed)
   assert.equal(resumed.events.some((event) => event.type === 'compaction/summary'), true)
-  const decision = resumed.events.find((event) => event.type === 'context-budget/decision')
+  const decision = resumed.events.find((event) =>
+    event.type === 'context-budget/decision' && event.outcome === 'compacted')
   assert.ok(decision?.type === 'context-budget/decision')
   assert.equal(decision.outcome, 'compacted')
   assert.equal(decision.contextWindow, 40)
+  assert.equal(decision.thresholdTokens, 20)
   assert.ok(records.some(({ label, value }) =>
     label === 'model/request'
     && JSON.stringify(value).includes('Earlier conversation compacted for replay.')))
@@ -414,7 +584,11 @@ test('live-mode composition maps a tool round trip and never traces its API key'
   assert.ok(records.some(({ label, value }) =>
     label === 'session/event'
     && JSON.stringify(value).includes('"inputTokens":14')))
-  assert.deepEqual(bodies[1]?.messages, [
+  const secondMessages = bodies[1]?.messages as Array<Record<string, unknown>>
+  assert.equal(secondMessages[0]?.role, 'system')
+  assert.match(String(secondMessages[0]?.content), /DeepSeek Cordis Harness/)
+  assert.match(String(secondMessages[0]?.content), /Before creating a file, stat it/)
+  assert.deepEqual(secondMessages.slice(1), [
     { role: 'user', content: 'add 8 and 9' },
     {
       role: 'assistant',
@@ -515,6 +689,132 @@ test('interactive live mode approves and audits a confined workspace file creati
   )
 })
 
+test('interactive live mode reads before an exact guarded workspace edit', async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'deepseek-cordis-cli-edit-'))
+  t.after(() => { rmSync(directory, { recursive: true, force: true }) })
+  writeFileSync(join(directory, 'notes.txt'), 'status: old\n')
+  let completion = 0
+  const fetch = (async (input: string | URL | Request) => {
+    if (String(input).endsWith('/api/v1/models')) {
+      return new Response(JSON.stringify({
+        data: [{ id: 'workspace/model', context_length: 64_000 }],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    }
+    completion += 1
+    if (completion === 1) {
+      return sseResponse([{
+        model: 'workspace/model',
+        choices: [{ delta: { tool_calls: [{
+          index: 0, id: 'read-call', type: 'function',
+          function: { name: 'read_workspace_file', arguments: '{"path":"notes.txt"}' },
+        }] } }],
+      }])
+    }
+    if (completion === 2) {
+      return sseResponse([{
+        model: 'workspace/model',
+        choices: [{ delta: { tool_calls: [{
+          index: 0, id: 'edit-call', type: 'function',
+          function: {
+            name: 'edit_workspace_file',
+            arguments: '{"path":"notes.txt","oldText":"old","newText":"complete"}',
+          },
+        }] } }],
+      }])
+    }
+    return sseResponse([{
+      model: 'workspace/model',
+      choices: [{ delta: { content: 'Updated the observed file.' } }],
+    }])
+  }) as typeof globalThis.fetch
+  const lines = ['update the status', '/exit']
+  const approvals: string[] = []
+
+  const result = await runInteractiveCli({
+    argv: ['--interactive'],
+    env: {
+      OPENROUTER_API_KEY: 'workspace-secret',
+      OPENROUTER_MODEL: 'workspace/model',
+      HARNESS_WORKSPACE_ROOT: directory,
+    },
+    fetch,
+    trace: () => undefined,
+    output: () => undefined,
+    readLine: (prompt) => {
+      if (prompt.startsWith('[approval]')) {
+        approvals.push(prompt)
+        return 'yes'
+      }
+      return lines.shift()
+    },
+    sessionId: 'workspace-edit-cli',
+  })
+
+  assert.deepEqual(result, { sessionId: 'workspace-edit-cli', turns: 1, commands: 1 })
+  assert.equal(readFileSync(join(directory, 'notes.txt'), 'utf8'), 'status: complete\n')
+  assert.equal(approvals.length, 2)
+  assert.match(approvals[0]!, /read_workspace_file/)
+  assert.match(approvals[1]!, /edit_workspace_file/)
+  assert.equal(completion, 3)
+})
+
+test('a deny-default profile never invokes the interactive approval channel', async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'deepseek-cordis-profile-deny-'))
+  t.after(() => { rmSync(directory, { recursive: true, force: true }) })
+  const filename = writeProfile(directory, {
+    schemaVersion: 1,
+    name: 'deny-workspace',
+    model: { provider: 'openrouter', id: 'profile/deny', contextWindow: 64_000 },
+    workspace: { root: '.' },
+    tools: { enabled: ['workspace.create'] },
+    approval: { default: 'deny' },
+  })
+  let completion = 0
+  const fetch = (async () => {
+    completion += 1
+    return completion === 1
+      ? sseResponse([{
+          model: 'profile/deny',
+          choices: [{ delta: { tool_calls: [{
+            index: 0,
+            id: 'denied-create',
+            type: 'function',
+            function: {
+              name: 'create_workspace_file',
+              arguments: '{"path":"must-not-exist.txt","content":"blocked"}',
+            },
+          }] } }],
+        }])
+      : sseResponse([{
+          model: 'profile/deny',
+          choices: [{ delta: { content: 'The operation was unavailable.' } }],
+        }])
+  }) as typeof globalThis.fetch
+  const lines = ['create it', '/exit']
+  const approvalPrompts: string[] = []
+  const { records, trace } = recorder()
+
+  await runInteractiveCli({
+    argv: ['--interactive', '--profile', filename],
+    env: { OPENROUTER_API_KEY: 'deny-secret' },
+    fetch,
+    trace,
+    output: () => undefined,
+    readLine: (prompt) => {
+      if (prompt.startsWith('[approval]')) approvalPrompts.push(prompt)
+      return lines.shift()
+    },
+    sessionId: 'profile-deny',
+  })
+
+  assert.deepEqual(approvalPrompts, [])
+  assert.equal(existsSync(join(directory, 'must-not-exist.txt')), false)
+  assert.equal(records.some(({ label, value }) =>
+    label === 'session/event'
+    && JSON.stringify(value).includes('"outcome":"rejected"')), true)
+  assert.equal(JSON.stringify(records).includes('deny-secret'), false)
+})
+
 test('CLI cancellation records an aborted turn and drains every mounted fiber', async () => {
   const { records, trace } = recorder()
   const controller = new AbortController()
@@ -544,7 +844,19 @@ test('CLI cancellation records an aborted turn and drains every mounted fiber', 
   assert.equal(JSON.stringify(records).includes('cancel-secret'), false)
 })
 
-test('configuration and provider failures reject while still draining mounted fibers', async () => {
+test('configuration and provider failures reject while still draining mounted fibers', async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'deepseek-cordis-invalid-profile-'))
+  t.after(() => { rmSync(directory, { recursive: true, force: true }) })
+  const invalidProfile = writeProfile(directory, { schemaVersion: 1, tools: { enabled: ['shell'] } })
+  const invalidTrace = recorder()
+  await assert.rejects(runCli({
+    argv: ['--profile', invalidProfile, 'hello'],
+    env: { OPENROUTER_API_KEY: 'unused-secret' },
+    trace: invalidTrace.trace,
+    output: () => undefined,
+  }), /not a recognized tool id/)
+  assert.deepEqual(invalidTrace.records, [])
+
   const missingKeyTrace = recorder()
   await assert.rejects(runCli({
     argv: ['hello'],

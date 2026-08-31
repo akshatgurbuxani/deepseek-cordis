@@ -42,15 +42,19 @@ model               ──> protocol
 approval            ──> protocol
 sandbox             ──> protocol
 sandbox-workspace   ──> sandbox + tools + protocol
+filesystem          ──> (provider-neutral contract and policy)
+system-prompt       ──> protocol
+configuration       ──> protocol
+filesystem-workspace──> filesystem + sandbox + system-prompt + tools + protocol
 commands            ──> session + protocol
 command-session     ──> commands + compaction + session
 tools               ──> protocol + approval + sandbox
-agent-loop          ──> protocol + session + model + approval + sandbox + tools
-runtime-cordis      ──> agent-loop + approval + sandbox + commands + compaction + token-meter + session + model + tools + cordis
+agent-loop          ──> protocol + session + model + approval + sandbox + system-prompt + tools
+runtime-cordis      ──> agent-loop + approval + sandbox + system-prompt + commands + compaction + token-meter + session + model + tools + cordis
 app-boot            ──> runtime-cordis
 model-openrouter    ──> protocol + model
 tool/storage plugins──> protocol + their capability contract
-cli                 ──> app-boot + selected provider plugins
+cli                 ──> configuration + app-boot + selected provider plugins
 ```
 
 An arrow `A → B` means package A imports package B. The CLI also imports the
@@ -109,9 +113,33 @@ one-shot outcome for an exact call. Sandbox providers preflight an exact call,
 report actual enforcement strength, own execution, and expose deterministic
 lease cleanup. Neither package imports Cordis or supplies a permissive default.
 
+### `filesystem` and `filesystem-workspace`
+
+`filesystem` owns opaque targets, bounded operation contracts, stable `FS_*`
+errors, and session-scoped observation/version policy without importing Node,
+tools, sandbox, or Cordis. `filesystem-workspace` is the selected Node provider
+and model-facing exact-call adapter. It confines portable relative paths to a
+real workspace root, rejects symbolic-link traversal, and reports partial
+enforcement honestly.
+
+### `system-prompt`
+
+Owns provider-neutral ordered prompt registration and per-session shadowing.
+Dynamic sections receive exact request identity, visible tool schemas, and the
+turn signal; assembly returns one immutable prompt without importing a model
+adapter, the agent loop, concrete tools, or Cordis.
+
+### `configuration`
+
+Owns the versioned application-profile vocabulary and pure validation. It
+normalizes unknown JSON into one detached immutable profile, rejects unknown or
+incompatible fields, and supplies explicit defaults. It does not read files,
+resolve paths, inspect environment variables, construct providers, or import
+Cordis; the CLI owns those application-layer concerns.
+
 ### `agent-loop`
 
-Consumes session, model, and tool contracts. It owns turn/step progression,
+Consumes session, model, tool, safety, and prompt contracts. It owns turn/step progression,
 model-history projection, ordered tool execution, failure events, per-session
 run exclusion, stream collection, cooperative cancellation, and the
 maximum-step guard. It knows nothing about Cordis, OpenRouter, CLI arguments,
@@ -802,9 +830,10 @@ claim exact provider tokenization where none exists.
 
 This smaller harness stores a self-contained request anchor on each successful
 assistant event rather than adding DeepSeek's request-header/context events,
-usage chunks, projections, and route registry. Failed-call billing, cache token
-buckets, system prompts, compaction-call billing, and a general model catalog
-service remain outside the present protocol.
+usage chunks, projections, and route registry. At Feature 11, failed-call
+billing, cache token buckets, system prompts, compaction-call billing, and a
+general model catalog remained deferred; Feature 16 now extends the same anchor
+with its exact system prompt.
 
 #### PR 11 result
 
@@ -952,15 +981,195 @@ Implemented the concrete provider, consequential schema, argument-bearing
 approval, CLI composition, atomic no-overwrite publication, security boundary
 tests, durable audit integration, and explicit enforcement limitations.
 
+### Feature 15 — filesystem capability family
+
+Feature 15 promotes the create-only proof into a provider-neutral filesystem
+surface. `FileSystem` resolves provider-owned opaque targets and exposes stat,
+bounded non-recursive list, bounded UTF-8 read, version-guarded whole-file
+write, and exact single-match edit. Results contain only workspace-relative
+display paths; host paths never cross the capability boundary.
+
+The model-facing family contains `read_workspace_file`,
+`list_workspace_directory`, `stat_workspace_path`, `write_workspace_file`, and
+`edit_workspace_file`. Every operation remains a handler-free consequential
+tool, so immutable arguments are approved before a provider-owned exact-call
+lease can execute. Feature 14's `create_workspace_file` schema, audit provider
+identity, and result shape remain compatible while its implementation now uses
+the generalized provider.
+
+Mutation policy is session-scoped and fail closed. A missing-path stat records
+confirmed absence before create; stat or read records the opaque version before
+replacement; edit specifically requires a prior content read. The lease
+captures that exact version and the provider revalidates it immediately before
+publication. Target changes fail as `FS_STALE_VERSION`; missing observations
+fail as `FS_NOT_OBSERVED`; absent, ambiguous, and non-text edit inputs retain
+separate stable codes. Successful mutations refresh the session observation.
+
+The Node provider bounds file content at 1 MiB and directory responses at 200
+entries by default. Reads reject NUL-containing and invalid UTF-8 data. Writes
+use a same-directory exclusive temporary file, fsync its contents, preserve an
+existing file's permission bits, and publish with no-overwrite link or atomic
+rename. Temporary artifacts are cleaned after success or failure. Traversal,
+absolute paths, foreign/forged targets, symbolic-link targets or ancestors,
+non-directory parents, cancellation, oversized content, stale versions, and
+unsupported profiles fail before an unintended effect.
+
+#### Upstream motivation and adaptation boundary
+
+The design follows DeepSeek Harness's separation between its provider-neutral
+[`fs contract`](https://github.com/deepseek-ai/deepseek-harness/blob/0a53fb55bea101816fa226bb964ae2bed71c343b/packages/fs/fs/README.md),
+[`filesystem subsystem`](https://github.com/deepseek-ai/deepseek-harness/blob/0a53fb55bea101816fa226bb964ae2bed71c343b/docs/subsystems/filesystem.md),
+and model-facing
+[`tool-fs`](https://github.com/deepseek-ai/deepseek-harness/blob/0a53fb55bea101816fa226bb964ae2bed71c343b/packages/fs/tool-fs/README.md).
+It adapts observation guards and stable error vocabulary to this repository's
+existing approval/sandbox lease rather than importing upstream implementation
+or introducing a second effect runtime. The contracts remain Cordis-free; CLI
+composition selects the Node provider.
+
+Enforcement remains `partial`. Opaque TypeScript targets prevent accidental
+cross-provider use, not hostile same-process forgery, and portable Node path
+APIs cannot eliminate an external ancestor-swap race between validation and
+publication. Exact target-version checks cover normal concurrent edits but do
+not claim kernel-enforced directory capabilities.
+
+#### PR 15 result
+
+Introduced two packages and five tool schemas, preserved Feature 14
+compatibility, composed the provider into the CLI, and added deterministic
+coverage for observation isolation, bounds, UTF-8 validation, stale writes,
+exact edits, atomic cleanup, permission preservation, links, traversal,
+cancellation, approval, and legacy behavior.
+
+### Feature 16 — scoped agent context and system prompt
+
+Feature 16 gives model-facing instructions their own provider-neutral
+capability instead of smuggling them into user history or hard-coding them in
+the agent loop. `SystemPromptService` owns named ordered sections, synchronous
+or asynchronous per-step text providers, deterministic code-unit tie-breaking,
+empty-section removal, cancellation, and immutable assembly output. A section
+registered for one session shadows a same-named global section only in that
+scope; exact idempotent disposers restore the global layer without residue.
+
+`PromptAssemblyContext` contains the session, turn, step, exact visible tool
+schemas, and the explicit turn signal. The loop assembles against one
+authoritative tool snapshot for the request. Policy can ask for the current
+prompt after asynchronous model metadata work; matching assemblies are cached,
+while a genuinely changed tool envelope is reassembled before transmission.
+The loop itself knows no persona or filesystem wording.
+
+The CLI composes two contributors as Cordis-owned effects: a stable harness
+identity and `WORKSPACE_FILESYSTEM_PROMPT_SECTION`. Workspace guidance appears
+only when its generalized tools are visible. It teaches relative paths,
+inspection before reasoning, stat/read-before-write, read-before-edit, precise
+single-match edits, stale-version recovery, and result-confirmed claims. It
+never renders the provider's absolute host root.
+
+`ModelRequest.systemPrompt` remains distinct from durable model history, and
+OpenRouter emits it as the first native `system` message. Successful provider
+usage records the exact rendered prompt alongside the input surface and tools.
+`TokenMeter` prices prompt framing and applies signed prompt deltas to
+provider-anchored measurements, so proactive compaction still measures the
+actual request envelope introduced by this feature.
+
+Cordis publishes the registry as a required loop coeffect. Prompt-section
+registrations are reversible effects; provider withdrawal drains the loop and
+sections before replacement, then reconnects the same loop facade and session
+history. Direct non-Cordis embeddings retain an explicit empty implementation.
+
+#### Upstream motivation and adaptation boundary
+
+This feature was checked on August 31, 2026 against DeepSeek Harness
+`0a53fb5`, especially its
+[`system-prompt subsystem`](https://github.com/deepseek-ai/deepseek-harness/blob/0a53fb55bea101816fa226bb964ae2bed71c343b/docs/subsystems/system-prompt.md)
+and
+[`system-prompt package`](https://github.com/deepseek-ai/deepseek-harness/blob/0a53fb55bea101816fa226bb964ae2bed71c343b/packages/core/system-prompt/README.md).
+The local design adapts ordered contributors, scope shadowing, dynamic assembly
+context, and tool/prompt coherence to the smaller immutable request contract.
+It does not copy upstream's waterfall, variable interpolation, complete-prompt
+override, tool restriction/order registry, or durable runtime-context stream.
+
+#### PR 16 result
+
+Introduced the provider-neutral registry and Cordis lifecycle adapters, native
+OpenRouter system-role mapping, exact usage provenance, prompt-aware token
+pressure, capability-owned workspace guidance, scoped/disposal tests, provider
+replacement tests, and full CLI request verification.
+
+### Feature 17 — validated configuration profiles
+
+Feature 17 turns the CLI's formerly scattered defaults into one versioned,
+fail-loud application profile. `@deepseek-cordis/configuration` accepts unknown
+JSON, requires `schemaVersion: 1`, rejects unknown fields, validates closed
+vocabularies and numeric bounds, applies explicit defaults, and returns a
+detached recursively immutable `HarnessProfile`. It imports only the snapshot
+helper from `protocol`; file reads, environment access, provider construction,
+Cordis, and credentials remain outside the package.
+
+Schema V1 selects an OpenRouter route or deterministic replay, optional exact
+capacity, workspace root and maximum file bytes, memory or file persistence,
+the exact visible set of calculator and workspace tools, identity/persona/tool
+guidance prompt sections, ask-or-deny approval behavior, and context-pressure
+threshold, retention, and overflow-retry limits. Model fields and persistence
+fields are discriminated: replay cannot carry an OpenRouter model ID, and
+memory persistence cannot carry a directory. Tool IDs are closed, ordered,
+and unique.
+
+The CLI accepts `--profile <path>`, `--profile=<path>`, or `HARNESS_PROFILE`.
+Profile-owned relative workspace and persistence paths resolve beside that
+profile. Command-line replay and the existing model, context-window, workspace,
+and session-directory environment values are explicit higher-precedence launch
+overlays, preserving prior invocations without making environment state part of
+the profile. Credentials remain environment-only.
+
+The normalized profile compiles into the existing stable-ID `AppBoot` manifest:
+disabled tools and prompt contributors never mount, an empty workspace tool set
+does not construct or validate a filesystem provider, persona text uses its own
+Cordis-owned prompt effect, and policy settings reach the real
+`ContextBudgetPolicy`. `approval.default: "ask"` uses an available interaction
+channel and otherwise fails closed; `"deny"` never invokes the channel and
+records explicit policy rejection. Traces record only the profile name, source
+kind, selected tool IDs, and safe effective launch facts rather than copying the
+document or its paths wholesale.
+
+Profiles are startup-frozen. Invalid JSON, unsupported versions, invalid fields,
+and missing profile files fail before `AppBoot` construction, so no partial
+provider graph exists to clean up. Runtime profile watching and transactional
+policy replacement are deliberately deferred until an explicit safe-point
+contract exists for active turns.
+
+#### Upstream motivation and adaptation boundary
+
+This feature was checked on August 31, 2026 against DeepSeek Harness
+`0a53fb5`, especially its
+[`profile composition`](https://github.com/deepseek-ai/deepseek-harness/blob/0a53fb55bea101816fa226bb964ae2bed71c343b/packages/boot/app-boot/src/profile.ts),
+[`shared CLI profile boot`](https://github.com/deepseek-ai/deepseek-harness/blob/0a53fb55bea101816fa226bb964ae2bed71c343b/apps/cli/src/profile-boot.ts),
+and
+[`configuration catalog`](https://github.com/deepseek-ai/deepseek-harness/blob/0a53fb55bea101816fa226bb964ae2bed71c343b/docs/config-catalog.md).
+The local design adopts ordered default/profile/launch layers, fail-loud schema
+validation, stable composition identity, and launcher-owned path resolution.
+It intentionally does not adopt npm bundle discovery, YAML/JavaScript patches,
+profile package installation, module fallback healing, or live HMR.
+
+#### PR 17 result
+
+Introduced schema V1 validation, an example coding profile, profile-aware CLI
+selection and path semantics, exact tool/prompt manifest enablement,
+profile-driven providers and context policy, deny-default interaction behavior,
+pre-boot failure guarantees, backward-compatible launch overlays, and
+end-to-end verification across replay, OpenRouter, persistence, safety, and
+compaction.
+
 ### Later milestones
 
-Feature 15 should promote this proof into a provider-neutral filesystem
-capability family with bounded read/list/stat, guarded write/edit, stable error
-codes, and observation/version policy. Feature 16 can then add scoped system
-prompt and agent context over those capabilities.
+Feature 18 can add bounded workspace instruction discovery (`AGENTS.md`-style
+project and local guidance) as a dynamic prompt contributor. It should define
+root discovery, precedence, byte caps, stale-file behavior, provenance, and
+session isolation without turning profile persona text into a filesystem
+loader.
 
-Cross-process writer coordination, parallel tools, subagents, attachments,
-scheduling, and UI remain outside the first production milestone.
+Profile hot reload, cross-process writer coordination, parallel tools,
+subagents, attachments, scheduling, and UI remain outside the first production
+milestone.
 
 ## Promotion rules
 

@@ -24,8 +24,13 @@ policy.
 
 A completed finish may include normalized input/output token usage. The agent
 loop commits that sample with the assistant event, exact input-surface
-sequences, model identity, and tool-schema snapshot. Usage is log-only and does
+sequences, model identity, tool-schema snapshot, and optional exact system
+prompt. Usage is log-only and does
 not change message projection.
+
+`ModelRequest.systemPrompt` is separate from durable `ModelMessage` history.
+This keeps deployment instructions in their native high-authority wire role
+without pretending they were user-authored session events.
 
 `compaction/summary` is the sole surface-transforming checkpoint. It records
 summary text, summarizer identity, and the exact current surface sequence prefix
