@@ -38,7 +38,9 @@ test('removing a provider during setup rolls back without publishing', async () 
     async setup(context) {
       await context.effect(() => {
         trace.push('acquire')
-        return () => { trace.push('recover') }
+        return () => {
+          trace.push('recover')
+        }
       })
       setupStarted.resolve()
       await finishSetup.promise
@@ -77,7 +79,9 @@ test('replacement during provider setup activates only the newest identity', asy
     async setup(context) {
       await context.effect(() => {
         trace.push('database-v1:acquire')
-        return () => { trace.push('database-v1:recover') }
+        return () => {
+          trace.push('database-v1:recover')
+        }
       })
       firstStarted.resolve()
       await finishFirst.promise
@@ -118,7 +122,9 @@ test('consumer setup becomes stale when its provider is removed', async () => {
     name: 'database',
     provides: [[database, {}]],
     async setup(context) {
-      await context.effect(() => () => { trace.push('database:dispose') })
+      await context.effect(() => () => {
+        trace.push('database:dispose')
+      })
     },
   })
   await runtime.settle()
@@ -129,7 +135,9 @@ test('consumer setup becomes stale when its provider is removed', async () => {
     async setup(context) {
       await context.effect(() => {
         trace.push('repository:acquire')
-        return () => { trace.push('repository:rollback') }
+        return () => {
+          trace.push('repository:rollback')
+        }
       })
       consumerStarted.resolve()
       await finishConsumer.promise
@@ -141,11 +149,7 @@ test('consumer setup becomes stale when its provider is removed', async () => {
   finishConsumer.resolve()
   await runtime.settle()
 
-  assert.deepEqual(trace, [
-    'repository:acquire',
-    'repository:rollback',
-    'database:dispose',
-  ])
+  assert.deepEqual(trace, ['repository:acquire', 'repository:rollback', 'database:dispose'])
   assert.equal(consumer.state, 'pending')
   assert.equal(provider.state, 'disposed')
 })
@@ -161,7 +165,9 @@ test('replacement waits for consumer cleanup against the old committed view', as
     name: 'database-v1',
     provides: [[database, { id: 'v1' }]],
     async setup(context) {
-      await context.effect(() => () => { trace.push('database-v1:dispose') })
+      await context.effect(() => () => {
+        trace.push('database-v1:dispose')
+      })
     },
   })
   const consumer = runtime.add({
@@ -222,7 +228,9 @@ test('provider recovery waits for direct and transitive consumers', async () => 
     name: 'database',
     provides: [[database, {}]],
     async setup(context) {
-      await context.effect(() => () => { trace.push('database:dispose') })
+      await context.effect(() => () => {
+        trace.push('database:dispose')
+      })
     },
   })
   runtime.add({
@@ -260,11 +268,7 @@ test('provider recovery waits for direct and transitive consumers', async () => 
 
   finishApiCleanup.resolve()
   await repositoryCleanupStarted.promise
-  assert.deepEqual(trace, [
-    'api:dispose:start',
-    'api:dispose:end',
-    'repository:dispose:start',
-  ])
+  assert.deepEqual(trace, ['api:dispose:start', 'api:dispose:end', 'repository:dispose:start'])
 
   finishRepositoryCleanup.resolve()
   await runtime.settle()
@@ -297,7 +301,9 @@ test('rapid replacements converge without starting an obsolete middle provider',
     async setup(context) {
       await context.effect(() => {
         trace.push('database-v1:acquire')
-        return () => { trace.push('database-v1:recover') }
+        return () => {
+          trace.push('database-v1:recover')
+        }
       })
       firstStarted.resolve()
       await finishFirst.promise
@@ -419,7 +425,9 @@ test('activation failure rolls back once and remains observable without retrying
       attempts += 1
       await context.effect(() => {
         resources += 1
-        return () => { resources -= 1 }
+        return () => {
+          resources -= 1
+        }
       })
       throw new Error('activation failed')
     },
@@ -445,7 +453,9 @@ test('consumer cleanup failure is observable but cannot strand provider recovery
     name: 'database',
     provides: [[database, {}]],
     async setup(context) {
-      await context.effect(() => () => { trace.push('database:dispose') })
+      await context.effect(() => () => {
+        trace.push('database:dispose')
+      })
     },
   })
   const consumer = runtime.add({
@@ -491,7 +501,9 @@ test('settle includes mutations accepted while an earlier transition is running'
   })
   await firstStarted.promise
 
-  const settlement = runtime.settle().then(() => { settled = true })
+  const settlement = runtime.settle().then(() => {
+    settled = true
+  })
   runtime.add({
     name: 'second',
     async setup() {

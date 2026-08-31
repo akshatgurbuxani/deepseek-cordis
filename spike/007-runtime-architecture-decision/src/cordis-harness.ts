@@ -1,8 +1,4 @@
-import {
-  Context,
-  type Fiber,
-  type Plugin,
-} from 'cordis'
+import type { Context, Fiber, Plugin } from 'cordis'
 
 import {
   AgentLoop,
@@ -31,9 +27,7 @@ function labelPlugin<T extends Plugin>(plugin: T, name: string): T {
   return plugin
 }
 
-export function createSessionPlugin(
-  store = new SessionStore(),
-): PluginFactory<SessionStore> {
+export function createSessionPlugin(store = new SessionStore()): PluginFactory<SessionStore> {
   const plugin: Plugin.Function<void> = (context) => {
     context.provide('sessions', store)
   }
@@ -78,9 +72,7 @@ export function createModelPlugin(
   return { plugin, value: adapter }
 }
 
-export function createAgentLoopPlugin(
-  loop = new AgentLoop(),
-): PluginFactory<AgentLoop> {
+export function createAgentLoopPlugin(loop = new AgentLoop()): PluginFactory<AgentLoop> {
   const plugin: Plugin.Function<void> = (context) => {
     context.effect(
       () => loop.connect(context.sessions, context.tools, context.model),

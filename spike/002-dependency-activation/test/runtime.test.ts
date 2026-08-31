@@ -82,7 +82,9 @@ test('failed provider setup rolls back its effects and publishes no service', as
       async setup(context) {
         await context.effect(() => {
           registrations += 1
-          return () => { registrations -= 1 }
+          return () => {
+            registrations -= 1
+          }
         })
         throw new Error('database setup failed')
       },
@@ -187,7 +189,9 @@ test('replacement drains old effects and reactivates with a fresh provider ident
     name: 'database-v1',
     provides: [[database, { id: 'v1' }]],
     async setup(context) {
-      await context.effect(() => () => { trace.push('database-v1:dispose') })
+      await context.effect(() => () => {
+        trace.push('database-v1:dispose')
+      })
     },
   })
   const consumer = await runtime.add({
@@ -196,7 +200,9 @@ test('replacement drains old effects and reactivates with a fresh provider ident
     async setup(context) {
       const id = context.get(database).id
       trace.push(`repository:${id}:activate`)
-      await context.effect(() => () => { trace.push(`repository:${id}:dispose`) })
+      await context.effect(() => () => {
+        trace.push(`repository:${id}:dispose`)
+      })
     },
   })
 
@@ -250,7 +256,9 @@ test('replacement is validated before the old provider is disturbed', async () =
     name: 'database',
     provides: [[database, {}]],
     async setup(context) {
-      await context.effect(() => () => { databaseDisposals += 1 })
+      await context.effect(() => () => {
+        databaseDisposals += 1
+      })
     },
   })
   await runtime.add({
@@ -262,7 +270,10 @@ test('replacement is validated before the old provider is disturbed', async () =
   await assert.rejects(
     runtime.replace(databaseFiber, {
       name: 'invalid-replacement',
-      provides: [[database, {}], [logger, {}]],
+      provides: [
+        [database, {}],
+        [logger, {}],
+      ],
       setup() {},
     }),
     /logger.*already provided/,
@@ -279,7 +290,9 @@ test('repeated removal is idempotent and does not recover effects twice', async 
   const fiber = await runtime.add({
     name: 'standalone',
     async setup(context) {
-      await context.effect(() => () => { disposals += 1 })
+      await context.effect(() => () => {
+        disposals += 1
+      })
     },
   })
 

@@ -1,20 +1,20 @@
 import { Context } from 'cordis'
 
 import {
-  type JsonValue,
-  ReplayModelAdapter,
   createAgentLoopPlugin,
   createModelPlugin,
   createSessionPlugin,
   createToolPlugin,
   createToolRegistryPlugin,
+  type JsonValue,
   mountPlugin,
+  ReplayModelAdapter,
 } from './index.ts'
 import { OpenRouterModelAdapter } from './openrouter.ts'
 import {
+  consoleTrace,
   TracingModelAdapter,
   TracingSessionStore,
-  consoleTrace,
   traceCordisLifecycle,
 } from './tracing.ts'
 
@@ -34,7 +34,8 @@ function calculator(argumentsValue: JsonValue): number {
     typeof argumentsValue !== 'object' ||
     typeof argumentsValue.a !== 'number' ||
     typeof argumentsValue.b !== 'number'
-  ) throw new Error('calculator expects numeric a and b arguments')
+  )
+    throw new Error('calculator expects numeric a and b arguments')
   return argumentsValue.a + argumentsValue.b
 }
 
@@ -60,26 +61,31 @@ try {
 
   mounted.push(await mountPlugin(context, sessions.plugin))
   mounted.push(await mountPlugin(context, tools.plugin))
-  mounted.push(await mountPlugin(context, createToolPlugin({
-    name: 'add',
-    description: 'Add two numbers. Always use this tool when the user asks for addition.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        a: { type: 'number' },
-        b: { type: 'number' },
-      },
-      required: ['a', 'b'],
-      additionalProperties: false,
-    },
-    execute: calculator,
-  })))
+  mounted.push(
+    await mountPlugin(
+      context,
+      createToolPlugin({
+        name: 'add',
+        description: 'Add two numbers. Always use this tool when the user asks for addition.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            a: { type: 'number' },
+            b: { type: 'number' },
+          },
+          required: ['a', 'b'],
+          additionalProperties: false,
+        },
+        execute: calculator,
+      }),
+    ),
+  )
   mounted.push(await mountPlugin(context, model.plugin))
   mounted.push(await mountPlugin(context, loop.plugin))
 
   consoleTrace('demo/start', {
     mode: replay ? 'replay' : 'openrouter',
-    model: replay ? innerModel.id : process.env.OPENROUTER_MODEL ?? 'openrouter/free',
+    model: replay ? innerModel.id : (process.env.OPENROUTER_MODEL ?? 'openrouter/free'),
     input,
   })
   const session = context.sessions.create(`demo-${Date.now()}`)

@@ -4,14 +4,14 @@ import test from 'node:test'
 import { Context, FiberState, type Plugin } from 'cordis'
 
 import {
-  type JsonValue,
-  ReplayModelAdapter,
   createAgentLoopPlugin,
   createModelPlugin,
   createSessionPlugin,
   createToolPlugin,
   createToolRegistryPlugin,
+  type JsonValue,
   mountPlugin,
+  ReplayModelAdapter,
   replaceWithRollback,
 } from '../src/index.ts'
 
@@ -33,7 +33,8 @@ function addTool(offset = 0) {
         typeof argumentsValue !== 'object' ||
         typeof argumentsValue.a !== 'number' ||
         typeof argumentsValue.b !== 'number'
-      ) throw new Error('invalid add arguments')
+      )
+        throw new Error('invalid add arguments')
       return argumentsValue.a + argumentsValue.b + offset
     },
   })
@@ -47,13 +48,15 @@ test('Cordis activates the loop after its providers and runs the Spike 006 turn'
 
   const sessions = createSessionPlugin()
   const tools = createToolRegistryPlugin()
-  const model = createModelPlugin(new ReplayModelAdapter('calculator', [
-    {
-      type: 'tool_calls',
-      calls: [{ id: 'call-1', name: 'add', arguments: { a: 2, b: 3 } }],
-    },
-    { type: 'message', content: 'The answer is 5.' },
-  ]))
+  const model = createModelPlugin(
+    new ReplayModelAdapter('calculator', [
+      {
+        type: 'tool_calls',
+        calls: [{ id: 'call-1', name: 'add', arguments: { a: 2, b: 3 } }],
+      },
+      { type: 'message', content: 'The answer is 5.' },
+    ]),
+  )
 
   await mountPlugin(context, sessions.plugin)
   await mountPlugin(context, tools.plugin)
@@ -71,19 +74,22 @@ test('Cordis activates the loop after its providers and runs the Spike 006 turn'
     content: 'The answer is 5.',
     steps: 2,
   })
-  assert.deepEqual(session.events.map((event) => event.type), [
-    'turn/start',
-    'user/message',
-    'step/start',
-    'assistant/tool-calls',
-    'tool/call',
-    'tool/result',
-    'step/end',
-    'step/start',
-    'assistant/message',
-    'step/end',
-    'turn/end',
-  ])
+  assert.deepEqual(
+    session.events.map((event) => event.type),
+    [
+      'turn/start',
+      'user/message',
+      'step/start',
+      'assistant/tool-calls',
+      'tool/call',
+      'tool/result',
+      'step/end',
+      'step/start',
+      'assistant/message',
+      'step/end',
+      'turn/end',
+    ],
+  )
 })
 
 test('effect-owned tools withdraw on disposal and replacements change execution', async () => {
@@ -115,18 +121,19 @@ test('effect-owned tools withdraw on disposal and replacements change execution'
   await context.agentLoop.run(session, 'second')
   const results = session.events.filter((event) => event.type === 'tool/result')
 
-  assert.deepEqual(results.map((event) => event.type === 'tool/result' && event.ok
-    ? event.output
-    : undefined), [2, 12])
+  assert.deepEqual(
+    results.map((event) => (event.type === 'tool/result' && event.ok ? event.output : undefined)),
+    [2, 12],
+  )
 })
 
 test('model replacement reconnects one stable loop without replacing session history', async () => {
   const context = new Context()
   await mountPlugin(context, createSessionPlugin().plugin)
   await mountPlugin(context, createToolRegistryPlugin().plugin)
-  const first = createModelPlugin(new ReplayModelAdapter('model-v1', [
-    { type: 'message', content: 'from v1' },
-  ]))
+  const first = createModelPlugin(
+    new ReplayModelAdapter('model-v1', [{ type: 'message', content: 'from v1' }]),
+  )
   let mountedModel = await mountPlugin(context, first.plugin)
   const loopFactory = createAgentLoopPlugin()
   await mountPlugin(context, loopFactory.plugin)
@@ -171,14 +178,14 @@ test('boot-level replacement restores the last working model after setup failure
   const session = context.sessions.create('rollback')
   await context.agentLoop.run(session, 'before')
 
-  const broken = createModelPlugin(
-    new ReplayModelAdapter('broken', []),
-    'broken model setup',
-  )
+  const broken = createModelPlugin(new ReplayModelAdapter('broken', []), 'broken model setup')
   const replacement = await replaceWithRollback(context, mountedModel, broken.plugin)
 
   assert.equal(replacement.ok, false)
-  assert.match(replacement.error instanceof Error ? replacement.error.message : '', /broken model setup/)
+  assert.match(
+    replacement.error instanceof Error ? replacement.error.message : '',
+    /broken model setup/,
+  )
   assert.equal(context.model, stableAdapter)
   assert.equal(context.agentLoop, loop.value)
   await context.agentLoop.run(session, 'after')
@@ -194,12 +201,18 @@ test('isolated contexts resolve different models while inheriting shared service
 
   const first = root.isolate('model').isolate('agentLoop')
   const second = root.isolate('model').isolate('agentLoop')
-  await mountPlugin(first, createModelPlugin(new ReplayModelAdapter('first', [
-    { type: 'message', content: 'from first realm' },
-  ])).plugin)
-  await mountPlugin(second, createModelPlugin(new ReplayModelAdapter('second', [
-    { type: 'message', content: 'from second realm' },
-  ])).plugin)
+  await mountPlugin(
+    first,
+    createModelPlugin(
+      new ReplayModelAdapter('first', [{ type: 'message', content: 'from first realm' }]),
+    ).plugin,
+  )
+  await mountPlugin(
+    second,
+    createModelPlugin(
+      new ReplayModelAdapter('second', [{ type: 'message', content: 'from second realm' }]),
+    ).plugin,
+  )
   await mountPlugin(first, createAgentLoopPlugin().plugin)
   await mountPlugin(second, createAgentLoopPlugin().plugin)
 

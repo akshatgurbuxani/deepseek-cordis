@@ -19,9 +19,15 @@ test('synchronous effects dispose in reverse registration order', async () => {
   const trace: string[] = []
   const scope = new EffectStack()
 
-  await scope.effect(() => () => { trace.push('first') })
-  await scope.effect(() => () => { trace.push('second') })
-  await scope.effect(() => () => { trace.push('third') })
+  await scope.effect(() => () => {
+    trace.push('first')
+  })
+  await scope.effect(() => () => {
+    trace.push('second')
+  })
+  await scope.effect(() => () => {
+    trace.push('third')
+  })
 
   await scope.dispose()
 
@@ -49,12 +55,7 @@ test('one effect unwinds its async acquisition steps sequentially', async () => 
 
   await scope.dispose()
 
-  assert.deepEqual(trace, [
-    'second:start',
-    'second:end',
-    'first:start',
-    'first:end',
-  ])
+  assert.deepEqual(trace, ['second:start', 'second:end', 'first:start', 'first:end'])
 })
 
 test('asynchronous setup can return several completed acquisition steps', async () => {
@@ -62,8 +63,12 @@ test('asynchronous setup can return several completed acquisition steps', async 
   const scope = new EffectStack()
 
   await scope.effect(async () => [
-    () => { trace.push('first') },
-    () => { trace.push('second') },
+    () => {
+      trace.push('first')
+    },
+    () => {
+      trace.push('second')
+    },
   ])
 
   await scope.dispose()
@@ -97,18 +102,15 @@ test('independent async effects start in reverse order and may overlap', async (
 
   secondGate.resolve()
   await disposal
-  assert.deepEqual(trace, [
-    'second:start',
-    'first:start',
-    'first:end',
-    'second:end',
-  ])
+  assert.deepEqual(trace, ['second:start', 'first:start', 'first:end', 'second:end'])
 })
 
 test('explicit and owner disposal recover an effect only once', async () => {
   const scope = new EffectStack()
   let recoveries = 0
-  const disposeEffect = await scope.effect(() => () => { recoveries += 1 })
+  const disposeEffect = await scope.effect(() => () => {
+    recoveries += 1
+  })
 
   const first = disposeEffect()
   const second = disposeEffect()
@@ -125,21 +127,20 @@ test('failed asynchronous acquisition recovers only completed steps', async () =
   await assert.rejects(
     scope.effect(async function* () {
       trace.push('acquire:first')
-      yield () => { trace.push('recover:first') }
+      yield () => {
+        trace.push('recover:first')
+      }
       await Promise.resolve()
       trace.push('acquire:second')
-      yield () => { trace.push('recover:second') }
+      yield () => {
+        trace.push('recover:second')
+      }
       throw new Error('third acquisition failed')
     }),
     /third acquisition failed/,
   )
 
-  assert.deepEqual(trace, [
-    'acquire:first',
-    'acquire:second',
-    'recover:second',
-    'recover:first',
-  ])
+  assert.deepEqual(trace, ['acquire:first', 'acquire:second', 'recover:second', 'recover:first'])
   assert.equal(scope.size, 0)
   await scope.dispose()
   assert.equal(trace.length, 4)
@@ -154,7 +155,9 @@ test('owner disposal joins setup already in flight without deadlocking', async (
   const effect = scope.effect(async function* () {
     trace.push('acquire')
     acquired.resolve()
-    yield () => { trace.push('recover') }
+    yield () => {
+      trace.push('recover')
+    }
     await continueSetup.promise
     throw new Error('setup failed while disposal waited')
   })
@@ -176,8 +179,12 @@ test('disposing one child leaves its sibling alive', async () => {
   const firstChild = parent.child()
   const secondChild = parent.child()
 
-  await firstChild.effect(() => () => { trace.push('first-child') })
-  await secondChild.effect(() => () => { trace.push('second-child') })
+  await firstChild.effect(() => () => {
+    trace.push('first-child')
+  })
+  await secondChild.effect(() => () => {
+    trace.push('second-child')
+  })
 
   await firstChild.dispose()
   assert.deepEqual(trace, ['first-child'])
@@ -197,15 +204,25 @@ test('failed activation leaves no timer, listener, or service behind', async () 
 
   await assert.rejects(
     scope.effect(function* () {
-      const timer = setInterval(() => { ticks += 1 }, 5)
-      yield () => { clearInterval(timer) }
+      const timer = setInterval(() => {
+        ticks += 1
+      }, 5)
+      yield () => {
+        clearInterval(timer)
+      }
 
-      const listener = () => { calls += 1 }
+      const listener = () => {
+        calls += 1
+      }
       events.on('message', listener)
-      yield () => { events.off('message', listener) }
+      yield () => {
+        events.off('message', listener)
+      }
 
       services.set('example', {})
-      yield () => { services.delete('example') }
+      yield () => {
+        services.delete('example')
+      }
 
       throw new Error('activation failed')
     }),
@@ -229,7 +246,9 @@ test('disposal restores declared state but cannot retract an external emission',
   await scope.effect(() => {
     localRegistrations.add('registration')
     externalHistory.push('message sent')
-    return () => { localRegistrations.delete('registration') }
+    return () => {
+      localRegistrations.delete('registration')
+    }
   })
 
   await scope.dispose()
@@ -243,12 +262,16 @@ test('one failing disposer does not prevent the remaining cleanup', async () => 
   const scope = new EffectStack()
 
   await scope.effect(function* () {
-    yield () => { trace.push('first') }
+    yield () => {
+      trace.push('first')
+    }
     yield () => {
       trace.push('failing')
       throw new Error('cleanup failed')
     }
-    yield () => { trace.push('last') }
+    yield () => {
+      trace.push('last')
+    }
   })
 
   await assert.rejects(scope.dispose(), AggregateError)
@@ -261,7 +284,9 @@ test('a disposing or disposed scope rejects new acquisitions', async () => {
   const gate = deferred()
   const scope = new EffectStack()
 
-  await scope.effect(() => async () => { await gate.promise })
+  await scope.effect(() => async () => {
+    await gate.promise
+  })
   const disposal = scope.dispose()
 
   assert.throws(() => scope.effect(() => undefined), /scope is disposing/)

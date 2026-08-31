@@ -1,11 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import {
-  DeclarativeHost,
-  type ManifestEntry,
-  service,
-} from '../src/index.ts'
+import { DeclarativeHost, type ManifestEntry, service } from '../src/index.ts'
 
 function deferred(): {
   promise: Promise<void>
@@ -83,10 +79,7 @@ test('disabling a parent drains its subtree and preserves an unrelated entry', a
   const host = new DeclarativeHost()
   const trace: string[] = []
 
-  const entry = (
-    id: string,
-    parentId?: string,
-  ): ManifestEntry => ({
+  const entry = (id: string, parentId?: string): ManifestEntry => ({
     id,
     ...(parentId === undefined ? {} : { parentId }),
     revision: 'v1',
@@ -94,7 +87,9 @@ test('disabling a parent drains its subtree and preserves an unrelated entry', a
       name: id,
       async setup(context) {
         trace.push(`${id}:activate`)
-        await context.effect(() => () => { trace.push(`${id}:dispose`) })
+        await context.effect(() => () => {
+          trace.push(`${id}:dispose`)
+        })
       },
     }),
   })
@@ -145,7 +140,9 @@ test('successful provider reload restarts only its dependency subgraph', async (
       requires: [database],
       async setup(context) {
         repositoryActivations.push(context.get(database).id)
-        await context.effect(() => () => { repositoryCleanups += 1 })
+        await context.effect(() => () => {
+          repositoryCleanups += 1
+        })
       },
     }),
   }
@@ -156,7 +153,9 @@ test('successful provider reload restarts only its dependency subgraph', async (
       name: 'unrelated',
       async setup(context) {
         unrelatedActivations += 1
-        await context.effect(() => () => { unrelatedCleanups += 1 })
+        await context.effect(() => () => {
+          unrelatedCleanups += 1
+        })
       },
     }),
   }
@@ -191,28 +190,34 @@ test('module load failure leaves the last-known-good graph untouched', async () 
   const host = new DeclarativeHost()
   let cleanups = 0
 
-  await host.reconcile([{
-    id: 'model',
-    revision: 'v1',
-    load: () => ({
-      name: 'model-v1',
-      provides: [[model, { id: 'v1' }]],
-      async setup(context) {
-        await context.effect(() => () => { cleanups += 1 })
-      },
-    }),
-  }])
+  await host.reconcile([
+    {
+      id: 'model',
+      revision: 'v1',
+      load: () => ({
+        name: 'model-v1',
+        provides: [[model, { id: 'v1' }]],
+        async setup(context) {
+          await context.effect(() => () => {
+            cleanups += 1
+          })
+        },
+      }),
+    },
+  ])
   const oldHandle = host.entry('model')!
   const oldFiber = oldHandle.fiber
 
   await assert.rejects(
-    host.reconcile([{
-      id: 'model',
-      revision: 'v2',
-      load() {
-        throw new SyntaxError('invalid module syntax')
+    host.reconcile([
+      {
+        id: 'model',
+        revision: 'v2',
+        load() {
+          throw new SyntaxError('invalid module syntax')
+        },
       },
-    }]),
+    ]),
     /invalid module syntax/,
   )
 
@@ -237,7 +242,9 @@ test('activation failure restores the last-known-good provider and consumers', a
       provides: [[database, { id: 'v1' }]],
       async setup(context) {
         trace.push('database-v1:activate')
-        await context.effect(() => () => { trace.push('database-v1:dispose') })
+        await context.effect(() => () => {
+          trace.push('database-v1:dispose')
+        })
       },
     }),
   }
@@ -250,7 +257,9 @@ test('activation failure restores the last-known-good provider and consumers', a
       async setup(context) {
         const id = context.get(database).id
         trace.push(`repository:${id}:activate`)
-        await context.effect(() => () => { trace.push(`repository:${id}:dispose`) })
+        await context.effect(() => () => {
+          trace.push(`repository:${id}:dispose`)
+        })
       },
     }),
   }
@@ -265,16 +274,15 @@ test('activation failure restores the last-known-good provider and consumers', a
       provides: [[database, { id: 'v2' }]],
       async setup(context) {
         trace.push('database-v2:activate')
-        await context.effect(() => () => { trace.push('database-v2:rollback') })
+        await context.effect(() => () => {
+          trace.push('database-v2:rollback')
+        })
         throw new Error('database-v2 activation failed')
       },
     }),
   }
 
-  await assert.rejects(
-    host.reconcile([databaseV2, repository]),
-    /database-v2 activation failed/,
-  )
+  await assert.rejects(host.reconcile([databaseV2, repository]), /database-v2 activation failed/)
 
   assert.equal(host.entry('database')?.revision, 'v1')
   assert.equal(host.entry('database')?.fiber?.state, 'active')
@@ -312,18 +320,24 @@ test('failed restoration retains both the change and rollback errors', async () 
   }
   await host.reconcile([oldEntry])
 
-  const error = await host.reconcile([{
-    id: 'service',
-    revision: 'v2',
-    load: () => ({
-      name: 'service-v2',
-      provides: [[serviceKey, {}]],
-      setup() { throw new Error('activating v2 failed') },
-    }),
-  }]).then(
-    () => undefined,
-    (reason: unknown) => reason,
-  )
+  const error = await host
+    .reconcile([
+      {
+        id: 'service',
+        revision: 'v2',
+        load: () => ({
+          name: 'service-v2',
+          provides: [[serviceKey, {}]],
+          setup() {
+            throw new Error('activating v2 failed')
+          },
+        }),
+      },
+    ])
+    .then(
+      () => undefined,
+      (reason: unknown) => reason,
+    )
 
   assert.ok(error instanceof AggregateError)
   assert.ok(errorMessages(error).includes('activating v2 failed'))
@@ -357,7 +371,9 @@ test('isolated realm reload leaves the sibling realm unchanged', async () => {
       name: 'consumer-a',
       realm: realmA,
       requires: [model],
-      setup(context) { seenA.push(context.get(model).id) },
+      setup(context) {
+        seenA.push(context.get(model).id)
+      },
     }),
   }
   const consumerB: ManifestEntry = {
@@ -367,24 +383,16 @@ test('isolated realm reload leaves the sibling realm unchanged', async () => {
       name: 'consumer-b',
       realm: realmB,
       requires: [model],
-      setup(context) { seenB.push(context.get(model).id) },
+      setup(context) {
+        seenB.push(context.get(model).id)
+      },
     }),
   }
 
-  await host.reconcile([
-    modelEntry('a1', realmA),
-    modelEntry('b1', realmB),
-    consumerA,
-    consumerB,
-  ])
+  await host.reconcile([modelEntry('a1', realmA), modelEntry('b1', realmB), consumerA, consumerB])
   const siblingFiber = host.entry('consumer-b')?.fiber
 
-  await host.reconcile([
-    modelEntry('a2', realmA),
-    modelEntry('b1', realmB),
-    consumerA,
-    consumerB,
-  ])
+  await host.reconcile([modelEntry('a2', realmA), modelEntry('b1', realmB), consumerA, consumerB])
 
   assert.deepEqual(seenA, ['a1', 'a2'])
   assert.deepEqual(seenB, ['b1'])
@@ -403,9 +411,7 @@ test('manifest validation rejects duplicate, missing-parent, and cyclic entries'
     /duplicate entry "same"/,
   )
   await assert.rejects(
-    host.reconcile([
-      { id: 'child', parentId: 'missing', revision: '1', load },
-    ]),
+    host.reconcile([{ id: 'child', parentId: 'missing', revision: '1', load }]),
     /missing parent "missing"/,
   )
   await assert.rejects(
@@ -423,27 +429,31 @@ test('queued manifests finish at the newest desired configuration', async () => 
   const firstLoad = deferred()
   const host = new DeclarativeHost()
 
-  const first = host.reconcile([{
-    id: 'version',
-    revision: 'v1',
-    async load() {
-      await firstLoad.promise
-      return {
-        name: 'version-v1',
-        provides: [[version, 'v1']],
-        setup() {},
-      }
+  const first = host.reconcile([
+    {
+      id: 'version',
+      revision: 'v1',
+      async load() {
+        await firstLoad.promise
+        return {
+          name: 'version-v1',
+          provides: [[version, 'v1']],
+          setup() {},
+        }
+      },
     },
-  }])
-  const second = host.reconcile([{
-    id: 'version',
-    revision: 'v2',
-    load: () => ({
-      name: 'version-v2',
-      provides: [[version, 'v2']],
-      setup() {},
-    }),
-  }])
+  ])
+  const second = host.reconcile([
+    {
+      id: 'version',
+      revision: 'v2',
+      load: () => ({
+        name: 'version-v2',
+        provides: [[version, 'v2']],
+        setup() {},
+      }),
+    },
+  ])
 
   firstLoad.resolve()
   await Promise.all([first, second])

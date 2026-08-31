@@ -1,8 +1,4 @@
-import {
-  type Component,
-  type Fiber,
-  Runtime,
-} from '../../004-context-isolation/src/runtime.ts'
+import { type Component, type Fiber, Runtime } from '../../004-context-isolation/src/runtime.ts'
 
 export interface ManifestEntry {
   readonly id: string
@@ -104,8 +100,9 @@ export class DeclarativeHost {
     const added = [...desiredActive]
       .filter((id) => !oldActive.has(id))
       .sort((left, right) => desired.get(left)!.depth - desired.get(right)!.depth)
-    const preserved = [...desiredActive]
-      .filter((id) => oldActive.get(id)?.revision === desired.get(id)?.revision)
+    const preserved = [...desiredActive].filter(
+      (id) => oldActive.get(id)?.revision === desired.get(id)?.revision,
+    )
 
     const components = await this.#loadChanged(desired, desiredActive)
     const candidate = new Map(oldActive)
@@ -126,9 +123,7 @@ export class DeclarativeHost {
         const definition = desired.get(id)!
         const component = components.get(id)!
         const old = candidate.get(id)
-        const fiber = old
-          ? this.runtime.replace(old.fiber, component)
-          : this.runtime.add(component)
+        const fiber = old ? this.runtime.replace(old.fiber, component) : this.runtime.add(component)
         if (old) retiredOld.add(id)
         newFibers.add(fiber)
         candidate.set(id, { component, fiber, revision: definition.revision })
@@ -210,15 +205,17 @@ export class DeclarativeHost {
     desiredActive: Set<string>,
   ): Promise<Map<string, Component>> {
     const components = new Map<string, Component>()
-    await Promise.all([...desiredActive].map(async (id) => {
-      const definition = desired.get(id)!
-      const handle = this.#handles.get(id)
-      if (handle?.component && handle.revision === definition.revision) {
-        components.set(id, handle.component)
-        return
-      }
-      components.set(id, await definition.load())
-    }))
+    await Promise.all(
+      [...desiredActive].map(async (id) => {
+        const definition = desired.get(id)!
+        const handle = this.#handles.get(id)
+        if (handle?.component && handle.revision === definition.revision) {
+          components.set(id, handle.component)
+          return
+        }
+        components.set(id, await definition.load())
+      }),
+    )
     return components
   }
 

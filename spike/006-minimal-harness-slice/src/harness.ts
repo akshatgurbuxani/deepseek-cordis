@@ -21,36 +21,36 @@ interface EventBase {
 }
 
 export type SessionEvent =
-  | EventBase & { readonly type: 'turn/start' }
-  | EventBase & { readonly type: 'user/message'; readonly content: string }
-  | EventBase & { readonly type: 'step/start'; readonly step: number }
-  | EventBase & {
-    readonly type: 'assistant/tool-calls'
-    readonly calls: readonly ToolCall[]
-  }
-  | EventBase & { readonly type: 'tool/call'; readonly call: ToolCall }
-  | EventBase & {
-    readonly type: 'tool/result'
-    readonly callId: string
-    readonly name: string
-    readonly ok: true
-    readonly output: JsonValue
-  }
-  | EventBase & {
-    readonly type: 'tool/result'
-    readonly callId: string
-    readonly name: string
-    readonly ok: false
-    readonly error: string
-  }
-  | EventBase & { readonly type: 'assistant/message'; readonly content: string }
-  | EventBase & {
-    readonly type: 'step/end'
-    readonly step: number
-    readonly outcome: 'tool_calls' | 'completed' | 'failed'
-  }
-  | EventBase & { readonly type: 'turn/error'; readonly error: string }
-  | EventBase & { readonly type: 'turn/end'; readonly status: 'completed' | 'failed' }
+  | (EventBase & { readonly type: 'turn/start' })
+  | (EventBase & { readonly type: 'user/message'; readonly content: string })
+  | (EventBase & { readonly type: 'step/start'; readonly step: number })
+  | (EventBase & {
+      readonly type: 'assistant/tool-calls'
+      readonly calls: readonly ToolCall[]
+    })
+  | (EventBase & { readonly type: 'tool/call'; readonly call: ToolCall })
+  | (EventBase & {
+      readonly type: 'tool/result'
+      readonly callId: string
+      readonly name: string
+      readonly ok: true
+      readonly output: JsonValue
+    })
+  | (EventBase & {
+      readonly type: 'tool/result'
+      readonly callId: string
+      readonly name: string
+      readonly ok: false
+      readonly error: string
+    })
+  | (EventBase & { readonly type: 'assistant/message'; readonly content: string })
+  | (EventBase & {
+      readonly type: 'step/end'
+      readonly step: number
+      readonly outcome: 'tool_calls' | 'completed' | 'failed'
+    })
+  | (EventBase & { readonly type: 'turn/error'; readonly error: string })
+  | (EventBase & { readonly type: 'turn/end'; readonly status: 'completed' | 'failed' })
 
 export type SessionEventInput = SessionEvent extends infer Event
   ? Event extends { sequence: number }
@@ -63,19 +63,19 @@ export type ModelMessage =
   | { readonly role: 'assistant'; readonly content: string }
   | { readonly role: 'assistant'; readonly toolCalls: readonly ToolCall[] }
   | {
-    readonly role: 'tool'
-    readonly callId: string
-    readonly name: string
-    readonly ok: true
-    readonly output: JsonValue
-  }
+      readonly role: 'tool'
+      readonly callId: string
+      readonly name: string
+      readonly ok: true
+      readonly output: JsonValue
+    }
   | {
-    readonly role: 'tool'
-    readonly callId: string
-    readonly name: string
-    readonly ok: false
-    readonly error: string
-  }
+      readonly role: 'tool'
+      readonly callId: string
+      readonly name: string
+      readonly ok: false
+      readonly error: string
+    }
 
 function deepFreeze<T>(value: T): T {
   if (value !== null && typeof value === 'object' && !Object.isFrozen(value)) {
@@ -118,20 +118,24 @@ export class Session {
           return [{ role: 'assistant', toolCalls: event.calls }]
         case 'tool/result':
           return event.ok
-            ? [{
-                role: 'tool',
-                callId: event.callId,
-                name: event.name,
-                ok: true,
-                output: event.output,
-              }]
-            : [{
-                role: 'tool',
-                callId: event.callId,
-                name: event.name,
-                ok: false,
-                error: event.error,
-              }]
+            ? [
+                {
+                  role: 'tool',
+                  callId: event.callId,
+                  name: event.name,
+                  ok: true,
+                  output: event.output,
+                },
+              ]
+            : [
+                {
+                  role: 'tool',
+                  callId: event.callId,
+                  name: event.name,
+                  ok: false,
+                  error: event.error,
+                },
+              ]
         default:
           return []
       }
@@ -309,13 +313,15 @@ export class AgentLoop {
         session.append({ type: 'step/start', turnId, step })
         let response: ModelResponse
         try {
-          response = await model.complete(snapshot({
-            sessionId: session.id,
-            turnId,
-            step,
-            messages: session.projectMessages(),
-            tools: tools.schemas(),
-          }))
+          response = await model.complete(
+            snapshot({
+              sessionId: session.id,
+              turnId,
+              step,
+              messages: session.projectMessages(),
+              tools: tools.schemas(),
+            }),
+          )
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
           session.append({ type: 'step/end', turnId, step, outcome: 'failed' })
@@ -335,23 +341,25 @@ export class AgentLoop {
         for (const call of response.calls) {
           session.append({ type: 'tool/call', turnId, call })
           const execution = await tools.execute(call.name, call.arguments)
-          session.append(execution.ok
-            ? {
-                type: 'tool/result',
-                turnId,
-                callId: call.id,
-                name: call.name,
-                ok: true,
-                output: execution.output,
-              }
-            : {
-                type: 'tool/result',
-                turnId,
-                callId: call.id,
-                name: call.name,
-                ok: false,
-                error: execution.error,
-              })
+          session.append(
+            execution.ok
+              ? {
+                  type: 'tool/result',
+                  turnId,
+                  callId: call.id,
+                  name: call.name,
+                  ok: true,
+                  output: execution.output,
+                }
+              : {
+                  type: 'tool/result',
+                  turnId,
+                  callId: call.id,
+                  name: call.name,
+                  ok: false,
+                  error: execution.error,
+                },
+          )
         }
         session.append({ type: 'step/end', turnId, step, outcome: 'tool_calls' })
       }
@@ -418,11 +426,13 @@ export function agentLoopPlugin(name = 'agent-loop'): Component {
     requires: [sessionsService, toolsService, modelService],
     provides: [[agentLoopService, loop]],
     setup(context) {
-      return context.effect(() => loop.connect(
-        context.get(sessionsService),
-        context.get(toolsService),
-        context.get(modelService),
-      ))
+      return context.effect(() =>
+        loop.connect(
+          context.get(sessionsService),
+          context.get(toolsService),
+          context.get(modelService),
+        ),
+      )
     },
   }
 }

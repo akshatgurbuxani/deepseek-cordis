@@ -60,9 +60,7 @@ function toWireMessage(message: ModelMessage): WireMessage {
   return {
     role: 'tool',
     tool_call_id: message.callId,
-    content: message.ok
-      ? JSON.stringify(message.output)
-      : JSON.stringify({ error: message.error }),
+    content: message.ok ? JSON.stringify(message.output) : JSON.stringify({ error: message.error }),
   }
 }
 
@@ -90,7 +88,9 @@ function readToolCall(value: unknown): ToolCall {
   try {
     argumentsValue = JSON.parse(fn.arguments)
   } catch {
-    throw new Error(`OpenRouter returned invalid JSON arguments for tool ${JSON.stringify(fn.name)}`)
+    throw new Error(
+      `OpenRouter returned invalid JSON arguments for tool ${JSON.stringify(fn.name)}`,
+    )
   }
   if (!isJsonValue(argumentsValue)) {
     throw new Error(`OpenRouter returned non-JSON arguments for tool ${JSON.stringify(fn.name)}`)
@@ -145,11 +145,13 @@ export class OpenRouterModelAdapter implements ModelAdapter {
       model: this.#model,
       messages: request.messages.map(toWireMessage),
       session_id: request.sessionId,
-      ...(wireTools.length === 0 ? {} : {
-        tools: wireTools,
-        tool_choice: 'auto' as const,
-        parallel_tool_calls: false,
-      }),
+      ...(wireTools.length === 0
+        ? {}
+        : {
+            tools: wireTools,
+            tool_choice: 'auto' as const,
+            parallel_tool_calls: false,
+          }),
     }
     const response = await this.#fetch(this.#endpoint, {
       method: 'POST',
@@ -158,18 +160,17 @@ export class OpenRouterModelAdapter implements ModelAdapter {
     })
     if (!response.ok) {
       const detail = (await response.text()).slice(0, 1_000)
-      if (
-        response.status === 404 &&
-        /guardrail restrictions and data policy/i.test(detail)
-      ) {
+      if (response.status === 404 && /guardrail restrictions and data policy/i.test(detail)) {
         throw new Error(
           `OpenRouter could not route model ${JSON.stringify(this.#model)} because no endpoint satisfies ` +
-          'the account/API-key privacy and guardrail policy. Review Settings > Privacy: ZDR for ' +
-          'non-frontier models, provider data-collection/training policy, and model/provider allowlists. ' +
-          `Original response: ${detail}`,
+            'the account/API-key privacy and guardrail policy. Review Settings > Privacy: ZDR for ' +
+            'non-frontier models, provider data-collection/training policy, and model/provider allowlists. ' +
+            `Original response: ${detail}`,
         )
       }
-      throw new Error(`OpenRouter request failed (${response.status}): ${detail || response.statusText}`)
+      throw new Error(
+        `OpenRouter request failed (${response.status}): ${detail || response.statusText}`,
+      )
     }
 
     const payload: unknown = await response.json()
