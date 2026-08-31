@@ -3,8 +3,9 @@
 First runnable production composition for the harness.
 
 The CLI builds a complete `AppBoot` manifest containing a traced session store,
-tool registry, harmless calculator registration, fail-closed approval and
-sandbox providers, replay or OpenRouter model, and stable agent loop. It runs
+tool registry, harmless calculator, consequential workspace-file registration,
+channel/headless approval, concrete workspace sandbox, replay or OpenRouter
+model, and stable agent loop. It runs
 one turn, prints the final answer, and always reconciles to
 an empty manifest in `finally` so every fiber, registration, service, and
 connection is withdrawn before exit.
@@ -45,6 +46,20 @@ The interactive channel also owns the one-shot approval prompt. Yes grants the
 exact request once, any other answer rejects it, EOF cancels it, and prompt
 failure is unavailable. The provider-neutral approval service never reads a
 terminal itself, so a future UI can supply the same closed answer contract.
+The prompt includes the immutable exact tool arguments before asking for a
+one-shot grant.
+
+`create_workspace_file` creates one new UTF-8 file without overwriting. Its
+root defaults to the launch working directory and can be selected explicitly:
+
+```sh
+HARNESS_WORKSPACE_ROOT=/absolute/workspace npm run cli -- --interactive
+```
+
+The provider rejects absolute/traversing paths, symlinked parents, missing
+parents, existing targets, and content above 1 MiB. It reports `partial`
+enforcement honestly: publication is atomic and provider-owned, but portable
+Node path APIs cannot eliminate a hostile concurrent parent-swap race.
 
 The process entry point streams assistant text to stdout and passes one
 turn-scoped signal through the loop. `Ctrl-C` cooperatively aborts model or tool

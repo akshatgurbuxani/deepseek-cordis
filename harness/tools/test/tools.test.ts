@@ -236,6 +236,7 @@ test('approval and full sandbox preflight precede provider-owned execution', asy
       assert.deepEqual({ ...request, signal: undefined }, {
         ...callContext,
         toolName: 'write-file',
+        arguments: { path: 'note.txt', content: { value: 1 } },
         risk: 'filesystem',
         reason: 'write the requested workspace file',
         signal: undefined,

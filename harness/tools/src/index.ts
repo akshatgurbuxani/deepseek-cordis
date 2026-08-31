@@ -167,6 +167,7 @@ export class InMemoryToolRegistry implements ToolRegistry {
       const approvalRequest = {
         ...context,
         toolName: definition.name,
+        arguments: isolatedArguments,
         risk: definition.safety.risk,
         reason: definition.safety.approvalReason,
         ...(options.signal ? { signal: options.signal } : {}),

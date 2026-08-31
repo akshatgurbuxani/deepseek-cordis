@@ -41,6 +41,7 @@ context-budget      ──> agent-loop + compaction + token-meter
 model               ──> protocol
 approval            ──> protocol
 sandbox             ──> protocol
+sandbox-workspace   ──> sandbox + tools + protocol
 commands            ──> session + protocol
 command-session     ──> commands + compaction + session
 tools               ──> protocol + approval + sandbox
@@ -903,13 +904,60 @@ Implemented direct multi-turn interaction, four built-in commands, durable V6
 command events and crash repair, source-event provenance, channel-owned
 approval, reversible command providers, and deterministic process-level tests.
 
+### Feature 14 — workspace file sandbox
+
+Feature 14 adds the first real consequential effect: `create_workspace_file`
+is a handler-free tool whose concrete provider alone creates one UTF-8 file
+under a configured workspace. The operation is relative-path-only,
+no-overwrite, size-bounded, parent-revalidated, and published atomically from a
+same-directory temporary inode. Traversal, missing/non-directory parents,
+symbolic-link parents, invalid arguments, cancellation before publication, and
+provider/profile mismatches fail closed.
+
+The provider reports `partial`, not `full`. Node's portable filesystem API does
+not offer an `openat`-style directory capability, so a separate hostile host
+process can still race a validated parent path. This limitation is explicit in
+the provider contract and documentation. The model never supplies executable
+code and the tool definition has no local handler, so this remains a genuine
+host-mediated effect boundary rather than an in-process isolation claim.
+
+Approval now includes the immutable exact tool arguments. The interactive CLI
+therefore displays the path and content before a one-shot grant; headless mode
+still fails closed. Durable `tool/call`, approval, sandbox-prepared, and
+tool-result events preserve the entire decision and outcome.
+
+#### Upstream motivation and adaptation boundary
+
+This feature was checked on August 31, 2026 against the Cordis paper at
+[`0d43a6f`](https://github.com/cordiverse/paper/commit/0d43a6f18004a7b5bf9662c31aa08c3712d232ec),
+upstream Cordis at
+[`b912d39`](https://github.com/cordiverse/cordis/commit/b912d3997ab8e819f8b112edc0b8ee0dfd77132d),
+and DeepSeek Harness at
+[`0a53fb5`](https://github.com/deepseek-ai/deepseek-harness/commit/0a53fb55bea101816fa226bb964ae2bed71c343b),
+especially its
+[`filesystem capability`](https://github.com/deepseek-ai/deepseek-harness/blob/0a53fb55bea101816fa226bb964ae2bed71c343b/docs/subsystems/filesystem.md)
+and
+[`sandbox contract`](https://github.com/deepseek-ai/deepseek-harness/blob/0a53fb55bea101816fa226bb964ae2bed71c343b/docs/subsystems/sandbox.md).
+DeepSeek separates provider primitives, policy, and model-facing tools, and
+enforces declarative filesystem effects at that capability boundary rather
+than pretending arbitrary in-process code is sandboxed.
+
+This smaller harness adapts that principle to the existing exact-call lease.
+It deliberately implements only create, not DeepSeek's full read/write/edit,
+observation policy, sandbox modes, error taxonomy, or alternate backends.
+
+#### PR 14 result
+
+Implemented the concrete provider, consequential schema, argument-bearing
+approval, CLI composition, atomic no-overwrite publication, security boundary
+tests, durable audit integration, and explicit enforcement limitations.
+
 ### Later milestones
 
-Feature 14 should add the first useful consequential tool through a real
-platform-backed sandbox provider, starting with a narrowly scoped workspace
-filesystem operation. Its acceptance bar is honest `full` or `partial`
-enforcement, path-boundary tests, cancellation-safe lease cleanup, and an
-interactive allow/reject audit—not an in-process simulation of isolation.
+Feature 15 should promote this proof into a provider-neutral filesystem
+capability family with bounded read/list/stat, guarded write/edit, stable error
+codes, and observation/version policy. Feature 16 can then add scoped system
+prompt and agent context over those capabilities.
 
 Cross-process writer coordination, parallel tools, subagents, attachments,
 scheduling, and UI remain outside the first production milestone.

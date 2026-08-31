@@ -18,7 +18,12 @@ import { OpenRouterModelAdapter } from '@deepseek-cordis/model-openrouter'
 import type { JsonValue, RunResult } from '@deepseek-cordis/protocol'
 import { InMemorySessionStore, type SessionStore } from '@deepseek-cordis/session'
 import { FileSessionStore } from '@deepseek-cordis/session-file'
+import type { ToolSandbox } from '@deepseek-cordis/sandbox'
 import { TokenMeter } from '@deepseek-cordis/token-meter'
+import {
+  createWorkspaceFileTool,
+  WorkspaceFileSandbox,
+} from '@deepseek-cordis/sandbox-workspace'
 import {
   createAgentLoopPlugin,
   createApprovalServicePlugin,
@@ -162,7 +167,8 @@ function manifestFor(
   compactor: SessionCompactor,
   meter: TokenMeter,
   policy: ContextBudgetPolicy,
-  approval: ApprovalService = new UnavailableApprovalService(),
+  approval: ApprovalService,
+  sandbox: ToolSandbox,
 ): readonly ManifestEntry[] {
   const tools = createToolRegistryPlugin()
   const commands = createCommandRegistryPlugin(new InMemoryCommandRegistry())
@@ -187,11 +193,13 @@ function manifestFor(
       safety: { risk: 'none' },
       execute: calculator,
     }) },
+    { id: 'create-workspace-file', revision: 'v1', load: () =>
+      createToolRegistrationPlugin(createWorkspaceFileTool()) },
     { id: 'sessions', revision: 'v1', load: () => sessions.plugin },
     { id: 'tools', revision: 'v1', load: () => tools.plugin },
     { id: 'model', revision: 'v1', load: () => modelPlugin.plugin },
     { id: 'approval', revision: 'v1', load: () => createApprovalServicePlugin(approval).plugin },
-    { id: 'sandbox', revision: 'v1', load: () => createSandboxPlugin().plugin },
+    { id: 'sandbox', revision: 'v1', load: () => createSandboxPlugin(sandbox).plugin },
     { id: 'compaction', revision: 'v1', load: () => compaction.plugin },
     { id: 'token-meter', revision: 'v1', load: () => tokenMeter.plugin },
     { id: 'commands', revision: 'v1', load: () => commands.plugin },
@@ -236,6 +244,9 @@ async function mountCliRuntime(
   const boot = new AppBoot()
   const stopLifecycleTrace = traceRuntimeLifecycle(boot.context, trace)
   try {
+    const sandbox = new WorkspaceFileSandbox({
+      root: env.HARNESS_WORKSPACE_ROOT ?? process.cwd(),
+    })
     const sessionStore: SessionStore = env.HARNESS_SESSION_DIR
       ? new FileSessionStore({ directory: env.HARNESS_SESSION_DIR })
       : new InMemorySessionStore()
@@ -254,7 +265,15 @@ async function mountCliRuntime(
       sessionStore: env.HARNESS_SESSION_DIR ? 'file' : 'memory',
       resumed: existingSession !== undefined,
     })
-    await boot.reconcile(manifestFor(sessions, model, compactor, meter, policy, approval))
+    await boot.reconcile(manifestFor(
+      sessions,
+      model,
+      compactor,
+      meter,
+      policy,
+      approval,
+      sandbox,
+    ))
     const session = existingSession ?? boot.context.sessions.create(sessionId)
     return {
       boot,
@@ -343,7 +362,8 @@ export async function runInteractiveCli(
     : openRouterModel(configuration, env, options, trace, contextWindow)
   const promptApproval: ApprovalPrompt = options.approve ?? (async (request) => {
     const answer = await options.readLine(
-      `[approval] ${request.toolName} (${request.risk}): ${request.reason} [y/N] `,
+      `[approval] ${request.toolName} (${request.risk}): ${request.reason}\n`
+        + `Arguments: ${JSON.stringify(request.arguments)}\nAllow once? [y/N] `,
     )
     if (answer === undefined) return undefined
     return /^(?:y|yes)$/i.test(answer.trim())

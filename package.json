@@ -8,6 +8,7 @@
     "harness/model",
     "harness/approval",
     "harness/sandbox",
+    "harness/sandbox-workspace",
     "harness/commands",
     "harness/command-session",
     "harness/tools",

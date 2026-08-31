@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -106,6 +106,7 @@ test('interactive replay runs multiple turns and direct control commands', async
 test('interactive approval maps channel answers and fails closed', async () => {
   const request = {
     sessionId: 'session', turnId: 'turn', callId: 'call', toolName: 'write',
+    arguments: { path: 'note.txt' },
     risk: 'filesystem' as const, reason: 'write a file',
   }
   let presented: unknown
@@ -115,6 +116,7 @@ test('interactive approval maps channel answers and fails closed', async () => {
   }).request(request), 'allowed-once')
   assert.deepEqual(presented, request)
   assert.equal(Object.isFrozen(presented), true)
+  assert.equal(Object.isFrozen((presented as { arguments: unknown }).arguments), true)
   assert.equal(
     await new InteractiveApprovalService(() => false).request(request),
     'rejected',
@@ -427,6 +429,90 @@ test('live-mode composition maps a tool round trip and never traces its API key'
   ])
   assert.ok(records.some(({ label }) => label === 'openrouter/diagnostics'))
   assert.equal(JSON.stringify(records).includes('super-secret-key'), false)
+})
+
+test('interactive live mode approves and audits a confined workspace file creation', async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'deepseek-cordis-cli-workspace-'))
+  const sessionDirectory = mkdtempSync(join(tmpdir(), 'deepseek-cordis-cli-workspace-session-'))
+  t.after(() => { rmSync(directory, { recursive: true, force: true }) })
+  t.after(() => { rmSync(sessionDirectory, { recursive: true, force: true }) })
+  let completion = 0
+  const fetch = (async (input: string | URL | Request) => {
+    if (String(input).endsWith('/api/v1/models')) {
+      return new Response(JSON.stringify({
+        data: [{ id: 'workspace/model', context_length: 64_000 }],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    }
+    completion += 1
+    return completion === 1
+      ? sseResponse([{
+          model: 'workspace/model',
+          choices: [{ delta: { tool_calls: [{
+            index: 0,
+            id: 'create-call',
+            type: 'function',
+            function: {
+              name: 'create_workspace_file',
+              arguments: '{"path":"created.txt","content":"from the agent\\n"}',
+            },
+          }] } }],
+        }])
+      : sseResponse([{
+          model: 'workspace/model',
+          choices: [{ delta: { content: 'Created the workspace file.' } }],
+        }])
+  }) as typeof globalThis.fetch
+  const lines = ['create the requested file', '/exit']
+  const output: string[] = []
+  const approvalPrompts: string[] = []
+
+  const result = await runInteractiveCli({
+    argv: ['--interactive'],
+    env: {
+      OPENROUTER_API_KEY: 'workspace-secret',
+      OPENROUTER_MODEL: 'workspace/model',
+      HARNESS_WORKSPACE_ROOT: directory,
+      HARNESS_SESSION_DIR: sessionDirectory,
+    },
+    fetch,
+    trace: () => undefined,
+    output: (content) => { output.push(content) },
+    readLine: (prompt) => {
+      if (prompt.startsWith('[approval]')) {
+        approvalPrompts.push(prompt)
+        return 'yes'
+      }
+      return lines.shift()
+    },
+    sessionId: 'workspace-cli',
+  })
+
+  assert.deepEqual(result, { sessionId: 'workspace-cli', turns: 1, commands: 1 })
+  assert.equal(readFileSync(join(directory, 'created.txt'), 'utf8'), 'from the agent\n')
+  assert.match(output.join('\n'), /Created the workspace file/)
+  assert.equal(approvalPrompts.length, 1)
+  assert.match(approvalPrompts[0]!, /create_workspace_file \(filesystem\)/)
+  assert.match(approvalPrompts[0]!, /"path":"created\.txt"/)
+  assert.match(approvalPrompts[0]!, /"content":"from the agent\\n"/)
+  const persisted = new FileSessionStore({ directory: sessionDirectory }).get('workspace-cli')
+  assert.ok(persisted)
+  assert.deepEqual(
+    persisted.events.find((event) => event.type === 'sandbox/prepared'),
+    {
+      type: 'sandbox/prepared', turnId: 'workspace-cli:turn:1', sequence: 8,
+      callId: 'create-call', name: 'create_workspace_file',
+      profile: 'workspace-create-file', provider: 'workspace-file/node-path-v1',
+      enforcement: 'partial',
+    },
+  )
+  assert.deepEqual(
+    persisted.events.find((event) => event.type === 'tool/result'),
+    {
+      type: 'tool/result', turnId: 'workspace-cli:turn:1', sequence: 9,
+      callId: 'create-call', name: 'create_workspace_file', ok: true,
+      output: { path: 'created.txt', bytesWritten: 15, created: true },
+    },
+  )
 })
 
 test('CLI cancellation records an aborted turn and drains every mounted fiber', async () => {

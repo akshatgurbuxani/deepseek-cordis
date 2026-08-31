@@ -1,10 +1,11 @@
-import type { ApprovalOutcome, ToolRisk } from '@deepseek-cordis/protocol'
+import type { ApprovalOutcome, JsonValue, ToolRisk } from '@deepseek-cordis/protocol'
 
 export interface ApprovalRequest {
   readonly sessionId: string
   readonly turnId: string
   readonly callId: string
   readonly toolName: string
+  readonly arguments: JsonValue
   readonly risk: ToolRisk
   readonly reason: string
   readonly signal?: AbortSignal

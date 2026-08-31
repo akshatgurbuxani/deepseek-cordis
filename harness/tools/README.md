@@ -13,7 +13,9 @@ handler. A filesystem, shell, browser, or external tool has no local handler;
 it declares a one-shot approval reason, sandbox profile, and required
 enforcement strength. The registry snapshots that declaration at registration,
 then requires call identity, approval, sandbox, and a synchronous durable audit
-sink before consequential execution. Only `allowed-once` proceeds. The sandbox
+sink before consequential execution. Approval receives an immutable snapshot of
+the exact arguments so a channel never grants an unseen effect. Only
+`allowed-once` proceeds. The sandbox
 provider owns the body through a one-call lease, and the registry always
 disposes the lease. Missing, throwing, malformed, partial, or unauditable
 providers fail closed.

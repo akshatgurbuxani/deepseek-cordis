@@ -5,6 +5,7 @@ import type {
 import type { ModelAdapter, ModelStreamOptions } from '@deepseek-cordis/model'
 import {
   type ModelRequest,
+  type JsonValue,
   snapshot,
   type ModelStreamChunk,
 } from '@deepseek-cordis/protocol'
@@ -14,6 +15,7 @@ export interface ApprovalPresentation {
   readonly turnId: string
   readonly callId: string
   readonly toolName: string
+  readonly arguments: JsonValue
   readonly risk: ApprovalRequest['risk']
   readonly reason: string
 }
@@ -36,6 +38,7 @@ export class InteractiveApprovalService implements ApprovalService {
       turnId: request.turnId,
       callId: request.callId,
       toolName: request.toolName,
+      arguments: request.arguments,
       risk: request.risk,
       reason: request.reason,
     })

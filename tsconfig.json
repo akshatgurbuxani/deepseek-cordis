@@ -6,6 +6,7 @@
     { "path": "./harness/model" },
     { "path": "./harness/approval" },
     { "path": "./harness/sandbox" },
+    { "path": "./harness/sandbox-workspace" },
     { "path": "./harness/commands" },
     { "path": "./harness/command-session" },
     { "path": "./harness/tools" },
