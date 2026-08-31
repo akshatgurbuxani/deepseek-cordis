@@ -19,6 +19,7 @@
     { "path": "../session-file" },
     { "path": "../compaction" },
     { "path": "../context-budget" },
+    { "path": "../filesystem-workspace" },
     { "path": "../token-meter" },
     { "path": "../model" },
     { "path": "../model-openrouter" },

@@ -515,6 +515,75 @@ test('interactive live mode approves and audits a confined workspace file creati
   )
 })
 
+test('interactive live mode reads before an exact guarded workspace edit', async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'deepseek-cordis-cli-edit-'))
+  t.after(() => { rmSync(directory, { recursive: true, force: true }) })
+  writeFileSync(join(directory, 'notes.txt'), 'status: old\n')
+  let completion = 0
+  const fetch = (async (input: string | URL | Request) => {
+    if (String(input).endsWith('/api/v1/models')) {
+      return new Response(JSON.stringify({
+        data: [{ id: 'workspace/model', context_length: 64_000 }],
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    }
+    completion += 1
+    if (completion === 1) {
+      return sseResponse([{
+        model: 'workspace/model',
+        choices: [{ delta: { tool_calls: [{
+          index: 0, id: 'read-call', type: 'function',
+          function: { name: 'read_workspace_file', arguments: '{"path":"notes.txt"}' },
+        }] } }],
+      }])
+    }
+    if (completion === 2) {
+      return sseResponse([{
+        model: 'workspace/model',
+        choices: [{ delta: { tool_calls: [{
+          index: 0, id: 'edit-call', type: 'function',
+          function: {
+            name: 'edit_workspace_file',
+            arguments: '{"path":"notes.txt","oldText":"old","newText":"complete"}',
+          },
+        }] } }],
+      }])
+    }
+    return sseResponse([{
+      model: 'workspace/model',
+      choices: [{ delta: { content: 'Updated the observed file.' } }],
+    }])
+  }) as typeof globalThis.fetch
+  const lines = ['update the status', '/exit']
+  const approvals: string[] = []
+
+  const result = await runInteractiveCli({
+    argv: ['--interactive'],
+    env: {
+      OPENROUTER_API_KEY: 'workspace-secret',
+      OPENROUTER_MODEL: 'workspace/model',
+      HARNESS_WORKSPACE_ROOT: directory,
+    },
+    fetch,
+    trace: () => undefined,
+    output: () => undefined,
+    readLine: (prompt) => {
+      if (prompt.startsWith('[approval]')) {
+        approvals.push(prompt)
+        return 'yes'
+      }
+      return lines.shift()
+    },
+    sessionId: 'workspace-edit-cli',
+  })
+
+  assert.deepEqual(result, { sessionId: 'workspace-edit-cli', turns: 1, commands: 1 })
+  assert.equal(readFileSync(join(directory, 'notes.txt'), 'utf8'), 'status: complete\n')
+  assert.equal(approvals.length, 2)
+  assert.match(approvals[0]!, /read_workspace_file/)
+  assert.match(approvals[1]!, /edit_workspace_file/)
+  assert.equal(completion, 3)
+})
+
 test('CLI cancellation records an aborted turn and drains every mounted fiber', async () => {
   const { records, trace } = recorder()
   const controller = new AbortController()

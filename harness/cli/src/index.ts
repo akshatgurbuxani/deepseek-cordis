@@ -12,6 +12,11 @@ import {
   type SummaryAdapter,
 } from '@deepseek-cordis/compaction'
 import { ContextBudgetPolicy } from '@deepseek-cordis/context-budget'
+import {
+  createWorkspaceFilesystemTools,
+  NodeWorkspaceFileSystem,
+  WorkspaceFilesystemSandbox,
+} from '@deepseek-cordis/filesystem-workspace'
 import type { ModelAdapter } from '@deepseek-cordis/model'
 import { ReplayModelAdapter } from '@deepseek-cordis/model/testing'
 import { OpenRouterModelAdapter } from '@deepseek-cordis/model-openrouter'
@@ -22,7 +27,6 @@ import type { ToolSandbox } from '@deepseek-cordis/sandbox'
 import { TokenMeter } from '@deepseek-cordis/token-meter'
 import {
   createWorkspaceFileTool,
-  WorkspaceFileSandbox,
 } from '@deepseek-cordis/sandbox-workspace'
 import {
   createAgentLoopPlugin,
@@ -176,6 +180,7 @@ function manifestFor(
   const loop = createAgentLoopPlugin(new AgentLoop(policy))
   const compaction = createCompactionPlugin(compactor)
   const tokenMeter = createTokenMeterPlugin(meter)
+  const filesystemTools = createWorkspaceFilesystemTools()
   return [
     { id: 'loop', revision: 'v1', load: () => loop.plugin },
     { id: 'add', revision: 'v1', load: () => createToolRegistrationPlugin({
@@ -195,6 +200,11 @@ function manifestFor(
     }) },
     { id: 'create-workspace-file', revision: 'v1', load: () =>
       createToolRegistrationPlugin(createWorkspaceFileTool()) },
+    ...filesystemTools.map((definition) => ({
+      id: definition.name,
+      revision: 'v1',
+      load: () => createToolRegistrationPlugin(definition),
+    })),
     { id: 'sessions', revision: 'v1', load: () => sessions.plugin },
     { id: 'tools', revision: 'v1', load: () => tools.plugin },
     { id: 'model', revision: 'v1', load: () => modelPlugin.plugin },
@@ -244,9 +254,10 @@ async function mountCliRuntime(
   const boot = new AppBoot()
   const stopLifecycleTrace = traceRuntimeLifecycle(boot.context, trace)
   try {
-    const sandbox = new WorkspaceFileSandbox({
+    const filesystem = new NodeWorkspaceFileSystem({
       root: env.HARNESS_WORKSPACE_ROOT ?? process.cwd(),
     })
+    const sandbox = new WorkspaceFilesystemSandbox({ filesystem })
     const sessionStore: SessionStore = env.HARNESS_SESSION_DIR
       ? new FileSessionStore({ directory: env.HARNESS_SESSION_DIR })
       : new InMemorySessionStore()

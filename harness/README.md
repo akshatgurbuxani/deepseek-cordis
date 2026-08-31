@@ -42,6 +42,8 @@ model               ──> protocol
 approval            ──> protocol
 sandbox             ──> protocol
 sandbox-workspace   ──> sandbox + tools + protocol
+filesystem          ──> (provider-neutral contract and policy)
+filesystem-workspace──> filesystem + sandbox + tools + protocol
 commands            ──> session + protocol
 command-session     ──> commands + compaction + session
 tools               ──> protocol + approval + sandbox
@@ -108,6 +110,15 @@ Own independent, provider-neutral safety seams. Approval returns one closed,
 one-shot outcome for an exact call. Sandbox providers preflight an exact call,
 report actual enforcement strength, own execution, and expose deterministic
 lease cleanup. Neither package imports Cordis or supplies a permissive default.
+
+### `filesystem` and `filesystem-workspace`
+
+`filesystem` owns opaque targets, bounded operation contracts, stable `FS_*`
+errors, and session-scoped observation/version policy without importing Node,
+tools, sandbox, or Cordis. `filesystem-workspace` is the selected Node provider
+and model-facing exact-call adapter. It confines portable relative paths to a
+real workspace root, rejects symbolic-link traversal, and reports partial
+enforcement honestly.
 
 ### `agent-loop`
 
@@ -952,12 +963,70 @@ Implemented the concrete provider, consequential schema, argument-bearing
 approval, CLI composition, atomic no-overwrite publication, security boundary
 tests, durable audit integration, and explicit enforcement limitations.
 
+### Feature 15 — filesystem capability family
+
+Feature 15 promotes the create-only proof into a provider-neutral filesystem
+surface. `FileSystem` resolves provider-owned opaque targets and exposes stat,
+bounded non-recursive list, bounded UTF-8 read, version-guarded whole-file
+write, and exact single-match edit. Results contain only workspace-relative
+display paths; host paths never cross the capability boundary.
+
+The model-facing family contains `read_workspace_file`,
+`list_workspace_directory`, `stat_workspace_path`, `write_workspace_file`, and
+`edit_workspace_file`. Every operation remains a handler-free consequential
+tool, so immutable arguments are approved before a provider-owned exact-call
+lease can execute. Feature 14's `create_workspace_file` schema, audit provider
+identity, and result shape remain compatible while its implementation now uses
+the generalized provider.
+
+Mutation policy is session-scoped and fail closed. A missing-path stat records
+confirmed absence before create; stat or read records the opaque version before
+replacement; edit specifically requires a prior content read. The lease
+captures that exact version and the provider revalidates it immediately before
+publication. Target changes fail as `FS_STALE_VERSION`; missing observations
+fail as `FS_NOT_OBSERVED`; absent, ambiguous, and non-text edit inputs retain
+separate stable codes. Successful mutations refresh the session observation.
+
+The Node provider bounds file content at 1 MiB and directory responses at 200
+entries by default. Reads reject NUL-containing and invalid UTF-8 data. Writes
+use a same-directory exclusive temporary file, fsync its contents, preserve an
+existing file's permission bits, and publish with no-overwrite link or atomic
+rename. Temporary artifacts are cleaned after success or failure. Traversal,
+absolute paths, foreign/forged targets, symbolic-link targets or ancestors,
+non-directory parents, cancellation, oversized content, stale versions, and
+unsupported profiles fail before an unintended effect.
+
+#### Upstream motivation and adaptation boundary
+
+The design follows DeepSeek Harness's separation between its provider-neutral
+[`fs contract`](https://github.com/deepseek-ai/deepseek-harness/blob/0a53fb55bea101816fa226bb964ae2bed71c343b/packages/fs/fs/README.md),
+[`filesystem subsystem`](https://github.com/deepseek-ai/deepseek-harness/blob/0a53fb55bea101816fa226bb964ae2bed71c343b/docs/subsystems/filesystem.md),
+and model-facing
+[`tool-fs`](https://github.com/deepseek-ai/deepseek-harness/blob/0a53fb55bea101816fa226bb964ae2bed71c343b/packages/fs/tool-fs/README.md).
+It adapts observation guards and stable error vocabulary to this repository's
+existing approval/sandbox lease rather than importing upstream implementation
+or introducing a second effect runtime. The contracts remain Cordis-free; CLI
+composition selects the Node provider.
+
+Enforcement remains `partial`. Opaque TypeScript targets prevent accidental
+cross-provider use, not hostile same-process forgery, and portable Node path
+APIs cannot eliminate an external ancestor-swap race between validation and
+publication. Exact target-version checks cover normal concurrent edits but do
+not claim kernel-enforced directory capabilities.
+
+#### PR 15 result
+
+Introduced two packages and five tool schemas, preserved Feature 14
+compatibility, composed the provider into the CLI, and added deterministic
+coverage for observation isolation, bounds, UTF-8 validation, stale writes,
+exact edits, atomic cleanup, permission preservation, links, traversal,
+cancellation, approval, and legacy behavior.
+
 ### Later milestones
 
-Feature 15 should promote this proof into a provider-neutral filesystem
-capability family with bounded read/list/stat, guarded write/edit, stable error
-codes, and observation/version policy. Feature 16 can then add scoped system
-prompt and agent context over those capabilities.
+Feature 16 can add scoped system prompt and agent context over these
+capabilities, including workspace guidance and explicit tool-use policy without
+hard-coding provider details into the agent loop.
 
 Cross-process writer coordination, parallel tools, subagents, attachments,
 scheduling, and UI remain outside the first production milestone.
