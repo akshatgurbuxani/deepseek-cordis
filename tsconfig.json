@@ -1,0 +1,23 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./harness/protocol" },
+    { "path": "./harness/session" },
+    { "path": "./harness/model" },
+    { "path": "./harness/approval" },
+    { "path": "./harness/sandbox" },
+    { "path": "./harness/sandbox-workspace" },
+    { "path": "./harness/commands" },
+    { "path": "./harness/command-session" },
+    { "path": "./harness/tools" },
+    { "path": "./harness/agent-loop" },
+    { "path": "./harness/runtime-cordis" },
+    { "path": "./harness/app-boot" },
+    { "path": "./harness/model-openrouter" },
+    { "path": "./harness/session-file" },
+    { "path": "./harness/compaction" },
+    { "path": "./harness/token-meter" },
+    { "path": "./harness/context-budget" },
+    { "path": "./harness/cli" }
+  ]
+}

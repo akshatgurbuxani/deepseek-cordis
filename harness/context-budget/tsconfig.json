@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "tsBuildInfoFile": "../../.cache/tsbuildinfo/context-budget.tsbuildinfo"
+  },
+  "include": ["src/**/*.ts"],
+  "references": [
+    { "path": "../agent-loop" },
+    { "path": "../compaction" },
+    { "path": "../model" },
+    { "path": "../protocol" },
+    { "path": "../session" },
+    { "path": "../token-meter" }
+  ]
+}

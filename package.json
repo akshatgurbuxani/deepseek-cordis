@@ -1,0 +1,40 @@
+{
+  "name": "deepseek-cordis",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "harness/protocol",
+    "harness/session",
+    "harness/model",
+    "harness/approval",
+    "harness/sandbox",
+    "harness/sandbox-workspace",
+    "harness/commands",
+    "harness/command-session",
+    "harness/tools",
+    "harness/agent-loop",
+    "harness/runtime-cordis",
+    "harness/app-boot",
+    "harness/model-openrouter",
+    "harness/cli",
+    "harness/session-file",
+    "harness/compaction",
+    "harness/token-meter",
+    "harness/context-budget"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "tsc -b --clean",
+    "test": "npm run build --silent && node --test harness/*/test/*.test.ts",
+    "cli": "npm run build --silent && node --env-file-if-exists=.env harness/cli/dist/main.js",
+    "cli:replay": "npm run build --silent && node --env-file-if-exists=.env harness/cli/dist/main.js --replay",
+    "typecheck": "npm run build --silent && tsc -p tsconfig.tests.json --noEmit && tsc -p harness/runtime-cordis/tsconfig.test.json --noEmit && tsc -p harness/app-boot/tsconfig.test.json --noEmit && tsc -p harness/cli/tsconfig.test.json --noEmit"
+  },
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "26.2.0",
+    "typescript": "7.0.2"
+  }
+}

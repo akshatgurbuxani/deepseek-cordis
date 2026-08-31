@@ -1,0 +1,42 @@
+# Session
+
+`@deepseek-cordis/session` defines the session and store contracts and provides
+an in-memory reference implementation.
+
+Every appended event receives the next sequence number and is snapshotted
+before storage. `projectMessages()` derives only the history visible to a model;
+turn and step bookkeeping remains durable without becoming prompt content.
+There is no second mutable transcript.
+
+Failed, aborted, and interrupted boundaries are bookkeeping rather than model
+messages. A file provider may project synthetic failed tool results from an
+interrupted turn so a resumed provider transcript never contains an unanswered
+assistant tool call. Those results conservatively distinguish calls known to
+have started, whose outcome is unknown, from calls that never started.
+Streaming text is appended as `assistant/message` only after the model's
+completed terminal finish, so cancellation cannot leave partial assistant text
+in resumed history.
+
+Durable storage is provided separately by `@deepseek-cordis/session-file`
+behind the same contracts. Both providers use the exported pure
+`projectSessionMessages()` function, so persisted and ephemeral histories
+produce the same model-visible transcript.
+
+`deriveSessionSurface()` retains each visible message's event sequence and
+applies `compaction/summary` only when its `shadowedSequences` exactly match the
+current surface prefix. It replaces that prefix with one user-role checkpoint
+node while preserving every source event. Invalid or reordered provenance is a
+projection error and is rejected before either reference store commits it.
+
+Budget decisions never alter the surface. A decision that claims compaction
+must reference an earlier `compaction/summary`; this relationship is checked
+before either store accepts it.
+
+Standalone command lifecycles are log-only as well. They can inspect or
+transform session state through an explicit command handler, but neither the
+input nor its direct output becomes a model message.
+
+Assistant provider usage is also log-only. Its cited input sequences must equal
+the complete surface immediately before that response event; reordered,
+partial, or invented anchors are projection errors. Tool schemas remain with
+the anchor because they affect prompt usage without appearing as messages.

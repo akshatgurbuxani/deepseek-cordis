@@ -1,0 +1,22 @@
+{
+  "name": "@deepseek-cordis/model",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./testing": {
+      "types": "./dist/testing.d.ts",
+      "default": "./dist/testing.js"
+    }
+  },
+  "files": ["dist"],
+  "dependencies": {
+    "@deepseek-cordis/protocol": "0.0.0"
+  }
+}

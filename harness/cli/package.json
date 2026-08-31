@@ -1,0 +1,39 @@
+{
+  "name": "@deepseek-cordis/cli",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "deepseek-cordis": "./dist/main.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./tracing": {
+      "types": "./dist/tracing.d.ts",
+      "default": "./dist/tracing.js"
+    }
+  },
+  "files": ["dist"],
+  "dependencies": {
+    "@deepseek-cordis/agent-loop": "0.0.0",
+    "@deepseek-cordis/app-boot": "0.0.0",
+    "@deepseek-cordis/approval": "0.0.0",
+    "@deepseek-cordis/command-session": "0.0.0",
+    "@deepseek-cordis/commands": "0.0.0",
+    "@deepseek-cordis/compaction": "0.0.0",
+    "@deepseek-cordis/context-budget": "0.0.0",
+    "@deepseek-cordis/model": "0.0.0",
+    "@deepseek-cordis/model-openrouter": "0.0.0",
+    "@deepseek-cordis/protocol": "0.0.0",
+    "@deepseek-cordis/runtime-cordis": "0.0.0",
+    "@deepseek-cordis/sandbox-workspace": "0.0.0",
+    "@deepseek-cordis/session": "0.0.0",
+    "@deepseek-cordis/session-file": "0.0.0",
+    "@deepseek-cordis/token-meter": "0.0.0"
+  }
+}

@@ -5,7 +5,7 @@ Research and implementation workspace for understanding how [Cordis](https://git
 > [!IMPORTANT]
 > This project is about **Cordis**, the plugin meta-framework. It is not about the numerical CORDIC algorithm for trigonometric functions.
 
-This repository starts from first principles. We will study the formal model, reproduce its smallest runtime mechanisms in isolated spikes, and only then promote proven pieces into a `harness/` implementation. The immediate goal is not to clone DeepSeek Harness feature-for-feature. It is to understand and build the architectural primitives that make a composable harness possible.
+This repository started from first principles: study the formal model, reproduce its smallest runtime mechanisms in isolated spikes, and only then promote proven behavior into a maintained `harness/` implementation. Spikes 000–007 completed that evaluation and selected a pinned upstream Cordis runtime. The production packages under [`harness/`](harness/README.md) now include a deterministic or OpenRouter-backed text CLI that streams completed text, supports cooperative turn cancellation, and can persist, repair, resume, and provenance-preservingly compact its immutable event history. A versioned request-pressure meter and bounded context-budget policy invoke that compaction automatically before provider limits or after a canonical overflow. OpenRouter capacity can be resolved from its model catalog, and successful provider usage anchors later pressure estimates without pretending heuristic deltas are exact. Consequential tools are separated from harmless local handlers by fail-closed one-shot approval, provider-owned sandbox execution, durable audit events, and Cordis-replaceable safety capabilities. A multi-turn control plane dispatches inspect, compaction, help, and exit commands outside model context while recording crash-repairable command boundaries; the active interaction channel owns approval prompting and displays exact arguments. The first concrete provider can atomically create a new size-bounded file under a configured workspace without giving model code host execution. The goal is not to clone DeepSeek Harness feature-for-feature; it is to build the smallest durable, composable harness whose behavior we can explain and test.
 
 ## Primary sources
 
@@ -95,30 +95,37 @@ These are later consumers of the Cordis foundation, not the first implementation
 ```text
 .
 ├── README.md
+├── harness/
+│   ├── README.md
+│   ├── protocol/
+│   ├── session/
+│   ├── model/
+│   ├── approval/
+│   ├── sandbox/
+│   ├── sandbox-workspace/
+│   ├── commands/
+│   ├── command-session/
+│   ├── tools/
+│   ├── agent-loop/
+│   ├── runtime-cordis/
+│   ├── app-boot/
+│   ├── model-openrouter/
+│   ├── session-file/
+│   ├── compaction/
+│   ├── token-meter/
+│   ├── context-budget/
+│   └── cli/
 └── spike/
     ├── README.md
-    ├── 000-cordis-foundations/
-    │   └── README.md
-    ├── 001-effect-stack/
-    │   ├── README.md
-    │   ├── src/
-    │   └── test/
-    ├── 002-dependency-activation/
-    │   ├── README.md
-    │   ├── src/
-    │   └── test/
-    ├── 003-in-flight-transitions/
-    │   ├── README.md
-    │   ├── src/
-    │   └── test/
-    └── 004-context-isolation/
-        └── README.md
+    └── 000–007/
 ```
 
-Planned directories are created only when their first accepted artifact exists:
+Directories are created only when their first accepted artifact exists:
 
 - `spike/`: disposable experiments, source notes, and measurements. Spikes may depend directly on upstream Cordis or implement a mechanism from scratch.
-- `harness/`: code promoted from successful spikes. This will begin with the context/component runtime, not a UI or model integration.
+- `harness/`: maintained production packages promoted from proven behavior.
+  Capability contracts remain independent of Cordis; `runtime-cordis` alone
+  owns production runtime integration.
 - `docs/`: durable architecture decisions and paper notes that apply across implementations.
 - `examples/`: runnable compositions demonstrating provider swaps, failure recovery, and eventually a minimal agent.
 
@@ -201,11 +208,16 @@ Decided:
 - Treat Cordis composition semantics as the foundation and DeepSeek Harness as the principal agent-harness case study.
 - Learn through isolated executable spikes before creating `harness/`.
 - Preserve source provenance and licenses; do not copy upstream implementation into experiments without documenting it.
+- Use TypeScript and ESM for production packages.
+- Pin upstream `cordis@4.0.0-rc.8` behind a dedicated adapter rather than promoting the educational runtime or initially vendoring Cordis.
+- Use a domain-neutral text/tool loop as the first production agent scenario.
+- Keep immutable session events as the only source of model-visible history.
+- Treat plugin code as trusted composition code. Consequential model actions
+  cross the `sandbox` provider boundary; the host has no local handler for
+  those definitions and claims no isolation when a real provider is absent.
 
-Open for discussion after the foundation spikes:
+Still open:
 
-- Whether production code should use `@deepseek-ai/cordis`, reimplement the paper for learning, or support both as comparison targets.
-- Whether TypeScript remains the implementation language. It gives the closest comparison to Cordis, but this should be an explicit decision.
-- Which minimal agent use case should drive the first harness: coding, research, or a domain-neutral tool loop.
 - How much of DeepSeek's profile/bundle/configuration layer belongs in scope.
-- What trust model plugins operate under and where process or container sandboxing begins.
+- Which platform-backed sandbox provider and enforcement profiles should ship
+  with the first filesystem or shell tool.

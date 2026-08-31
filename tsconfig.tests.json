@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false,
+    "noEmit": true
+  },
+  "include": ["harness/*/test/*.test.ts"],
+  "exclude": [
+    "harness/runtime-cordis/test/**/*.ts",
+    "harness/app-boot/test/**/*.ts",
+    "harness/cli/test/**/*.ts"
+  ]
+}

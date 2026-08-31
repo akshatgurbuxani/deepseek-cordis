@@ -1,0 +1,19 @@
+{
+  "name": "@deepseek-cordis/model-openrouter",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "dependencies": {
+    "@deepseek-cordis/model": "0.0.0",
+    "@deepseek-cordis/protocol": "0.0.0"
+  }
+}

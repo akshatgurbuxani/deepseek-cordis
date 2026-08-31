@@ -1,0 +1,29 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "verbatimModuleSyntax": false,
+    "rootDir": "src",
+    "outDir": "dist",
+    "tsBuildInfoFile": "../../.cache/tsbuildinfo/cli.tsbuildinfo"
+  },
+  "include": ["src/**/*.ts"],
+  "references": [
+    { "path": "../agent-loop" },
+    { "path": "../approval" },
+    { "path": "../commands" },
+    { "path": "../command-session" },
+    { "path": "../protocol" },
+    { "path": "../session" },
+    { "path": "../session-file" },
+    { "path": "../compaction" },
+    { "path": "../context-budget" },
+    { "path": "../token-meter" },
+    { "path": "../model" },
+    { "path": "../model-openrouter" },
+    { "path": "../runtime-cordis" },
+    { "path": "../sandbox-workspace" },
+    { "path": "../app-boot" }
+  ]
+}
