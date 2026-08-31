@@ -6,21 +6,25 @@ text-delta observation, and cancellation; `main.ts` supplies the real process
 values, streams text to stdout, and converts failure or cancellation into the
 appropriate non-zero exit code.
 
-Argument parsing selects deterministic replay mode with `--replay`; otherwise
-it selects OpenRouter. Replay extracts two numeric operands and scripts one
-tool call followed by a final answer. Live mode requires
-`OPENROUTER_API_KEY`, defaults `OPENROUTER_MODEL` to `openrouter/free`, and
-passes optional app-attribution fields to the provider adapter.
+Argument parsing selects an optional schema-V1 JSON profile, deterministic
+replay override with `--replay`, and interactive mode. Profile validation and
+path resolution complete before runtime construction; explicit launch
+environment values overlay the immutable profile. Replay extracts two numeric
+operands and scripts one tool call followed by a final answer. Live mode
+requires `OPENROUTER_API_KEY`, defaults `OPENROUTER_MODEL` to
+`openrouter/free`, and passes optional app-attribution fields to the provider
+adapter.
 
 The command creates an `AppBoot` and installs lifecycle tracing before building
-its manifest. The manifest deliberately lists the agent loop before its
-providers, demonstrating that Cordis keeps it pending until the traced session
-store, tool registry, calculator, workspace filesystem tools, and traced model
-are available. A required prompt registry contributes the harness identity and
-tool-aware workspace policy; the loop remains pending until that provider is
-active. The workspace adapter keeps observation/version state for the
-mounted runtime and executes both the generalized family and the compatible
-Feature 14 create-only schema through provider-owned leases.
+its profile-derived manifest. Exact tool and prompt entries use stable IDs and
+profile-owned enablement. The manifest deliberately lists the agent loop before
+its providers, demonstrating that Cordis keeps it pending until the traced
+session store, tool registry, selected tools, and traced model are available. A
+required prompt registry receives only the profile-selected identity, persona,
+and tool-aware workspace effects; the loop remains pending until the registry
+is active. When selected, the workspace adapter keeps observation/version
+state for the mounted runtime and executes both the generalized family and the
+compatible Feature 14 create-only schema through provider-owned leases.
 
 Before reconciliation, the command selects the in-memory store or constructs
 the file provider configured by `HARNESS_SESSION_DIR`. Construction validates

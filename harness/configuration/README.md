@@ -1,0 +1,17 @@
+# `@deepseek-cordis/configuration`
+
+Versioned, fail-loud application profiles for the production harness.
+
+The package validates unknown input, rejects unknown or incompatible fields,
+applies explicit defaults, and returns one detached recursively immutable
+`HarnessProfile`. It owns deployment choices—not model, session, tool, prompt,
+approval, sandbox, or Cordis behavior.
+
+Schema V1 selects the model provider and optional exact capacity, workspace
+root and file bound, memory or file persistence, exact visible tool IDs,
+identity/persona/workspace prompt sections, ask-or-deny approval default, and
+context-pressure policy. Paths remain unresolved strings; the launcher resolves
+relative paths against the profile file rather than the process by accident.
+
+Profiles never contain credentials. Provider secrets remain launch-environment
+inputs and are never copied into a validated profile, trace, or manifest.

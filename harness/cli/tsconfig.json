@@ -19,6 +19,7 @@
     { "path": "../session-file" },
     { "path": "../system-prompt" },
     { "path": "../compaction" },
+    { "path": "../configuration" },
     { "path": "../context-budget" },
     { "path": "../filesystem-workspace" },
     { "path": "../token-meter" },

@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "name": "coding",
+  "model": {
+    "provider": "openrouter",
+    "id": "openrouter/free",
+    "contextWindow": 128000
+  },
+  "workspace": {
+    "root": ".",
+    "maxFileBytes": 1048576
+  },
+  "persistence": {
+    "kind": "file",
+    "directory": ".sessions"
+  },
+  "tools": {
+    "enabled": [
+      "add",
+      "workspace.read",
+      "workspace.list",
+      "workspace.stat",
+      "workspace.write",
+      "workspace.edit"
+    ]
+  },
+  "prompt": {
+    "identity": true,
+    "workspaceGuidance": true,
+    "persona": "Act as a careful coding agent. Inspect relevant files before editing."
+  },
+  "approval": {
+    "default": "ask"
+  },
+  "context": {
+    "thresholdRatio": 0.8,
+    "retainTurns": 1,
+    "maxOverflowRetries": 1
+  }
+}

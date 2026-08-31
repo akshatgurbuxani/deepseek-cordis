@@ -26,6 +26,7 @@
     "@deepseek-cordis/command-session": "0.0.0",
     "@deepseek-cordis/commands": "0.0.0",
     "@deepseek-cordis/compaction": "0.0.0",
+    "@deepseek-cordis/configuration": "0.0.0",
     "@deepseek-cordis/context-budget": "0.0.0",
     "@deepseek-cordis/filesystem-workspace": "0.0.0",
     "@deepseek-cordis/model": "0.0.0",

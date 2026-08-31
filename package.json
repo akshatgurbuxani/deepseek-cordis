@@ -12,6 +12,7 @@
     "harness/filesystem",
     "harness/filesystem-workspace",
     "harness/system-prompt",
+    "harness/configuration",
     "harness/commands",
     "harness/command-session",
     "harness/tools",

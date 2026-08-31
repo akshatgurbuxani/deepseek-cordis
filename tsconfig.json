@@ -10,6 +10,7 @@
     { "path": "./harness/filesystem" },
     { "path": "./harness/filesystem-workspace" },
     { "path": "./harness/system-prompt" },
+    { "path": "./harness/configuration" },
     { "path": "./harness/commands" },
     { "path": "./harness/command-session" },
     { "path": "./harness/tools" },

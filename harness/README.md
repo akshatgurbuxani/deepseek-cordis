@@ -44,6 +44,7 @@ sandbox             ──> protocol
 sandbox-workspace   ──> sandbox + tools + protocol
 filesystem          ──> (provider-neutral contract and policy)
 system-prompt       ──> protocol
+configuration       ──> protocol
 filesystem-workspace──> filesystem + sandbox + system-prompt + tools + protocol
 commands            ──> session + protocol
 command-session     ──> commands + compaction + session
@@ -53,7 +54,7 @@ runtime-cordis      ──> agent-loop + approval + sandbox + system-prompt + co
 app-boot            ──> runtime-cordis
 model-openrouter    ──> protocol + model
 tool/storage plugins──> protocol + their capability contract
-cli                 ──> app-boot + selected provider plugins
+cli                 ──> configuration + app-boot + selected provider plugins
 ```
 
 An arrow `A → B` means package A imports package B. The CLI also imports the
@@ -127,6 +128,14 @@ Owns provider-neutral ordered prompt registration and per-session shadowing.
 Dynamic sections receive exact request identity, visible tool schemas, and the
 turn signal; assembly returns one immutable prompt without importing a model
 adapter, the agent loop, concrete tools, or Cordis.
+
+### `configuration`
+
+Owns the versioned application-profile vocabulary and pure validation. It
+normalizes unknown JSON into one detached immutable profile, rejects unknown or
+incompatible fields, and supplies explicit defaults. It does not read files,
+resolve paths, inspect environment variables, construct providers, or import
+Cordis; the CLI owns those application-layer concerns.
 
 ### `agent-loop`
 
@@ -1086,15 +1095,81 @@ OpenRouter system-role mapping, exact usage provenance, prompt-aware token
 pressure, capability-owned workspace guidance, scoped/disposal tests, provider
 replacement tests, and full CLI request verification.
 
+### Feature 17 — validated configuration profiles
+
+Feature 17 turns the CLI's formerly scattered defaults into one versioned,
+fail-loud application profile. `@deepseek-cordis/configuration` accepts unknown
+JSON, requires `schemaVersion: 1`, rejects unknown fields, validates closed
+vocabularies and numeric bounds, applies explicit defaults, and returns a
+detached recursively immutable `HarnessProfile`. It imports only the snapshot
+helper from `protocol`; file reads, environment access, provider construction,
+Cordis, and credentials remain outside the package.
+
+Schema V1 selects an OpenRouter route or deterministic replay, optional exact
+capacity, workspace root and maximum file bytes, memory or file persistence,
+the exact visible set of calculator and workspace tools, identity/persona/tool
+guidance prompt sections, ask-or-deny approval behavior, and context-pressure
+threshold, retention, and overflow-retry limits. Model fields and persistence
+fields are discriminated: replay cannot carry an OpenRouter model ID, and
+memory persistence cannot carry a directory. Tool IDs are closed, ordered,
+and unique.
+
+The CLI accepts `--profile <path>`, `--profile=<path>`, or `HARNESS_PROFILE`.
+Profile-owned relative workspace and persistence paths resolve beside that
+profile. Command-line replay and the existing model, context-window, workspace,
+and session-directory environment values are explicit higher-precedence launch
+overlays, preserving prior invocations without making environment state part of
+the profile. Credentials remain environment-only.
+
+The normalized profile compiles into the existing stable-ID `AppBoot` manifest:
+disabled tools and prompt contributors never mount, an empty workspace tool set
+does not construct or validate a filesystem provider, persona text uses its own
+Cordis-owned prompt effect, and policy settings reach the real
+`ContextBudgetPolicy`. `approval.default: "ask"` uses an available interaction
+channel and otherwise fails closed; `"deny"` never invokes the channel and
+records explicit policy rejection. Traces record only the profile name, source
+kind, selected tool IDs, and safe effective launch facts rather than copying the
+document or its paths wholesale.
+
+Profiles are startup-frozen. Invalid JSON, unsupported versions, invalid fields,
+and missing profile files fail before `AppBoot` construction, so no partial
+provider graph exists to clean up. Runtime profile watching and transactional
+policy replacement are deliberately deferred until an explicit safe-point
+contract exists for active turns.
+
+#### Upstream motivation and adaptation boundary
+
+This feature was checked on August 31, 2026 against DeepSeek Harness
+`0a53fb5`, especially its
+[`profile composition`](https://github.com/deepseek-ai/deepseek-harness/blob/0a53fb55bea101816fa226bb964ae2bed71c343b/packages/boot/app-boot/src/profile.ts),
+[`shared CLI profile boot`](https://github.com/deepseek-ai/deepseek-harness/blob/0a53fb55bea101816fa226bb964ae2bed71c343b/apps/cli/src/profile-boot.ts),
+and
+[`configuration catalog`](https://github.com/deepseek-ai/deepseek-harness/blob/0a53fb55bea101816fa226bb964ae2bed71c343b/docs/config-catalog.md).
+The local design adopts ordered default/profile/launch layers, fail-loud schema
+validation, stable composition identity, and launcher-owned path resolution.
+It intentionally does not adopt npm bundle discovery, YAML/JavaScript patches,
+profile package installation, module fallback healing, or live HMR.
+
+#### PR 17 result
+
+Introduced schema V1 validation, an example coding profile, profile-aware CLI
+selection and path semantics, exact tool/prompt manifest enablement,
+profile-driven providers and context policy, deny-default interaction behavior,
+pre-boot failure guarantees, backward-compatible launch overlays, and
+end-to-end verification across replay, OpenRouter, persistence, safety, and
+compaction.
+
 ### Later milestones
 
-Feature 17 can introduce validated configuration profiles over the now-stable
-provider graph: persona/section selection, workspace and persistence settings,
-model route/capacity, tool visibility, and approval defaults without moving
-configuration parsing into capability packages.
+Feature 18 can add bounded workspace instruction discovery (`AGENTS.md`-style
+project and local guidance) as a dynamic prompt contributor. It should define
+root discovery, precedence, byte caps, stale-file behavior, provenance, and
+session isolation without turning profile persona text into a filesystem
+loader.
 
-Cross-process writer coordination, parallel tools, subagents, attachments,
-scheduling, and UI remain outside the first production milestone.
+Profile hot reload, cross-process writer coordination, parallel tools,
+subagents, attachments, scheduling, and UI remain outside the first production
+milestone.
 
 ## Promotion rules
 

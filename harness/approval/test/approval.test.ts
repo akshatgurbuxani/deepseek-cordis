@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { UnavailableApprovalService } from '@deepseek-cordis/approval'
+import { DenyApprovalService, UnavailableApprovalService } from '@deepseek-cordis/approval'
 
 const request = {
   sessionId: 'session-1', turnId: 'turn-1', callId: 'call-1',
@@ -15,5 +15,14 @@ test('the headless approval provider fails closed and propagates cancellation', 
 
   const controller = new AbortController()
   controller.abort({ kind: 'user' })
+  await assert.rejects(service.request({ ...request, signal: controller.signal }))
+})
+
+test('the deny provider records policy rejection and propagates cancellation', async () => {
+  const service = new DenyApprovalService()
+  assert.equal(await service.request(request), 'rejected')
+
+  const controller = new AbortController()
+  controller.abort({ kind: 'policy-test' })
   await assert.rejects(service.request({ ...request, signal: controller.signal }))
 })

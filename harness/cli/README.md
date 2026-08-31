@@ -16,6 +16,36 @@ Replay mode is deterministic and needs no credential:
 npm run cli:replay -- "add 17 and 25"
 ```
 
+Select a validated schema-V1 JSON profile with `--profile` or
+`HARNESS_PROFILE`:
+
+```sh
+cp harness/cli/profile.example.json ./harness-profile.json
+npm run cli -- --profile ./harness-profile.json "inspect the workspace"
+```
+
+Profiles select the model provider and optional exact capacity, workspace root
+and size bound, memory or file persistence, exact visible tool IDs, prompt
+identity/persona/workspace guidance, ask-or-deny approval default, and context
+pressure settings. Omitted sections receive explicit defaults. Unknown fields,
+unknown/duplicate tools, invalid bounds, incompatible provider fields, invalid
+JSON, and unsupported schema versions fail before `AppBoot` exists.
+Recognized tool IDs are `add`, `workspace.create`, `workspace.read`,
+`workspace.list`, `workspace.stat`, `workspace.write`, and `workspace.edit`.
+Selections normalize to that stable presentation order.
+
+Relative workspace and persistence paths are resolved against the profile
+file. `--replay` overrides its model provider; `OPENROUTER_MODEL`, context-window
+variables, `HARNESS_WORKSPACE_ROOT`, and `HARNESS_SESSION_DIR` are launch-local
+overlays and take precedence. A profile is frozen for one process invocation;
+interactive turns never observe a partially reloaded policy.
+
+`approval.default: "ask"` uses the active interaction channel and fails closed
+when no channel exists. `"deny"` never invokes the channel and durably records
+policy rejection. Profiles are not a credential store: `OPENROUTER_API_KEY`
+remains environment-only, and profile contents are never copied wholesale into
+traces.
+
 Live mode reads `.env` through Node's built-in environment-file support:
 
 ```sh
@@ -69,12 +99,13 @@ exactly one `oldText` match. Opaque versions reject stale mutations. Directory
 responses are capped at 200 entries and text operations at 1 MiB. These tools
 use the same exact-argument approval and durable audit path as create.
 
-Every request receives a deterministic system prompt: the harness identity
-followed by workspace guidance derived from the exact visible filesystem tool
-set. The guidance contains no absolute host path. Prompt sections are Cordis
-effects, so provider replacement drains the loop and withdraws registrations
-before reconnection. Prompt cost participates in proactive context pressure and
-the exact rendered text accompanies successful provider-usage anchors.
+By default, every request receives a deterministic system prompt: the harness
+identity followed by workspace guidance derived from the exact visible
+filesystem tool set. The guidance contains no absolute host path. Prompt
+sections are Cordis effects, so provider replacement drains the loop and
+withdraws registrations before reconnection. Prompt cost participates in
+proactive context pressure and the exact rendered text accompanies successful
+provider-usage anchors.
 
 The process entry point streams assistant text to stdout and passes one
 turn-scoped signal through the loop. `Ctrl-C` cooperatively aborts model or tool
@@ -117,5 +148,5 @@ No capacity or token count is guessed from a model name.
 Traces expose successful `model/info` resolution and safe `model/info-error`
 failures without including credentials.
 
-Cross-process writer locking, parallel tool execution, and provider replacement
-during a running turn remain future work.
+Profile hot reload, cross-process writer locking, parallel tool execution, and
+provider replacement during a running turn remain future work.
