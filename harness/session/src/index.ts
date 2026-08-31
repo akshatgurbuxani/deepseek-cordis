@@ -37,9 +37,8 @@ function validateUsageAnchor(
   if (!event.usage) return
   const actual = surface.map((node) => node.sequence)
   if (
-    actual.length !== event.usage.inputSurfaceSequences.length
-    || actual.some((sequence, index) =>
-      sequence !== event.usage?.inputSurfaceSequences[index])
+    actual.length !== event.usage.inputSurfaceSequences.length ||
+    actual.some((sequence, index) => sequence !== event.usage?.inputSurfaceSequences[index])
   ) {
     throw new SessionProjectionError(
       `assistant usage event ${event.sequence} does not match its input surface`,
@@ -104,13 +103,11 @@ export function deriveSessionSurface(
             `compaction event ${event.sequence} is not at a maintenance boundary`,
           )
         }
-        const actual = surface
-          .slice(0, event.shadowedSequences.length)
-          .map((node) => node.sequence)
+        const actual = surface.slice(0, event.shadowedSequences.length).map((node) => node.sequence)
         if (
-          event.shadowedSequences.length === 0
-          || actual.length !== event.shadowedSequences.length
-          || actual.some((sequence, index) => sequence !== event.shadowedSequences[index])
+          event.shadowedSequences.length === 0 ||
+          actual.length !== event.shadowedSequences.length ||
+          actual.some((sequence, index) => sequence !== event.shadowedSequences[index])
         ) {
           throw new SessionProjectionError(
             `compaction event ${event.sequence} does not shadow the current surface prefix`,
@@ -172,10 +169,10 @@ export class InMemorySession implements Session {
       sequence: this.#events.length + 1,
     }) as unknown as SessionEvent
     if (
-      event.type === 'compaction/summary'
-      || event.type === 'context-budget/decision'
-      || ((event.type === 'assistant/message' || event.type === 'assistant/tool-calls')
-        && event.usage !== undefined)
+      event.type === 'compaction/summary' ||
+      event.type === 'context-budget/decision' ||
+      ((event.type === 'assistant/message' || event.type === 'assistant/tool-calls') &&
+        event.usage !== undefined)
     ) {
       deriveSessionSurface([...this.#events, event])
     }

@@ -1,36 +1,27 @@
 import { AgentLoop } from '@deepseek-cordis/agent-loop'
+import { type ApprovalService, UnavailableApprovalService } from '@deepseek-cordis/approval'
 import {
-  type ApprovalService,
-  UnavailableApprovalService,
-} from '@deepseek-cordis/approval'
-import { SessionCompactor } from '@deepseek-cordis/compaction'
-import {
-  InMemoryCommandRegistry,
   type CommandDefinition,
   type CommandRegistry,
+  InMemoryCommandRegistry,
 } from '@deepseek-cordis/commands'
+import type { SessionCompactor } from '@deepseek-cordis/compaction'
 import type { ModelAdapter } from '@deepseek-cordis/model'
-import {
-  InMemorySessionStore,
-  type SessionStore,
-} from '@deepseek-cordis/session'
-import {
-  type ToolSandbox,
-  UnavailableToolSandbox,
-} from '@deepseek-cordis/sandbox'
-import {
-  InMemoryToolRegistry,
-  type ToolDefinition,
-  type ToolRegistry,
-} from '@deepseek-cordis/tools'
-import type { Plugin } from 'cordis'
-import { TokenMeter } from '@deepseek-cordis/token-meter'
+import { type ToolSandbox, UnavailableToolSandbox } from '@deepseek-cordis/sandbox'
+import { InMemorySessionStore, type SessionStore } from '@deepseek-cordis/session'
 import {
   InMemorySystemPrompt,
   type PromptRegistrationOptions,
   type PromptSection,
   type SystemPromptService,
 } from '@deepseek-cordis/system-prompt'
+import { TokenMeter } from '@deepseek-cordis/token-meter'
+import {
+  InMemoryToolRegistry,
+  type ToolDefinition,
+  type ToolRegistry,
+} from '@deepseek-cordis/tools'
+import type { Plugin } from 'cordis'
 
 export {
   Context as RuntimeContext,
@@ -169,9 +160,7 @@ export function createCommandRegistrationPlugin(
   return plugin
 }
 
-export function createModelAdapterPlugin(
-  adapter: ModelAdapter,
-): PluginFactory<ModelAdapter> {
+export function createModelAdapterPlugin(adapter: ModelAdapter): PluginFactory<ModelAdapter> {
   const plugin: Plugin.Function<void> = (context) => {
     context.provide('model', adapter)
   }
@@ -180,9 +169,7 @@ export function createModelAdapterPlugin(
   return { plugin, value: adapter }
 }
 
-export function createToolRegistrationPlugin(
-  definition: ToolDefinition,
-): Plugin.Function<void> {
+export function createToolRegistrationPlugin(definition: ToolDefinition): Plugin.Function<void> {
   const plugin: Plugin.Function<void> = (context) => {
     context.effect(
       () => context.tools.register(definition),
@@ -194,16 +181,15 @@ export function createToolRegistrationPlugin(
   return plugin
 }
 
-export function createAgentLoopPlugin(
-  loop = new AgentLoop(),
-): PluginFactory<AgentLoop> {
+export function createAgentLoopPlugin(loop = new AgentLoop()): PluginFactory<AgentLoop> {
   const plugin: Plugin.Function<void> = (context) => {
     context.effect(
-      () => loop.connect(context.sessions, context.tools, context.model, {
-        approval: context.approval,
-        sandbox: context.sandbox,
-        systemPrompt: context.systemPrompt,
-      }),
+      () =>
+        loop.connect(context.sessions, context.tools, context.model, {
+          approval: context.approval,
+          sandbox: context.sandbox,
+          systemPrompt: context.systemPrompt,
+        }),
       'connect agent loop',
     )
     context.provide('agentLoop', loop)
@@ -225,9 +211,7 @@ export function createCompactionPlugin(
   return { plugin, value: compactor }
 }
 
-export function createTokenMeterPlugin(
-  meter = new TokenMeter(),
-): PluginFactory<TokenMeter> {
+export function createTokenMeterPlugin(meter = new TokenMeter()): PluginFactory<TokenMeter> {
   const plugin: Plugin.Function<void> = (context) => {
     context.provide('tokenMeter', meter)
   }

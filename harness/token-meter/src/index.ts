@@ -1,12 +1,5 @@
-import {
-  type ModelMessage,
-  snapshot,
-  type ToolSchema,
-} from '@deepseek-cordis/protocol'
-import {
-  deriveSessionSurface,
-  type Session,
-} from '@deepseek-cordis/session'
+import { type ModelMessage, snapshot, type ToolSchema } from '@deepseek-cordis/protocol'
+import { deriveSessionSurface, type Session } from '@deepseek-cordis/session'
 
 export const TOKEN_ESTIMATOR_ID = 'four-characters-v1'
 
@@ -46,19 +39,37 @@ export function estimateMessage(message: ModelMessage): number {
     return 4 + textTokens(message.content)
   }
   if (message.role === 'assistant') {
-    return 4 + message.toolCalls.reduce((total, call) =>
-      total + 8 + textTokens(call.id) + textTokens(call.name)
-      + textTokens(JSON.stringify(call.arguments)), 0)
+    return (
+      4 +
+      message.toolCalls.reduce(
+        (total, call) =>
+          total +
+          8 +
+          textTokens(call.id) +
+          textTokens(call.name) +
+          textTokens(JSON.stringify(call.arguments)),
+        0,
+      )
+    )
   }
-  return 8 + textTokens(message.callId) + textTokens(message.name)
-    + textTokens(message.ok ? JSON.stringify(message.output) : message.error)
+  return (
+    8 +
+    textTokens(message.callId) +
+    textTokens(message.name) +
+    textTokens(message.ok ? JSON.stringify(message.output) : message.error)
+  )
 }
 
 export function estimateTools(tools: readonly ToolSchema[]): number {
-  return tools.reduce((total, tool) => total + 8
-    + textTokens(tool.name)
-    + textTokens(tool.description)
-    + textTokens(JSON.stringify(tool.inputSchema)), 0)
+  return tools.reduce(
+    (total, tool) =>
+      total +
+      8 +
+      textTokens(tool.name) +
+      textTokens(tool.description) +
+      textTokens(JSON.stringify(tool.inputSchema)),
+    0,
+  )
 }
 
 export function estimateSystemPrompt(systemPrompt: string | undefined): number {
@@ -79,23 +90,22 @@ export class TokenMeter {
     const surfaceTokens = nodes.reduce((total, node) => total + node.tokens, 0)
     const toolTokens = estimateTools(tools)
     const systemPromptTokens = estimateSystemPrompt(options.systemPrompt)
-    const usageEvent = events.findLast((event) =>
-      (event.type === 'assistant/message' || event.type === 'assistant/tool-calls')
-      && event.usage !== undefined
-      && (options.model === undefined || event.usage.model === options.model))
+    const usageEvent = events.findLast(
+      (event) =>
+        (event.type === 'assistant/message' || event.type === 'assistant/tool-calls') &&
+        event.usage !== undefined &&
+        (options.model === undefined || event.usage.model === options.model),
+    )
     let totalTokens = surfaceTokens + toolTokens + systemPromptTokens
     let anchor: TokenMeasurement['anchor']
-    if (
-      usageEvent?.type === 'assistant/message'
-      || usageEvent?.type === 'assistant/tool-calls'
-    ) {
+    if (usageEvent?.type === 'assistant/message' || usageEvent?.type === 'assistant/tool-calls') {
       const usage = usageEvent.usage
       if (usage) {
         const inputSurface = deriveSessionSurface(events.slice(0, usageEvent.sequence - 1))
-        const inputHeuristic = inputSurface.reduce(
-          (total, node) => total + estimateMessage(node.message),
-          0,
-        ) + estimateTools(usage.inputTools) + estimateSystemPrompt(usage.inputSystemPrompt)
+        const inputHeuristic =
+          inputSurface.reduce((total, node) => total + estimateMessage(node.message), 0) +
+          estimateTools(usage.inputTools) +
+          estimateSystemPrompt(usage.inputSystemPrompt)
         totalTokens = Math.max(
           0,
           usage.inputTokens + surfaceTokens + toolTokens + systemPromptTokens - inputHeuristic,

@@ -1,7 +1,7 @@
 import {
   RuntimeContext,
-  RuntimeFiberState,
   type RuntimeFiber,
+  RuntimeFiberState,
   type RuntimePlugin,
 } from '@deepseek-cordis/runtime-cordis'
 
@@ -107,21 +107,17 @@ export class AppBoot {
       .filter((id) => {
         const old = oldMounted.get(id)
         const next = desired.get(id)!
-        return old !== undefined
-          && (old.revision !== next.revision || old.context !== next.context)
+        return old !== undefined && (old.revision !== next.revision || old.context !== next.context)
       })
       .sort((left, right) => desired.get(left)!.depth - desired.get(right)!.depth)
     const added = [...desiredMounted]
       .filter((id) => !oldMounted.has(id))
       .sort((left, right) => desired.get(left)!.depth - desired.get(right)!.depth)
-    const preserved = [...desiredMounted]
-      .filter((id) => {
-        const old = oldMounted.get(id)
-        const next = desired.get(id)!
-        return old !== undefined
-          && old.revision === next.revision
-          && old.context === next.context
-      })
+    const preserved = [...desiredMounted].filter((id) => {
+      const old = oldMounted.get(id)
+      const next = desired.get(id)!
+      return old !== undefined && old.revision === next.revision && old.context === next.context
+    })
 
     const plugins = await this.#loadChanged(desired, [...updated, ...added])
     const candidate = new Map(oldMounted)
@@ -227,19 +223,21 @@ export class AppBoot {
     changed: readonly string[],
   ): Promise<Map<string, RuntimePlugin>> {
     const plugins = new Map<string, RuntimePlugin>()
-    await Promise.all(changed.map(async (id) => {
-      const definition = desired.get(id)!
-      const handle = this.#handles.get(id)
-      if (
-        handle?.plugin
-        && handle.revision === definition.revision
-        && handle.context === definition.context
-      ) {
-        plugins.set(id, handle.plugin)
-        return
-      }
-      plugins.set(id, await definition.load())
-    }))
+    await Promise.all(
+      changed.map(async (id) => {
+        const definition = desired.get(id)!
+        const handle = this.#handles.get(id)
+        if (
+          handle?.plugin &&
+          handle.revision === definition.revision &&
+          handle.context === definition.context
+        ) {
+          plugins.set(id, handle.plugin)
+          return
+        }
+        plugins.set(id, await definition.load())
+      }),
+    )
     return plugins
   }
 
@@ -247,12 +245,7 @@ export class AppBoot {
     const mounted = new Map<string, MountedSnapshot>()
     for (const id of this.#configuredIds) {
       const handle = this.#handles.get(id)
-      if (
-        handle?.fiber
-        && handle.plugin
-        && handle.revision !== undefined
-        && handle.context
-      ) {
+      if (handle?.fiber && handle.plugin && handle.revision !== undefined && handle.context) {
         mounted.set(id, {
           plugin: handle.plugin,
           fiber: handle.fiber,
@@ -279,8 +272,9 @@ export class AppBoot {
     }
 
     const restored = new Map<string, RuntimeFiber>()
-    const restoreIds = [...retiredOld]
-      .sort((left, right) => this.#oldDepth(left) - this.#oldDepth(right))
+    const restoreIds = [...retiredOld].sort(
+      (left, right) => this.#oldDepth(left) - this.#oldDepth(right),
+    )
     for (const id of restoreIds) {
       const old = oldMounted.get(id)
       if (!old) continue
@@ -337,10 +331,8 @@ export class AppBoot {
         handle.plugin = current.plugin
         handle.fiber = current.fiber
       } else {
-        if (
-          previousRevision !== definition.revision
-          || previousContext !== definition.context
-        ) handle.plugin = undefined
+        if (previousRevision !== definition.revision || previousContext !== definition.context)
+          handle.plugin = undefined
         handle.fiber = undefined
       }
     }

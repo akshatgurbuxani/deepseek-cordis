@@ -2,9 +2,9 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
+  type CommandDefinition,
   InMemoryCommandRegistry,
   parseCommand,
-  type CommandDefinition,
 } from '@deepseek-cordis/commands'
 import { InMemorySession } from '@deepseek-cordis/session'
 
@@ -31,18 +31,33 @@ test('registrations are immutable, discoverable, unique, and reversibly owned', 
   const dispose = registry.register(definition)
   ;(definition as { description: string }).description = 'mutated'
 
-  assert.deepEqual(registry.list(), [{
-    name: 'echo', description: 'Echo command input', inputHint: '<text>',
-  }])
+  assert.deepEqual(registry.list(), [
+    {
+      name: 'echo',
+      description: 'Echo command input',
+      inputHint: '<text>',
+    },
+  ])
   assert.deepEqual(registry.find('echo'), registry.list()[0])
   assert.equal(Object.isFrozen(registry.find('echo')), true)
   assert.throws(() => registry.register(echoCommand()), /already registered/)
-  assert.throws(() => registry.register({
-    ...echoCommand(), name: 'Bad',
-  }), /invalid command name/)
-  assert.throws(() => registry.register({
-    ...echoCommand(), name: 'blank', description: ' ',
-  }), /empty description/)
+  assert.throws(
+    () =>
+      registry.register({
+        ...echoCommand(),
+        name: 'Bad',
+      }),
+    /invalid command name/,
+  )
+  assert.throws(
+    () =>
+      registry.register({
+        ...echoCommand(),
+        name: 'blank',
+        description: ' ',
+      }),
+    /empty description/,
+  )
 
   dispose()
   dispose()
@@ -66,12 +81,19 @@ test('dispatch records a standalone lifecycle without entering model history', a
   })
   assert.deepEqual(session.events, [
     {
-      type: 'command/run', turnId: 'commands:command:1', sequence: 1,
-      commandId: 'commands:command:1', name: 'echo', rawInput: '  hello',
+      type: 'command/run',
+      turnId: 'commands:command:1',
+      sequence: 1,
+      commandId: 'commands:command:1',
+      name: 'echo',
+      rawInput: '  hello',
     },
     {
-      type: 'command/done', turnId: 'commands:command:1', sequence: 2,
-      commandId: 'commands:command:1', name: 'echo',
+      type: 'command/done',
+      turnId: 'commands:command:1',
+      sequence: 2,
+      commandId: 'commands:command:1',
+      name: 'echo',
       result: { kind: 'success', text: 'hello' },
     },
   ])
@@ -81,18 +103,27 @@ test('dispatch records a standalone lifecycle without entering model history', a
 test('handler failures, invalid results, and cancellation settle as errors', async () => {
   const registry = new InMemoryCommandRegistry()
   registry.register({
-    name: 'throw', description: 'Throw', handler() { throw new Error('failed') },
+    name: 'throw',
+    description: 'Throw',
+    handler() {
+      throw new Error('failed')
+    },
   })
   registry.register({
-    name: 'invalid', description: 'Invalid', handler: () => null as never,
+    name: 'invalid',
+    description: 'Invalid',
+    handler: () => null as never,
   })
   registry.register({
-    name: 'cancel', description: 'Cancel', handler: (_invocation) => {
+    name: 'cancel',
+    description: 'Cancel',
+    handler: (_invocation) => {
       return { kind: 'success', text: 'must not escape' }
     },
   })
   registry.register({
-    name: 'future', description: 'Invalid provenance',
+    name: 'future',
+    description: 'Invalid provenance',
     handler: () => ({ kind: 'success', sourceSequence: 999 }),
   })
   const session = new InMemorySession('errors')
@@ -115,15 +146,24 @@ test('handler failures, invalid results, and cancellation settle as errors', asy
 test('command admission excludes open turns and concurrent session commands', async () => {
   const registry = new InMemoryCommandRegistry()
   let release!: () => void
-  const blocked = new Promise<void>((resolve) => { release = resolve })
+  const blocked = new Promise<void>((resolve) => {
+    release = resolve
+  })
   registry.register({
-    name: 'wait', description: 'Wait',
-    handler: async () => { await blocked; return { kind: 'success' } },
+    name: 'wait',
+    description: 'Wait',
+    handler: async () => {
+      await blocked
+      return { kind: 'success' }
+    },
   })
   const open = new InMemorySession('open')
   open.append({ type: 'turn/start', turnId: 'open:turn:1' })
   await assert.rejects(registry.execute(open, '/wait'), /while a turn is open/)
-  assert.equal(open.events.some((event) => event.type === 'command/run'), false)
+  assert.equal(
+    open.events.some((event) => event.type === 'command/run'),
+    false,
+  )
 
   const session = new InMemorySession('serial')
   const first = registry.execute(session, '/wait')

@@ -11,7 +11,9 @@
       "default": "./dist/index.js"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "dependencies": {
     "@deepseek-cordis/approval": "0.0.0",
     "@deepseek-cordis/model": "0.0.0",

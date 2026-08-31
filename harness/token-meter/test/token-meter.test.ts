@@ -15,9 +15,13 @@ test('measurements are immutable revisioned snapshots of surface and tools', () 
   session.append({ type: 'user/message', turnId: 'turn-1', content: 'abcdefgh' })
   session.append({ type: 'assistant/message', turnId: 'turn-1', content: 'answer' })
   session.append({ type: 'turn/end', turnId: 'turn-1', status: 'completed' })
-  const tools = [{
-    name: 'read', description: 'Read a value', inputSchema: { type: 'object' },
-  }] as const
+  const tools = [
+    {
+      name: 'read',
+      description: 'Read a value',
+      inputSchema: { type: 'object' },
+    },
+  ] as const
   const meter = new TokenMeter()
 
   const first = meter.measure(session, tools)
@@ -26,10 +30,15 @@ test('measurements are immutable revisioned snapshots of surface and tools', () 
   const second = meter.measure(session, tools)
 
   assert.equal(first.logRevision, 4)
-  assert.deepEqual(first.nodes.map((node) => node.sequence), [2, 3])
-  assert.equal(first.surfaceTokens,
-    estimateMessage({ role: 'user', content: 'abcdefgh' })
-    + estimateMessage({ role: 'assistant', content: 'answer' }))
+  assert.deepEqual(
+    first.nodes.map((node) => node.sequence),
+    [2, 3],
+  )
+  assert.equal(
+    first.surfaceTokens,
+    estimateMessage({ role: 'user', content: 'abcdefgh' }) +
+      estimateMessage({ role: 'assistant', content: 'answer' }),
+  )
   assert.equal(first.toolTokens, estimateTools(tools))
   assert.equal(first.systemPromptTokens, 0)
   assert.equal(first.totalTokens, first.surfaceTokens + first.toolTokens)
@@ -43,9 +52,13 @@ test('measurements are immutable revisioned snapshots of surface and tools', () 
 
 test('provider input usage anchors later pressure while heuristic deltas stay live', () => {
   const session = new InMemorySessionStore().create('anchored-meter')
-  const originalTools = [{
-    name: 'read', description: 'Read', inputSchema: { type: 'object' },
-  }] as const
+  const originalTools = [
+    {
+      name: 'read',
+      description: 'Read',
+      inputSchema: { type: 'object' },
+    },
+  ] as const
   session.append({ type: 'turn/start', turnId: 'turn-1' })
   session.append({ type: 'user/message', turnId: 'turn-1', content: 'provider priced input' })
   session.append({
@@ -65,16 +78,23 @@ test('provider input usage anchors later pressure while heuristic deltas stay li
   const anchored = meter.measure(session, originalTools)
   assert.equal(anchored.source, 'provider_anchored')
   assert.deepEqual(anchored.anchor, {
-    eventSequence: 3, model: 'provider/model', inputTokens: 100,
+    eventSequence: 3,
+    model: 'provider/model',
+    inputTokens: 100,
   })
   assert.equal(
     anchored.totalTokens,
     100 + estimateMessage({ role: 'assistant', content: 'new assistant output' }),
   )
 
-  const expandedTools = [...originalTools, {
-    name: 'write', description: 'Write', inputSchema: { type: 'object' },
-  }] as const
+  const expandedTools = [
+    ...originalTools,
+    {
+      name: 'write',
+      description: 'Write',
+      inputSchema: { type: 'object' },
+    },
+  ] as const
   const expanded = meter.measure(session, expandedTools)
   assert.equal(
     expanded.totalTokens,
@@ -92,28 +112,40 @@ test('system prompt cost participates in heuristic and provider-anchored deltas'
   session.append({ type: 'turn/start', turnId: 'turn-1' })
   session.append({ type: 'user/message', turnId: 'turn-1', content: 'input' })
   session.append({
-    type: 'assistant/message', turnId: 'turn-1', content: 'output',
+    type: 'assistant/message',
+    turnId: 'turn-1',
+    content: 'output',
     usage: {
-      model: 'provider/model', inputTokens: 100, outputTokens: 5,
-      inputSurfaceSequences: [2], inputTools: [], inputSystemPrompt: originalPrompt,
+      model: 'provider/model',
+      inputTokens: 100,
+      outputTokens: 5,
+      inputSurfaceSequences: [2],
+      inputTools: [],
+      inputSystemPrompt: originalPrompt,
     },
   })
 
   const measurement = new TokenMeter().measure(session, [], {
-    model: 'provider/model', systemPrompt: currentPrompt,
+    model: 'provider/model',
+    systemPrompt: currentPrompt,
   })
   assert.equal(measurement.systemPromptTokens, estimateSystemPrompt(currentPrompt))
-  assert.equal(measurement.totalTokens,
-    100
-    + estimateMessage({ role: 'assistant', content: 'output' })
-    + estimateSystemPrompt(currentPrompt)
-    - estimateSystemPrompt(originalPrompt))
+  assert.equal(
+    measurement.totalTokens,
+    100 +
+      estimateMessage({ role: 'assistant', content: 'output' }) +
+      estimateSystemPrompt(currentPrompt) -
+      estimateSystemPrompt(originalPrompt),
+  )
 
   const heuristic = new TokenMeter().measure(session, [], {
-    model: 'other/model', systemPrompt: currentPrompt,
+    model: 'other/model',
+    systemPrompt: currentPrompt,
   })
-  assert.equal(heuristic.totalTokens,
-    heuristic.surfaceTokens + heuristic.toolTokens + heuristic.systemPromptTokens)
+  assert.equal(
+    heuristic.totalTokens,
+    heuristic.surfaceTokens + heuristic.toolTokens + heuristic.systemPromptTokens,
+  )
 })
 
 test('provider anchors survive provenance-preserving surface compaction', () => {
@@ -121,10 +153,15 @@ test('provider anchors survive provenance-preserving surface compaction', () => 
   session.append({ type: 'turn/start', turnId: 'turn-1' })
   session.append({ type: 'user/message', turnId: 'turn-1', content: 'old input' })
   session.append({
-    type: 'assistant/message', turnId: 'turn-1', content: 'old output',
+    type: 'assistant/message',
+    turnId: 'turn-1',
+    content: 'old output',
     usage: {
-      model: 'provider/model', inputTokens: 100, outputTokens: 4,
-      inputSurfaceSequences: [2], inputTools: [],
+      model: 'provider/model',
+      inputTokens: 100,
+      outputTokens: 4,
+      inputSurfaceSequences: [2],
+      inputTools: [],
     },
   })
   session.append({ type: 'turn/end', turnId: 'turn-1', status: 'completed' })
@@ -133,18 +170,24 @@ test('provider anchors survive provenance-preserving surface compaction', () => 
   session.append({ type: 'assistant/message', turnId: 'turn-2', content: 'retained output' })
   session.append({ type: 'turn/end', turnId: 'turn-2', status: 'completed' })
   session.append({
-    type: 'compaction/summary', turnId: 'turn-1', summary: 'old checkpoint',
-    shadowedSequences: [2, 3], summarizer: 'test/v1',
+    type: 'compaction/summary',
+    turnId: 'turn-1',
+    summary: 'old checkpoint',
+    shadowedSequences: [2, 3],
+    summarizer: 'test/v1',
   })
 
   const measurement = new TokenMeter().measure(session)
   assert.equal(measurement.source, 'provider_anchored')
   assert.equal(measurement.anchor?.eventSequence, 3)
-  assert.equal(measurement.totalTokens, 100
-    + estimateMessage({ role: 'user', content: 'old checkpoint' })
-    + estimateMessage({ role: 'user', content: 'retained input' })
-    + estimateMessage({ role: 'assistant', content: 'retained output' })
-    - estimateMessage({ role: 'user', content: 'old input' }))
+  assert.equal(
+    measurement.totalTokens,
+    100 +
+      estimateMessage({ role: 'user', content: 'old checkpoint' }) +
+      estimateMessage({ role: 'user', content: 'retained input' }) +
+      estimateMessage({ role: 'assistant', content: 'retained output' }) -
+      estimateMessage({ role: 'user', content: 'old input' }),
+  )
 })
 
 test('message estimates include tool-call, result, and error payload framing', () => {
@@ -153,10 +196,18 @@ test('message estimates include tool-call, result, and error payload framing', (
     toolCalls: [{ id: 'call-1', name: 'write', arguments: { value: 'payload' } }],
   })
   const result = estimateMessage({
-    role: 'tool', callId: 'call-1', name: 'write', ok: true, output: { saved: true },
+    role: 'tool',
+    callId: 'call-1',
+    name: 'write',
+    ok: true,
+    output: { saved: true },
   })
   const failure = estimateMessage({
-    role: 'tool', callId: 'call-1', name: 'write', ok: false, error: 'failed',
+    role: 'tool',
+    callId: 'call-1',
+    name: 'write',
+    ok: false,
+    error: 'failed',
   })
 
   assert.ok(call > 8)

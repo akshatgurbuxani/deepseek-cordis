@@ -1,13 +1,10 @@
-import type {
-  ApprovalRequest,
-  ApprovalService,
-} from '@deepseek-cordis/approval'
+import type { ApprovalRequest, ApprovalService } from '@deepseek-cordis/approval'
 import type { ModelAdapter, ModelStreamOptions } from '@deepseek-cordis/model'
 import {
-  type ModelRequest,
   type JsonValue,
-  snapshot,
+  type ModelRequest,
   type ModelStreamChunk,
+  snapshot,
 } from '@deepseek-cordis/protocol'
 
 export interface ApprovalPresentation {
@@ -46,8 +43,10 @@ export class InteractiveApprovalService implements ApprovalService {
       const answer = await this.#prompt(presentation)
       if (request.signal?.aborted) return 'cancelled' as const
       return answer === true
-        ? 'allowed-once' as const
-        : answer === false ? 'rejected' as const : 'cancelled' as const
+        ? ('allowed-once' as const)
+        : answer === false
+          ? ('rejected' as const)
+          : ('cancelled' as const)
     } catch {
       if (request.signal?.aborted) return 'cancelled' as const
       return 'unavailable' as const
@@ -57,9 +56,7 @@ export class InteractiveApprovalService implements ApprovalService {
 
 function operands(content: string): readonly [number, number] | undefined {
   const values = content.match(/-?\d+(?:\.\d+)?/g)?.map(Number) ?? []
-  return values[0] === undefined || values[1] === undefined
-    ? undefined
-    : [values[0], values[1]]
+  return values[0] === undefined || values[1] === undefined ? undefined : [values[0], values[1]]
 }
 
 /** Deterministic multi-turn adapter used only by interactive replay mode. */
@@ -81,7 +78,8 @@ export class InteractiveReplayModelAdapter implements ModelAdapter {
       const values = operands(last.content)
       if (!values) {
         yield {
-          type: 'finish', reason: 'completed',
+          type: 'finish',
+          reason: 'completed',
           response: { type: 'message', content: 'Replay mode expects two numbers.' },
         }
         return
@@ -91,11 +89,13 @@ export class InteractiveReplayModelAdapter implements ModelAdapter {
         reason: 'completed',
         response: {
           type: 'tool_calls',
-          calls: [{
-            id: `${request.turnId}:add`,
-            name: 'add',
-            arguments: { a: values[0], b: values[1] },
-          }],
+          calls: [
+            {
+              id: `${request.turnId}:add`,
+              name: 'add',
+              arguments: { a: values[0], b: values[1] },
+            },
+          ],
         },
       }
       return
@@ -104,13 +104,15 @@ export class InteractiveReplayModelAdapter implements ModelAdapter {
       const content = `The answer is ${String(last.output)}.`
       yield { type: 'text-delta', delta: content }
       yield {
-        type: 'finish', reason: 'completed',
+        type: 'finish',
+        reason: 'completed',
         response: { type: 'message', content },
       }
       return
     }
     yield {
-      type: 'finish', reason: 'error',
+      type: 'finish',
+      reason: 'error',
       error: 'interactive replay reached an unsupported conversation state',
     }
   }

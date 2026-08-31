@@ -15,7 +15,7 @@ export const HARNESS_TOOL_IDS = Object.freeze([
   'workspace.edit',
 ] as const)
 
-export type HarnessToolId = typeof HARNESS_TOOL_IDS[number]
+export type HarnessToolId = (typeof HARNESS_TOOL_IDS)[number]
 
 export interface OpenRouterProfileModel {
   readonly provider: 'openrouter'
@@ -92,7 +92,9 @@ function exactKeys(
   source: string,
   field: string,
 ): void {
-  const unknown = Object.keys(value).filter((key) => !allowed.includes(key)).sort()
+  const unknown = Object.keys(value)
+    .filter((key) => !allowed.includes(key))
+    .sort()
   if (unknown.length > 0) {
     const names = unknown.map((key) => JSON.stringify(key)).join(', ')
     fail(source, `${field} contains unknown ${unknown.length === 1 ? 'field' : 'fields'} ${names}`)
@@ -106,7 +108,12 @@ function nonEmptyString(value: unknown, source: string, field: string): string {
   return value
 }
 
-function optionalBoolean(value: unknown, fallback: boolean, source: string, field: string): boolean {
+function optionalBoolean(
+  value: unknown,
+  fallback: boolean,
+  source: string,
+  field: string,
+): boolean {
   if (value === undefined) return fallback
   if (typeof value !== 'boolean') fail(source, `${field} must be a boolean`)
   return value
@@ -134,9 +141,10 @@ function model(value: unknown, source: string): ProfileModel {
   if (provider !== 'openrouter' && provider !== 'replay') {
     fail(source, 'model.provider must be "openrouter" or "replay"')
   }
-  const contextWindow = candidate.contextWindow === undefined
-    ? undefined
-    : positiveInteger(candidate.contextWindow, 1, source, 'model.contextWindow')
+  const contextWindow =
+    candidate.contextWindow === undefined
+      ? undefined
+      : positiveInteger(candidate.contextWindow, 1, source, 'model.contextWindow')
   if (provider === 'replay') {
     if (candidate.id !== undefined) fail(source, 'model.id is not allowed for replay')
     return {
@@ -144,9 +152,10 @@ function model(value: unknown, source: string): ProfileModel {
       ...(contextWindow === undefined ? {} : { contextWindow }),
     }
   }
-  const id = candidate.id === undefined
-    ? DEFAULT_OPENROUTER_MODEL
-    : nonEmptyString(candidate.id, source, 'model.id').trim()
+  const id =
+    candidate.id === undefined
+      ? DEFAULT_OPENROUTER_MODEL
+      : nonEmptyString(candidate.id, source, 'model.id').trim()
   return {
     provider,
     id,
@@ -161,9 +170,8 @@ function workspace(value: unknown, source: string): WorkspaceProfile {
   const candidate = object(value, source, 'workspace')
   exactKeys(candidate, ['root', 'maxFileBytes'], source, 'workspace')
   return {
-    root: candidate.root === undefined
-      ? '.'
-      : nonEmptyString(candidate.root, source, 'workspace.root'),
+    root:
+      candidate.root === undefined ? '.' : nonEmptyString(candidate.root, source, 'workspace.root'),
     maxFileBytes: positiveInteger(
       candidate.maxFileBytes,
       DEFAULT_WORKSPACE_MAX_FILE_BYTES,
@@ -204,7 +212,8 @@ function tools(value: unknown, source: string): ToolsProfile {
     }
     return tool as HarnessToolId
   })
-  if (new Set(enabled).size !== enabled.length) fail(source, 'tools.enabled must not contain duplicates')
+  if (new Set(enabled).size !== enabled.length)
+    fail(source, 'tools.enabled must not contain duplicates')
   const selected = new Set(enabled)
   return { enabled: HARNESS_TOOL_IDS.filter((tool) => selected.has(tool)) }
 }
@@ -213,9 +222,10 @@ function prompt(value: unknown, source: string): PromptProfile {
   if (value === undefined) return { identity: true, workspaceGuidance: true }
   const candidate = object(value, source, 'prompt')
   exactKeys(candidate, ['identity', 'workspaceGuidance', 'persona'], source, 'prompt')
-  const persona = candidate.persona === undefined
-    ? undefined
-    : nonEmptyString(candidate.persona, source, 'prompt.persona').trim()
+  const persona =
+    candidate.persona === undefined
+      ? undefined
+      : nonEmptyString(candidate.persona, source, 'prompt.persona').trim()
   return {
     identity: optionalBoolean(candidate.identity, true, source, 'prompt.identity'),
     workspaceGuidance: optionalBoolean(
@@ -246,11 +256,12 @@ function context(value: unknown, source: string): ContextProfile {
   exactKeys(candidate, ['thresholdRatio', 'retainTurns', 'maxOverflowRetries'], source, 'context')
   const thresholdRatio = candidate.thresholdRatio ?? 0.8
   if (
-    typeof thresholdRatio !== 'number'
-    || !Number.isFinite(thresholdRatio)
-    || thresholdRatio <= 0
-    || thresholdRatio >= 1
-  ) fail(source, 'context.thresholdRatio must be greater than zero and less than one')
+    typeof thresholdRatio !== 'number' ||
+    !Number.isFinite(thresholdRatio) ||
+    thresholdRatio <= 0 ||
+    thresholdRatio >= 1
+  )
+    fail(source, 'context.thresholdRatio must be greater than zero and less than one')
   return {
     thresholdRatio,
     retainTurns: positiveInteger(candidate.retainTurns, 1, source, 'context.retainTurns'),
@@ -265,10 +276,7 @@ function context(value: unknown, source: string): ContextProfile {
 }
 
 /** Validate, default, clone, and recursively freeze one versioned profile document. */
-export function validateHarnessProfile(
-  value: unknown,
-  source = 'harness profile',
-): HarnessProfile {
+export function validateHarnessProfile(value: unknown, source = 'harness profile'): HarnessProfile {
   const candidate = object(value, source)
   exactKeys(
     candidate,
@@ -291,9 +299,10 @@ export function validateHarnessProfile(
   }
   return snapshot({
     schemaVersion: HARNESS_PROFILE_SCHEMA_VERSION,
-    name: candidate.name === undefined
-      ? DEFAULT_PROFILE_NAME
-      : nonEmptyString(candidate.name, source, 'name').trim(),
+    name:
+      candidate.name === undefined
+        ? DEFAULT_PROFILE_NAME
+        : nonEmptyString(candidate.name, source, 'name').trim(),
     model: model(candidate.model, source),
     workspace: workspace(candidate.workspace, source),
     persistence: persistence(candidate.persistence, source),

@@ -28,7 +28,11 @@
   ],
   "scripts": {
     "build": "tsc -b",
+    "check": "biome ci harness scripts biome.json package.json tsconfig.json tsconfig.base.json tsconfig.tests.json",
+    "check:workspaces": "node scripts/check-workspaces.mjs",
     "clean": "tsc -b --clean",
+    "format": "biome format --write harness scripts biome.json package.json tsconfig.json tsconfig.base.json tsconfig.tests.json",
+    "lint": "biome lint harness scripts",
     "test": "npm run build --silent && node --test harness/*/test/*.test.ts",
     "cli": "npm run build --silent && node --env-file-if-exists=.env harness/cli/dist/main.js",
     "cli:replay": "npm run build --silent && node --env-file-if-exists=.env harness/cli/dist/main.js --replay",
@@ -38,6 +42,7 @@
     "node": ">=22.18.0"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.5.11",
     "@types/node": "26.2.0",
     "typescript": "7.0.2"
   }

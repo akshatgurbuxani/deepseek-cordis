@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
 import {
-  mkdtempSync,
   mkdirSync,
-  readFileSync,
+  mkdtempSync,
   readdirSync,
+  readFileSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -16,16 +16,18 @@ import type { SandboxRequest } from '@deepseek-cordis/sandbox'
 import {
   createWorkspaceFileTool,
   DEFAULT_MAX_FILE_BYTES,
-  WorkspaceFileSandbox,
-  WorkspaceFileSandboxError,
   WORKSPACE_CREATE_FILE_TOOL,
   WORKSPACE_WRITE_PROFILE,
+  WorkspaceFileSandbox,
+  WorkspaceFileSandboxError,
 } from '@deepseek-cordis/sandbox-workspace'
 import { InMemoryToolRegistry, type ToolSafetyAuditEvent } from '@deepseek-cordis/tools'
 
 function temporaryDirectory(t: TestContext, prefix = 'deepseek-cordis-workspace-'): string {
   const directory = mkdtempSync(join(tmpdir(), prefix))
-  t.after(() => { rmSync(directory, { recursive: true, force: true }) })
+  t.after(() => {
+    rmSync(directory, { recursive: true, force: true })
+  })
   return directory
 }
 
@@ -49,9 +51,12 @@ test('a prepared lease creates one file atomically and never overwrites', async 
   const root = temporaryDirectory(t)
   mkdirSync(join(root, 'notes'))
   const sandbox = new WorkspaceFileSandbox({ root })
-  const preparation = await sandbox.prepare(request({
-    path: 'notes/result.txt', content: 'complete ✓\n',
-  }))
+  const preparation = await sandbox.prepare(
+    request({
+      path: 'notes/result.txt',
+      content: 'complete ✓\n',
+    }),
+  )
 
   assert.equal(preparation.ok, true)
   if (!preparation.ok) return
@@ -59,7 +64,9 @@ test('a prepared lease creates one file atomically and never overwrites', async 
   assert.equal(preparation.lease.enforcement, 'partial')
   assert.equal(readdirSync(join(root, 'notes')).length, 0)
   assert.deepEqual(await preparation.lease.execute(), {
-    path: 'notes/result.txt', bytesWritten: 13, created: true,
+    path: 'notes/result.txt',
+    bytesWritten: 13,
+    created: true,
   })
   assert.equal(readFileSync(join(root, 'notes/result.txt'), 'utf8'), 'complete ✓\n')
   assert.deepEqual(readdirSync(join(root, 'notes')), ['result.txt'])
@@ -78,17 +85,31 @@ test('request and path validation fail closed before a lease exists', async (t) 
   const sandbox = new WorkspaceFileSandbox({ root, maxFileBytes: 4 })
 
   const unsupported = await sandbox.prepare({
-    ...request({ path: 'file', content: 'ok' }), toolName: 'other',
+    ...request({ path: 'file', content: 'ok' }),
+    toolName: 'other',
   })
   assert.deepEqual(unsupported, {
-    ok: false, reason: 'workspace sandbox does not support this operation',
+    ok: false,
+    reason: 'workspace sandbox does not support this operation',
   })
-  assert.equal((await sandbox.prepare({
-    ...request({ path: 'file', content: 'ok' }), profile: 'other',
-  })).ok, false)
-  assert.equal((await sandbox.prepare({
-    ...request({ path: 'file', content: 'ok' }), risk: 'shell',
-  })).ok, false)
+  assert.equal(
+    (
+      await sandbox.prepare({
+        ...request({ path: 'file', content: 'ok' }),
+        profile: 'other',
+      })
+    ).ok,
+    false,
+  )
+  assert.equal(
+    (
+      await sandbox.prepare({
+        ...request({ path: 'file', content: 'ok' }),
+        risk: 'shell',
+      })
+    ).ok,
+    false,
+  )
 
   const cases: ReadonlyArray<readonly [SandboxRequest['arguments'], RegExp]> = [
     [null, /only path and content strings/],
@@ -131,15 +152,20 @@ test('symbolic links cannot redirect the operation outside the workspace', async
   symlinkSync(join(outside, 'target.txt'), join(root, 'linked-target'))
   const sandbox = new WorkspaceFileSandbox({ root })
 
-  const linkedParent = await sandbox.prepare(request({
-    path: 'linked-dir/escaped.txt', content: 'escape',
-  }))
+  const linkedParent = await sandbox.prepare(
+    request({
+      path: 'linked-dir/escaped.txt',
+      content: 'escape',
+    }),
+  )
   assert.deepEqual(linkedParent, {
-    ok: false, reason: 'workspace file path crosses a symbolic link',
+    ok: false,
+    reason: 'workspace file path crosses a symbolic link',
   })
   const linkedTarget = await sandbox.prepare(request({ path: 'linked-target', content: 'escape' }))
   assert.deepEqual(linkedTarget, {
-    ok: false, reason: 'workspace file target already exists',
+    ok: false,
+    reason: 'workspace file target already exists',
   })
   assert.deepEqual(readdirSync(outside), [])
 })
@@ -156,9 +182,15 @@ test('execution revalidates races and observes cancellation before the effect', 
   raced.lease.dispose()
 
   const controller = new AbortController()
-  const cancelled = await sandbox.prepare(request({
-    path: 'cancelled.txt', content: 'never',
-  }, controller.signal))
+  const cancelled = await sandbox.prepare(
+    request(
+      {
+        path: 'cancelled.txt',
+        content: 'never',
+      },
+      controller.signal,
+    ),
+  )
   assert.equal(cancelled.ok, true)
   if (!cancelled.ok) return
   controller.abort(new Error('cancelled by user'))
@@ -186,37 +218,53 @@ test('the consequential tool composes approval, audit, and the real provider', a
   const tools = new InMemoryToolRegistry()
   tools.register(createWorkspaceFileTool())
   const audits: ToolSafetyAuditEvent[] = []
-  const execution = await tools.execute(WORKSPACE_CREATE_FILE_TOOL, {
-    path: 'approved.txt', content: 'approved',
-  }, {
-    context: { sessionId: 'session', turnId: 'turn', callId: 'call' },
-    approval: { request: async () => 'allowed-once' },
-    sandbox,
-    audit: (event) => { audits.push(event) },
-  })
+  const execution = await tools.execute(
+    WORKSPACE_CREATE_FILE_TOOL,
+    {
+      path: 'approved.txt',
+      content: 'approved',
+    },
+    {
+      context: { sessionId: 'session', turnId: 'turn', callId: 'call' },
+      approval: { request: async () => 'allowed-once' },
+      sandbox,
+      audit: (event) => {
+        audits.push(event)
+      },
+    },
+  )
 
   assert.deepEqual(execution, {
     ok: true,
     output: { path: 'approved.txt', bytesWritten: 8, created: true },
   })
   assert.equal(readFileSync(join(root, 'approved.txt'), 'utf8'), 'approved')
-  assert.deepEqual(audits.map((event) => event.type), [
-    'approval/asked', 'approval/decided', 'sandbox/prepared',
-  ])
+  assert.deepEqual(
+    audits.map((event) => event.type),
+    ['approval/asked', 'approval/decided', 'sandbox/prepared'],
+  )
   assert.deepEqual(audits.at(-1), {
-    type: 'sandbox/prepared', callId: 'call', name: WORKSPACE_CREATE_FILE_TOOL,
+    type: 'sandbox/prepared',
+    callId: 'call',
+    name: WORKSPACE_CREATE_FILE_TOOL,
     profile: WORKSPACE_WRITE_PROFILE,
-    provider: 'workspace-file/node-path-v1', enforcement: 'partial',
+    provider: 'workspace-file/node-path-v1',
+    enforcement: 'partial',
   })
 
-  const rejected = await tools.execute(WORKSPACE_CREATE_FILE_TOOL, {
-    path: 'rejected.txt', content: 'rejected',
-  }, {
-    context: { sessionId: 'session', turnId: 'turn', callId: 'call-2' },
-    approval: { request: async () => 'rejected' },
-    sandbox,
-    audit() {},
-  })
+  const rejected = await tools.execute(
+    WORKSPACE_CREATE_FILE_TOOL,
+    {
+      path: 'rejected.txt',
+      content: 'rejected',
+    },
+    {
+      context: { sessionId: 'session', turnId: 'turn', callId: 'call-2' },
+      approval: { request: async () => 'rejected' },
+      sandbox,
+      audit() {},
+    },
+  )
   assert.equal(rejected.ok, false)
   assert.equal(readdirSync(root).includes('rejected.txt'), false)
 })

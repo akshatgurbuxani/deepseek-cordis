@@ -1,10 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import {
-  InMemorySessionStore,
-  SessionProjectionError,
-} from '@deepseek-cordis/session'
+import { InMemorySessionStore, SessionProjectionError } from '@deepseek-cordis/session'
 
 test('sessions append immutable sequenced events and expose a copied list', () => {
   const store = new InMemorySessionStore()
@@ -15,7 +12,10 @@ test('sessions append immutable sequenced events and expose a copied list', () =
   session.append({ type: 'assistant/tool-calls', turnId: 'turn-1', calls: [call] })
   call.arguments.a = 100
 
-  assert.deepEqual(session.events.map((event) => event.sequence), [1, 2])
+  assert.deepEqual(
+    session.events.map((event) => event.sequence),
+    [1, 2],
+  )
   assert.deepEqual(session.events[1], {
     type: 'assistant/tool-calls',
     turnId: 'turn-1',
@@ -40,15 +40,31 @@ test('projection includes model facts and excludes lifecycle bookkeeping', () =>
     turnId,
     calls: [{ id: 'call-1', name: 'add', arguments: { a: 2, b: 3 } }],
   })
-  session.append({ type: 'tool/call', turnId, call: {
-    id: 'call-1', name: 'add', arguments: { a: 2, b: 3 },
-  } })
   session.append({
-    type: 'tool/result', turnId, callId: 'call-1', name: 'add', ok: true, output: 5,
+    type: 'tool/call',
+    turnId,
+    call: {
+      id: 'call-1',
+      name: 'add',
+      arguments: { a: 2, b: 3 },
+    },
+  })
+  session.append({
+    type: 'tool/result',
+    turnId,
+    callId: 'call-1',
+    name: 'add',
+    ok: true,
+    output: 5,
   })
   session.append({ type: 'step/end', turnId, step: 1, outcome: 'tool_calls' })
   session.append({
-    type: 'tool/result', turnId, callId: 'call-2', name: 'missing', ok: false, error: 'missing',
+    type: 'tool/result',
+    turnId,
+    callId: 'call-2',
+    name: 'missing',
+    ok: false,
+    error: 'missing',
   })
   session.append({ type: 'assistant/message', turnId, content: 'The answer is 5.' })
   session.append({ type: 'turn/end', turnId, status: 'completed' })
@@ -95,13 +111,17 @@ test('summary checkpoints replace only the exact current surface prefix', () => 
     { role: 'user', content: 'new user' },
   ])
   const before = session.events
-  assert.throws(() => session.append({
-    type: 'compaction/summary',
-    turnId: 'turn-2',
-    summary: 'invalid checkpoint',
-    shadowedSequences: [7],
-    summarizer: 'test/v1',
-  }), SessionProjectionError)
+  assert.throws(
+    () =>
+      session.append({
+        type: 'compaction/summary',
+        turnId: 'turn-2',
+        summary: 'invalid checkpoint',
+        shadowedSequences: [7],
+        summarizer: 'test/v1',
+      }),
+    SessionProjectionError,
+  )
   assert.deepEqual(session.events, before)
 })
 
@@ -109,15 +129,19 @@ test('compacted budget decisions must reference an existing summary checkpoint',
   const session = new InMemorySessionStore().create('budget-reference')
   session.append({ type: 'turn/start', turnId: 'turn-1' })
 
-  assert.throws(() => session.append({
-    type: 'context-budget/decision',
-    turnId: 'turn-1',
-    trigger: 'context_overflow',
-    model: 'test-model',
-    measuredTokens: 100,
-    outcome: 'compacted',
-    summarySequence: 1,
-  }), /does not reference a compaction event/)
+  assert.throws(
+    () =>
+      session.append({
+        type: 'context-budget/decision',
+        turnId: 'turn-1',
+        trigger: 'context_overflow',
+        model: 'test-model',
+        measuredTokens: 100,
+        outcome: 'compacted',
+        summarySequence: 1,
+      }),
+    /does not reference a compaction event/,
+  )
   assert.equal(session.events.length, 1)
 })
 
@@ -126,10 +150,15 @@ test('provider usage is log-only and must cite the exact pre-response surface', 
   session.append({ type: 'turn/start', turnId: 'turn-1' })
   session.append({ type: 'user/message', turnId: 'turn-1', content: 'hello' })
   session.append({
-    type: 'assistant/message', turnId: 'turn-1', content: 'world',
+    type: 'assistant/message',
+    turnId: 'turn-1',
+    content: 'world',
     usage: {
-      model: 'provider/model', inputTokens: 10, outputTokens: 1,
-      inputSurfaceSequences: [2], inputTools: [],
+      model: 'provider/model',
+      inputTokens: 10,
+      outputTokens: 1,
+      inputSurfaceSequences: [2],
+      inputTools: [],
     },
   })
   assert.deepEqual(session.projectMessages(), [
@@ -138,12 +167,21 @@ test('provider usage is log-only and must cite the exact pre-response surface', 
   ])
 
   const before = session.events
-  assert.throws(() => session.append({
-    type: 'assistant/message', turnId: 'turn-1', content: 'invalid',
-    usage: {
-      model: 'provider/model', inputTokens: 12, outputTokens: 1,
-      inputSurfaceSequences: [2], inputTools: [],
-    },
-  }), /does not match its input surface/)
+  assert.throws(
+    () =>
+      session.append({
+        type: 'assistant/message',
+        turnId: 'turn-1',
+        content: 'invalid',
+        usage: {
+          model: 'provider/model',
+          inputTokens: 12,
+          outputTokens: 1,
+          inputSurfaceSequences: [2],
+          inputTools: [],
+        },
+      }),
+    /does not match its input surface/,
+  )
   assert.deepEqual(session.events, before)
 })

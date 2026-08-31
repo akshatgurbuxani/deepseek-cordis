@@ -1,8 +1,8 @@
 import {
-  snapshot,
   type ModelRequest,
   type ModelResponse,
   type ModelStreamChunk,
+  snapshot,
 } from '@deepseek-cordis/protocol'
 
 import {

@@ -35,9 +35,7 @@ function replayWithCapacity(
 }
 
 function policy(summary = 'history checkpoint'): ContextBudgetPolicy {
-  const summaryModel = new ReplayModelAdapter('summary', [
-    { type: 'message', content: summary },
-  ])
+  const summaryModel = new ReplayModelAdapter('summary', [{ type: 'message', content: summary }])
   return new ContextBudgetPolicy({
     compactor: new SessionCompactor(new ModelSummaryAdapter(summaryModel)),
   })
@@ -74,9 +72,7 @@ test('pressure uses asynchronously resolved adapter capacity', async () => {
   const session = sessions.create('resolved-pressure')
   appendTurn(session, 1, 'a'.repeat(80))
   appendTurn(session, 2)
-  const replay = new ReplayModelAdapter('resolved-model', [
-    { type: 'message', content: 'done' },
-  ])
+  const replay = new ReplayModelAdapter('resolved-model', [{ type: 'message', content: 'done' }])
   const tools = new InMemoryToolRegistry()
   let resolutions = 0
   const model: ModelAdapter = {
@@ -146,13 +142,16 @@ test('canonical overflow retries only after a checkpoint changes the surface', a
       calls += 1
       if (calls === 1) {
         yield {
-          type: 'finish', reason: 'error', error: 'too much context',
+          type: 'finish',
+          reason: 'error',
+          error: 'too much context',
           code: 'context_window_exceeded',
         }
       } else {
         yield { type: 'text-delta', delta: 'recovered' }
         yield {
-          type: 'finish', reason: 'completed',
+          type: 'finish',
+          reason: 'completed',
           response: { type: 'message', content: 'recovered' },
         }
       }
@@ -170,7 +169,10 @@ test('canonical overflow retries only after a checkpoint changes the surface', a
   assert.equal(decisions[0]?.trigger, 'context_overflow')
   assert.equal(decisions[0]?.outcome, 'compacted')
   assert.deepEqual(
-    session.events.filter((event) => event.type === 'step/end').slice(-2).map((event) => event.outcome),
+    session.events
+      .filter((event) => event.type === 'step/end')
+      .slice(-2)
+      .map((event) => event.outcome),
     ['failed', 'completed'],
   )
   disconnect()
@@ -183,7 +185,9 @@ test('no progress, exhausted recovery, and noncanonical failures preserve model 
     id: 'always-overflow',
     async *stream(): AsyncIterable<ModelStreamChunk> {
       yield {
-        type: 'finish', reason: 'error', error: 'original overflow',
+        type: 'finish',
+        reason: 'error',
+        error: 'original overflow',
         code: 'context_window_exceeded',
       }
     },
@@ -191,18 +195,24 @@ test('no progress, exhausted recovery, and noncanonical failures preserve model 
   const loop = new AgentLoop(policy())
   const disconnect = loop.connect(sessions, new InMemoryToolRegistry(), overflow)
 
-  await assert.rejects(loop.run(session, 'only turn'), (error) =>
-    error instanceof ModelContextOverflowError && error.message === 'original overflow')
+  await assert.rejects(
+    loop.run(session, 'only turn'),
+    (error) => error instanceof ModelContextOverflowError && error.message === 'original overflow',
+  )
   const decision = session.events.find((event) => event.type === 'context-budget/decision')
   assert.ok(decision?.type === 'context-budget/decision')
   assert.equal(decision.outcome, 'no_progress')
   assert.equal(session.events.at(-1)?.type, 'turn/end')
   disconnect()
 
-  assert.throws(() => new ContextBudgetPolicy({
-    compactor: new SessionCompactor(new ModelSummaryAdapter(new ReplayModelAdapter('x', []))),
-    thresholdRatio: 1,
-  }), /thresholdRatio/)
+  assert.throws(
+    () =>
+      new ContextBudgetPolicy({
+        compactor: new SessionCompactor(new ModelSummaryAdapter(new ReplayModelAdapter('x', []))),
+        thresholdRatio: 1,
+      }),
+    /thresholdRatio/,
+  )
 })
 
 test('overflow retry limits preserve the final provider error after one useful retry', async () => {
@@ -226,13 +236,12 @@ test('overflow retry limits preserve the final provider error after one useful r
   const loop = new AgentLoop(policy('one checkpoint'))
   const disconnect = loop.connect(sessions, new InMemoryToolRegistry(), model)
 
-  await assert.rejects(loop.run(session, 'current'), (error) =>
-    error instanceof ModelContextOverflowError && error.message === 'final overflow')
-  assert.equal(attempt, 2)
-  assert.equal(
-    session.events.filter((event) => event.type === 'context-budget/decision').length,
-    1,
+  await assert.rejects(
+    loop.run(session, 'current'),
+    (error) => error instanceof ModelContextOverflowError && error.message === 'final overflow',
   )
+  assert.equal(attempt, 2)
+  assert.equal(session.events.filter((event) => event.type === 'context-budget/decision').length, 1)
   assert.equal(session.events.at(-1)?.type, 'turn/end')
   disconnect()
 })
@@ -274,18 +283,18 @@ test('cancellation during policy work aborts the turn without recording a failur
   appendTurn(session, 1, 'a'.repeat(80))
   appendTurn(session, 2)
   let entered!: () => void
-  const summarizing = new Promise<void>((resolve) => { entered = resolve })
+  const summarizing = new Promise<void>((resolve) => {
+    entered = resolve
+  })
   const contextPolicy = new ContextBudgetPolicy({
     compactor: new SessionCompactor({
       id: 'cancellable-summary',
       summarize(_request, options): Promise<string> {
         entered()
         return new Promise((_resolve, reject) => {
-          options?.signal?.addEventListener(
-            'abort',
-            () => reject(options.signal?.reason),
-            { once: true },
-          )
+          options?.signal?.addEventListener('abort', () => reject(options.signal?.reason), {
+            once: true,
+          })
         })
       },
     }),
@@ -300,8 +309,10 @@ test('cancellation during policy work aborts the turn without recording a failur
   await summarizing
   controller.abort(reason)
 
-  await assert.rejects(running, (error) =>
-    error instanceof TurnCancelledError && error.cause === reason)
+  await assert.rejects(
+    running,
+    (error) => error instanceof TurnCancelledError && error.cause === reason,
+  )
   assert.equal(model.requests.length, 0)
   assert.equal(
     session.events.some((event) => event.type === 'context-budget/decision'),

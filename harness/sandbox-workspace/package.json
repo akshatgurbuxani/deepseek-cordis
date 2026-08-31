@@ -11,7 +11,9 @@
       "default": "./dist/index.js"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "dependencies": {
     "@deepseek-cordis/protocol": "0.0.0",
     "@deepseek-cordis/sandbox": "0.0.0",

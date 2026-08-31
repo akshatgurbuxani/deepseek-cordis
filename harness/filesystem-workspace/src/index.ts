@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import {
+  type BigIntStats,
   closeSync,
   constants,
   fchmodSync,
@@ -7,26 +8,25 @@ import {
   linkSync,
   lstatSync,
   openSync,
-  readFileSync,
   readdirSync,
+  readFileSync,
   realpathSync,
   renameSync,
   statSync,
   unlinkSync,
   writeFileSync,
-  type BigIntStats,
 } from 'node:fs'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 
 import {
-  FileObservationPolicy,
-  FileSystemError,
   type DirectoryListing,
   type EditTextOptions,
   type FileKind,
+  FileObservationPolicy,
   type FileOperationOptions,
   type FileStat,
   type FileSystem,
+  FileSystemError,
   type FileTarget,
   type FileWrite,
   type ListOptions,
@@ -41,11 +41,8 @@ import type {
   SandboxRequest,
   ToolSandbox,
 } from '@deepseek-cordis/sandbox'
+import type { PromptAssemblyContext, PromptSection } from '@deepseek-cordis/system-prompt'
 import type { ConsequentialToolDefinition } from '@deepseek-cordis/tools'
-import type {
-  PromptAssemblyContext,
-  PromptSection,
-} from '@deepseek-cordis/system-prompt'
 
 export const WORKSPACE_FILESYSTEM_PROFILE = 'workspace-filesystem'
 export const WORKSPACE_READ_FILE_TOOL = 'read_workspace_file'
@@ -113,12 +110,16 @@ function failNode(error: unknown, action: string): never {
 function portableSegments(path: string): readonly string[] {
   if (path === '.') return []
   if (
-    path.length === 0
-    || path.includes('\0')
-    || path.includes('\\')
-    || isAbsolute(path)
-    || Buffer.byteLength(path, 'utf8') > maxPathBytes
-  ) throw new FileSystemError('FS_SANDBOX_DENIED', 'path must be a portable workspace-relative path')
+    path.length === 0 ||
+    path.includes('\0') ||
+    path.includes('\\') ||
+    isAbsolute(path) ||
+    Buffer.byteLength(path, 'utf8') > maxPathBytes
+  )
+    throw new FileSystemError(
+      'FS_SANDBOX_DENIED',
+      'path must be a portable workspace-relative path',
+    )
   const segments = path.split('/')
   if (segments.some((segment) => segment.length === 0 || segment === '.' || segment === '..')) {
     throw new FileSystemError('FS_SANDBOX_DENIED', 'path contains an invalid segment')
@@ -144,7 +145,8 @@ function versionOf(status: BigIntStats): string {
 }
 
 function checkPositiveInteger(value: number, name: string): void {
-  if (!Number.isInteger(value) || value < 1) throw new RangeError(`${name} must be a positive integer`)
+  if (!Number.isInteger(value) || value < 1)
+    throw new RangeError(`${name} must be a positive integer`)
 }
 
 /** Node-backed, root-confined provider. Its enforcement is intentionally partial. */
@@ -202,16 +204,21 @@ export class NodeWorkspaceFileSystem implements FileSystem {
       const all = readdirSync(hostPath, { withFileTypes: true })
         .map((entry) => ({
           name: entry.name,
-          kind: entry.isFile() ? 'file' as const
-            : entry.isDirectory() ? 'directory' as const
-              : entry.isSymbolicLink() ? 'symlink' as const
-                : 'other' as const,
+          kind: entry.isFile()
+            ? ('file' as const)
+            : entry.isDirectory()
+              ? ('directory' as const)
+              : entry.isSymbolicLink()
+                ? ('symlink' as const)
+                : ('other' as const),
         }))
         .sort((left, right) => left.name.localeCompare(right.name))
       this.#checkSignal(options.signal)
       return Object.freeze({
         path: target.displayPath,
-        entries: Object.freeze(all.slice(0, options.maxEntries).map((entry) => Object.freeze(entry))),
+        entries: Object.freeze(
+          all.slice(0, options.maxEntries).map((entry) => Object.freeze(entry)),
+        ),
         truncated: all.length > options.maxEntries,
       })
     } catch (error) {
@@ -247,7 +254,10 @@ export class NodeWorkspaceFileSystem implements FileSystem {
       const after = this.#regularFile(target)
       const version = versionOf(after.status)
       if (version !== versionOf(before.status)) {
-        throw new FileSystemError('FS_STALE_VERSION', `${target.displayPath} changed while being read`)
+        throw new FileSystemError(
+          'FS_STALE_VERSION',
+          `${target.displayPath} changed while being read`,
+        )
       }
       return Object.freeze({
         path: target.displayPath,
@@ -274,14 +284,22 @@ export class NodeWorkspaceFileSystem implements FileSystem {
       throw new FileSystemError('FS_SANDBOX_DENIED', `${target.displayPath} is a symbolic link`)
     }
     if (options.expectedVersion === null) {
-      if (existing) throw new FileSystemError('FS_STALE_VERSION', `${target.displayPath} now exists`)
+      if (existing)
+        throw new FileSystemError('FS_STALE_VERSION', `${target.displayPath} now exists`)
     } else {
-      if (!existing) throw new FileSystemError('FS_STALE_VERSION', `${target.displayPath} no longer exists`)
+      if (!existing)
+        throw new FileSystemError('FS_STALE_VERSION', `${target.displayPath} no longer exists`)
       if (!existing.isFile()) {
-        throw new FileSystemError('FS_NOT_REGULAR_FILE', `${target.displayPath} is not a regular file`)
+        throw new FileSystemError(
+          'FS_NOT_REGULAR_FILE',
+          `${target.displayPath} is not a regular file`,
+        )
       }
       if (versionOf(existing) !== options.expectedVersion) {
-        throw new FileSystemError('FS_STALE_VERSION', `${target.displayPath} changed after observation`)
+        throw new FileSystemError(
+          'FS_STALE_VERSION',
+          `${target.displayPath} changed after observation`,
+        )
       }
     }
     return this.#publish(
@@ -310,7 +328,10 @@ export class NodeWorkspaceFileSystem implements FileSystem {
       ...(options.signal ? { signal: options.signal } : {}),
     })
     if (current.version !== options.expectedVersion) {
-      throw new FileSystemError('FS_STALE_VERSION', `${target.displayPath} changed after observation`)
+      throw new FileSystemError(
+        'FS_STALE_VERSION',
+        `${target.displayPath} changed after observation`,
+      )
     }
     const first = current.content.indexOf(oldText)
     if (first < 0) {
@@ -349,7 +370,10 @@ export class NodeWorkspaceFileSystem implements FileSystem {
   #regularFile(target: FileTarget): { readonly hostPath: string; readonly status: BigIntStats } {
     const inspected = this.#inspect(target)
     if (!inspected.status.isFile()) {
-      throw new FileSystemError('FS_NOT_REGULAR_FILE', `${target.displayPath} is not a regular file`)
+      throw new FileSystemError(
+        'FS_NOT_REGULAR_FILE',
+        `${target.displayPath} is not a regular file`,
+      )
     }
     return inspected
   }
@@ -374,14 +398,23 @@ export class NodeWorkspaceFileSystem implements FileSystem {
         failNode(error, `parent of ${target.displayPath} was not found`)
       }
       if (status.isSymbolicLink()) {
-        throw new FileSystemError('FS_SANDBOX_DENIED', `${target.displayPath} crosses a symbolic link`)
+        throw new FileSystemError(
+          'FS_SANDBOX_DENIED',
+          `${target.displayPath} crosses a symbolic link`,
+        )
       }
       if (!status.isDirectory()) {
-        throw new FileSystemError('FS_NOT_DIRECTORY', `parent of ${target.displayPath} is not a directory`)
+        throw new FileSystemError(
+          'FS_NOT_DIRECTORY',
+          `parent of ${target.displayPath} is not a directory`,
+        )
       }
     }
     if (!isWithin(this.root, realpathSync(current))) {
-      throw new FileSystemError('FS_SANDBOX_DENIED', `${target.displayPath} escapes the workspace root`)
+      throw new FileSystemError(
+        'FS_SANDBOX_DENIED',
+        `${target.displayPath} escapes the workspace root`,
+      )
     }
   }
 
@@ -397,7 +430,10 @@ export class NodeWorkspaceFileSystem implements FileSystem {
   #checkContent(target: FileTarget, content: string): void {
     const bytes = Buffer.byteLength(content, 'utf8')
     if (bytes > this.maxFileBytes) {
-      throw new FileSystemError('FS_TOO_LARGE', `${target.displayPath} exceeds ${this.maxFileBytes} bytes`)
+      throw new FileSystemError(
+        'FS_TOO_LARGE',
+        `${target.displayPath} exceeds ${this.maxFileBytes} bytes`,
+      )
     }
   }
 
@@ -420,7 +456,11 @@ export class NodeWorkspaceFileSystem implements FileSystem {
     const temporaryPath = join(parent, `.deepseek-cordis-${randomUUID()}.tmp`)
     let descriptor: number | undefined
     try {
-      descriptor = openSync(temporaryPath, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY, 0o600)
+      descriptor = openSync(
+        temporaryPath,
+        constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY,
+        0o600,
+      )
       writeFileSync(descriptor, content, 'utf8')
       if (!create && existingMode !== undefined) {
         fchmodSync(descriptor, Number(existingMode & 0o777n))
@@ -440,7 +480,9 @@ export class NodeWorkspaceFileSystem implements FileSystem {
       })
     } catch (error) {
       if (nodeErrorCode(error) === 'EEXIST') {
-        throw new FileSystemError('FS_STALE_VERSION', `${target.displayPath} now exists`, { cause: error })
+        throw new FileSystemError('FS_STALE_VERSION', `${target.displayPath} now exists`, {
+          cause: error,
+        })
       }
       failNode(error, `could not write ${target.displayPath}`)
     } finally {
@@ -464,7 +506,12 @@ function consequentialTool(
   return {
     name,
     description,
-    inputSchema: { type: 'object', properties, required: [...required], additionalProperties: false },
+    inputSchema: {
+      type: 'object',
+      properties,
+      required: [...required],
+      additionalProperties: false,
+    },
     safety: {
       risk: 'filesystem',
       approvalReason: 'perform the requested bounded workspace filesystem operation',
@@ -474,19 +521,48 @@ function consequentialTool(
 }
 
 export function createWorkspaceFilesystemTools(): readonly ConsequentialToolDefinition[] {
-  const path = { type: 'string', description: 'Portable workspace-relative path; use . for the root.' }
+  const path = {
+    type: 'string',
+    description: 'Portable workspace-relative path; use . for the root.',
+  }
   return [
-    consequentialTool(WORKSPACE_READ_FILE_TOOL, 'Read one bounded UTF-8 workspace file.', { path }, ['path']),
-    consequentialTool(WORKSPACE_LIST_DIRECTORY_TOOL, 'List one workspace directory without recursion.', { path }, ['path']),
-    consequentialTool(WORKSPACE_STAT_PATH_TOOL, 'Inspect one workspace path, including confirmed absence.', { path }, ['path']),
-    consequentialTool(WORKSPACE_WRITE_FILE_TOOL, 'Create or replace an observed workspace file.', {
-      path, content: { type: 'string', description: 'Complete replacement UTF-8 contents.' },
-    }, ['path', 'content']),
-    consequentialTool(WORKSPACE_EDIT_FILE_TOOL, 'Replace exactly one occurrence in a previously read file.', {
-      path,
-      oldText: { type: 'string', description: 'Non-empty text expected exactly once.' },
-      newText: { type: 'string', description: 'Replacement text.' },
-    }, ['path', 'oldText', 'newText']),
+    consequentialTool(
+      WORKSPACE_READ_FILE_TOOL,
+      'Read one bounded UTF-8 workspace file.',
+      { path },
+      ['path'],
+    ),
+    consequentialTool(
+      WORKSPACE_LIST_DIRECTORY_TOOL,
+      'List one workspace directory without recursion.',
+      { path },
+      ['path'],
+    ),
+    consequentialTool(
+      WORKSPACE_STAT_PATH_TOOL,
+      'Inspect one workspace path, including confirmed absence.',
+      { path },
+      ['path'],
+    ),
+    consequentialTool(
+      WORKSPACE_WRITE_FILE_TOOL,
+      'Create or replace an observed workspace file.',
+      {
+        path,
+        content: { type: 'string', description: 'Complete replacement UTF-8 contents.' },
+      },
+      ['path', 'content'],
+    ),
+    consequentialTool(
+      WORKSPACE_EDIT_FILE_TOOL,
+      'Replace exactly one occurrence in a previously read file.',
+      {
+        path,
+        oldText: { type: 'string', description: 'Non-empty text expected exactly once.' },
+        newText: { type: 'string', description: 'Replacement text.' },
+      },
+      ['path', 'oldText', 'newText'],
+    ),
   ]
 }
 
@@ -494,7 +570,10 @@ function argumentsObject(value: JsonValue, keys: readonly string[]): Record<stri
   if (value === null || Array.isArray(value) || typeof value !== 'object') {
     throw new FileSystemError('FS_IO_ERROR', 'tool arguments must be an object')
   }
-  if (Object.keys(value).some((key) => !keys.includes(key)) || keys.some((key) => !(key in value))) {
+  if (
+    Object.keys(value).some((key) => !keys.includes(key)) ||
+    keys.some((key) => !(key in value))
+  ) {
     throw new FileSystemError('FS_IO_ERROR', `tool arguments must contain only ${keys.join(', ')}`)
   }
   return value
@@ -514,13 +593,17 @@ class FilesystemLease implements SandboxLease {
   readonly #executeOperation: () => Promise<JsonValue>
   #state: 'ready' | 'executed' | 'disposed' = 'ready'
 
-  constructor(executeOperation: () => Promise<JsonValue>, provider = 'workspace-filesystem/node-path-v1') {
+  constructor(
+    executeOperation: () => Promise<JsonValue>,
+    provider = 'workspace-filesystem/node-path-v1',
+  ) {
     this.#executeOperation = executeOperation
     this.provider = provider
   }
 
   async execute(): Promise<JsonValue> {
-    if (this.#state !== 'ready') throw new FileSystemError('FS_IO_ERROR', 'filesystem lease is no longer executable')
+    if (this.#state !== 'ready')
+      throw new FileSystemError('FS_IO_ERROR', 'filesystem lease is no longer executable')
     this.#state = 'executed'
     return this.#executeOperation()
   }
@@ -556,7 +639,10 @@ export class WorkspaceFilesystemSandbox implements ToolSandbox {
   async prepare(request: SandboxRequest): Promise<SandboxPreparation> {
     request.signal?.throwIfAborted()
     const legacy = request.toolName === legacyCreateTool && request.profile === legacyCreateProfile
-    if (request.risk !== 'filesystem' || (!legacy && request.profile !== WORKSPACE_FILESYSTEM_PROFILE)) {
+    if (
+      request.risk !== 'filesystem' ||
+      (!legacy && request.profile !== WORKSPACE_FILESYSTEM_PROFILE)
+    ) {
       return { ok: false, reason: 'workspace filesystem does not support this operation' }
     }
     try {
@@ -597,8 +683,12 @@ export class WorkspaceFilesystemSandbox implements ToolSandbox {
         const target = this.filesystem.resolve(stringArgument(args, 'path'))
         return async () => {
           try {
-            const result = await this.filesystem.stat(target, request.signal ? { signal: request.signal } : {})
-            if (result.version) this.observations.observeMetadata(request.sessionId, target, result.version)
+            const result = await this.filesystem.stat(
+              target,
+              request.signal ? { signal: request.signal } : {},
+            )
+            if (result.version)
+              this.observations.observeMetadata(request.sessionId, target, result.version)
             return { exists: true, ...result }
           } catch (error) {
             if (error instanceof FileSystemError && error.code === 'FS_NOT_FOUND') {
@@ -681,7 +771,10 @@ export class WorkspaceFilesystemSandbox implements ToolSandbox {
         }
       }
       default:
-        throw new FileSystemError('FS_IO_ERROR', 'workspace filesystem does not support this operation')
+        throw new FileSystemError(
+          'FS_IO_ERROR',
+          'workspace filesystem does not support this operation',
+        )
     }
   }
 }

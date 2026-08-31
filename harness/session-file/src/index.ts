@@ -5,8 +5,8 @@ import {
   fsyncSync,
   mkdirSync,
   openSync,
-  readFileSync,
   readdirSync,
+  readFileSync,
   renameSync,
   unlinkSync,
   writeFileSync,
@@ -51,7 +51,9 @@ export class UnsupportedSessionSchemaError extends SessionPersistenceError {
   readonly version: unknown
 
   constructor(version: unknown, source: string) {
-    super(`session file ${JSON.stringify(source)} uses unsupported schema version ${String(version)}`)
+    super(
+      `session file ${JSON.stringify(source)} uses unsupported schema version ${String(version)}`,
+    )
     this.version = version
   }
 }
@@ -74,45 +76,52 @@ function invalid(source: string, detail: string): never {
 
 function validateToolCall(value: unknown, source: string): void {
   if (
-    !isRecord(value)
-    || typeof value.id !== 'string'
-    || typeof value.name !== 'string'
-    || !isJsonValue(value.arguments)
-  ) invalid(source, 'event contains an invalid tool call')
+    !isRecord(value) ||
+    typeof value.id !== 'string' ||
+    typeof value.name !== 'string' ||
+    !isJsonValue(value.arguments)
+  )
+    invalid(source, 'event contains an invalid tool call')
 }
 
 function validateToolSchema(value: unknown, source: string): void {
   if (
-    !isRecord(value)
-    || typeof value.name !== 'string'
-    || typeof value.description !== 'string'
-    || !isJsonValue(value.inputSchema)
-  ) invalid(source, 'assistant usage contains an invalid tool schema')
+    !isRecord(value) ||
+    typeof value.name !== 'string' ||
+    typeof value.description !== 'string' ||
+    !isJsonValue(value.inputSchema)
+  )
+    invalid(source, 'assistant usage contains an invalid tool schema')
 }
 
 function validateAssistantUsage(value: unknown, index: number, source: string): void {
   if (value === undefined) return
   if (
-    !isRecord(value)
-    || typeof value.model !== 'string'
-    || value.model.trim().length === 0
-    || typeof value.inputTokens !== 'number'
-    || !Number.isInteger(value.inputTokens)
-    || value.inputTokens < 0
-    || typeof value.outputTokens !== 'number'
-    || !Number.isInteger(value.outputTokens)
-    || value.outputTokens < 0
-    || !Array.isArray(value.inputSurfaceSequences)
-    || value.inputSurfaceSequences.some((sequence) =>
-      typeof sequence !== 'number'
-      || !Number.isInteger(sequence)
-      || sequence < 1
-      || sequence >= index + 1)
-    || new Set(value.inputSurfaceSequences).size !== value.inputSurfaceSequences.length
-    || !Array.isArray(value.inputTools)
-    || (value.inputSystemPrompt !== undefined && typeof value.inputSystemPrompt !== 'string')
-  ) invalid(source, 'assistant event has invalid provider usage')
-  value.inputTools.forEach((tool) => validateToolSchema(tool, source))
+    !isRecord(value) ||
+    typeof value.model !== 'string' ||
+    value.model.trim().length === 0 ||
+    typeof value.inputTokens !== 'number' ||
+    !Number.isInteger(value.inputTokens) ||
+    value.inputTokens < 0 ||
+    typeof value.outputTokens !== 'number' ||
+    !Number.isInteger(value.outputTokens) ||
+    value.outputTokens < 0 ||
+    !Array.isArray(value.inputSurfaceSequences) ||
+    value.inputSurfaceSequences.some(
+      (sequence) =>
+        typeof sequence !== 'number' ||
+        !Number.isInteger(sequence) ||
+        sequence < 1 ||
+        sequence >= index + 1,
+    ) ||
+    new Set(value.inputSurfaceSequences).size !== value.inputSurfaceSequences.length ||
+    !Array.isArray(value.inputTools) ||
+    (value.inputSystemPrompt !== undefined && typeof value.inputSystemPrompt !== 'string')
+  )
+    invalid(source, 'assistant event has invalid provider usage')
+  value.inputTools.forEach((tool) => {
+    validateToolSchema(tool, source)
+  })
 }
 
 function validateStep(value: unknown, source: string): void {
@@ -123,11 +132,12 @@ function validateStep(value: unknown, source: string): void {
 
 function validateEvent(value: unknown, index: number, source: string): SessionEvent {
   if (
-    !isRecord(value)
-    || value.sequence !== index + 1
-    || typeof value.turnId !== 'string'
-    || typeof value.type !== 'string'
-  ) invalid(source, `event ${index + 1} has an invalid envelope or sequence`)
+    !isRecord(value) ||
+    value.sequence !== index + 1 ||
+    typeof value.turnId !== 'string' ||
+    typeof value.type !== 'string'
+  )
+    invalid(source, `event ${index + 1} has an invalid envelope or sequence`)
 
   switch (value.type) {
     case 'turn/start':
@@ -144,132 +154,135 @@ function validateEvent(value: unknown, index: number, source: string): SessionEv
       break
     case 'assistant/tool-calls':
       if (!Array.isArray(value.calls)) invalid(source, 'assistant/tool-calls has invalid calls')
-      value.calls.forEach((call) => validateToolCall(call, source))
+      value.calls.forEach((call) => {
+        validateToolCall(call, source)
+      })
       validateAssistantUsage(value.usage, index, source)
       break
     case 'compaction/summary':
       if (
-        typeof value.summary !== 'string'
-        || value.summary.trim().length === 0
-        || typeof value.summarizer !== 'string'
-        || value.summarizer.trim().length === 0
-        || !Array.isArray(value.shadowedSequences)
-        || value.shadowedSequences.length === 0
-        || value.shadowedSequences.some((sequence) =>
-          typeof sequence !== 'number'
-          || !Number.isInteger(sequence)
-          || sequence < 1
-          || sequence >= index + 1)
-        || new Set(value.shadowedSequences).size !== value.shadowedSequences.length
-      ) invalid(source, 'compaction/summary has invalid provenance')
+        typeof value.summary !== 'string' ||
+        value.summary.trim().length === 0 ||
+        typeof value.summarizer !== 'string' ||
+        value.summarizer.trim().length === 0 ||
+        !Array.isArray(value.shadowedSequences) ||
+        value.shadowedSequences.length === 0 ||
+        value.shadowedSequences.some(
+          (sequence) =>
+            typeof sequence !== 'number' ||
+            !Number.isInteger(sequence) ||
+            sequence < 1 ||
+            sequence >= index + 1,
+        ) ||
+        new Set(value.shadowedSequences).size !== value.shadowedSequences.length
+      )
+        invalid(source, 'compaction/summary has invalid provenance')
       break
     case 'context-budget/decision':
       if (
-        !['pressure', 'context_overflow'].includes(String(value.trigger))
-        || typeof value.model !== 'string'
-        || value.model.trim().length === 0
-        || typeof value.measuredTokens !== 'number'
-        || !Number.isInteger(value.measuredTokens)
-        || value.measuredTokens < 0
-        || (value.contextWindow !== undefined && (
-          typeof value.contextWindow !== 'number'
-          || !Number.isInteger(value.contextWindow)
-          || value.contextWindow < 1
-        ))
-        || (value.thresholdTokens !== undefined && (
-          typeof value.thresholdTokens !== 'number'
-          || !Number.isInteger(value.thresholdTokens)
-          || value.thresholdTokens < 1
-        ))
-        || (value.trigger === 'pressure' && (
-          value.contextWindow === undefined
-          || value.thresholdTokens === undefined
-          || value.thresholdTokens > value.contextWindow
-        ))
-        || (value.trigger === 'context_overflow' && value.thresholdTokens !== undefined)
-        || !['compacted', 'no_progress', 'failed'].includes(String(value.outcome))
-        || (value.summarySequence !== undefined && (
-          typeof value.summarySequence !== 'number'
-          || !Number.isInteger(value.summarySequence)
-          || value.summarySequence < 1
-          || value.summarySequence >= index + 1
-        ))
-        || (value.error !== undefined && (
-          typeof value.error !== 'string'
-          || value.error.trim().length === 0
-        ))
-        || (value.outcome === 'compacted') !== (value.summarySequence !== undefined)
-        || (value.outcome === 'failed') !== (value.error !== undefined)
-      ) invalid(source, 'context-budget/decision has invalid fields')
+        !['pressure', 'context_overflow'].includes(String(value.trigger)) ||
+        typeof value.model !== 'string' ||
+        value.model.trim().length === 0 ||
+        typeof value.measuredTokens !== 'number' ||
+        !Number.isInteger(value.measuredTokens) ||
+        value.measuredTokens < 0 ||
+        (value.contextWindow !== undefined &&
+          (typeof value.contextWindow !== 'number' ||
+            !Number.isInteger(value.contextWindow) ||
+            value.contextWindow < 1)) ||
+        (value.thresholdTokens !== undefined &&
+          (typeof value.thresholdTokens !== 'number' ||
+            !Number.isInteger(value.thresholdTokens) ||
+            value.thresholdTokens < 1)) ||
+        (value.trigger === 'pressure' &&
+          (value.contextWindow === undefined ||
+            value.thresholdTokens === undefined ||
+            value.thresholdTokens > value.contextWindow)) ||
+        (value.trigger === 'context_overflow' && value.thresholdTokens !== undefined) ||
+        !['compacted', 'no_progress', 'failed'].includes(String(value.outcome)) ||
+        (value.summarySequence !== undefined &&
+          (typeof value.summarySequence !== 'number' ||
+            !Number.isInteger(value.summarySequence) ||
+            value.summarySequence < 1 ||
+            value.summarySequence >= index + 1)) ||
+        (value.error !== undefined &&
+          (typeof value.error !== 'string' || value.error.trim().length === 0)) ||
+        (value.outcome === 'compacted') !== (value.summarySequence !== undefined) ||
+        (value.outcome === 'failed') !== (value.error !== undefined)
+      )
+        invalid(source, 'context-budget/decision has invalid fields')
       break
     case 'tool/call':
       validateToolCall(value.call, source)
       break
     case 'approval/asked':
       if (
-        typeof value.callId !== 'string'
-        || typeof value.name !== 'string'
-        || !['filesystem', 'shell', 'browser', 'external'].includes(String(value.risk))
-        || typeof value.reason !== 'string'
-        || value.reason.trim().length === 0
-      ) invalid(source, 'approval/asked has invalid fields')
+        typeof value.callId !== 'string' ||
+        typeof value.name !== 'string' ||
+        !['filesystem', 'shell', 'browser', 'external'].includes(String(value.risk)) ||
+        typeof value.reason !== 'string' ||
+        value.reason.trim().length === 0
+      )
+        invalid(source, 'approval/asked has invalid fields')
       break
     case 'approval/decided':
       if (
-        typeof value.callId !== 'string'
-        || typeof value.name !== 'string'
-        || !['allowed-once', 'rejected', 'cancelled', 'unavailable'].includes(
-          String(value.outcome),
-        )
-      ) invalid(source, 'approval/decided has invalid fields')
+        typeof value.callId !== 'string' ||
+        typeof value.name !== 'string' ||
+        !['allowed-once', 'rejected', 'cancelled', 'unavailable'].includes(String(value.outcome))
+      )
+        invalid(source, 'approval/decided has invalid fields')
       break
     case 'sandbox/prepared':
       if (
-        typeof value.callId !== 'string'
-        || typeof value.name !== 'string'
-        || typeof value.profile !== 'string'
-        || value.profile.trim().length === 0
-        || typeof value.provider !== 'string'
-        || value.provider.trim().length === 0
-        || !['full', 'partial'].includes(String(value.enforcement))
-      ) invalid(source, 'sandbox/prepared has invalid fields')
+        typeof value.callId !== 'string' ||
+        typeof value.name !== 'string' ||
+        typeof value.profile !== 'string' ||
+        value.profile.trim().length === 0 ||
+        typeof value.provider !== 'string' ||
+        value.provider.trim().length === 0 ||
+        !['full', 'partial'].includes(String(value.enforcement))
+      )
+        invalid(source, 'sandbox/prepared has invalid fields')
       break
     case 'command/run':
       if (
-        typeof value.commandId !== 'string'
-        || value.commandId.length === 0
-        || value.turnId !== value.commandId
-        || typeof value.name !== 'string'
-        || !/^[a-z][a-z0-9_-]*$/.test(value.name)
-        || typeof value.rawInput !== 'string'
-      ) invalid(source, 'command/run has invalid fields')
+        typeof value.commandId !== 'string' ||
+        value.commandId.length === 0 ||
+        value.turnId !== value.commandId ||
+        typeof value.name !== 'string' ||
+        !/^[a-z][a-z0-9_-]*$/.test(value.name) ||
+        typeof value.rawInput !== 'string'
+      )
+        invalid(source, 'command/run has invalid fields')
       break
     case 'command/done':
       if (
-        typeof value.commandId !== 'string'
-        || value.commandId.length === 0
-        || value.turnId !== value.commandId
-        || typeof value.name !== 'string'
-        || !/^[a-z][a-z0-9_-]*$/.test(value.name)
-        || !isRecord(value.result)
-        || !['success', 'error'].includes(String(value.result.kind))
-        || (value.result.text !== undefined && typeof value.result.text !== 'string')
-        || (value.result.kind === 'error' && typeof value.result.text !== 'string')
-        || (value.result.sourceSequence !== undefined && (
-          value.result.kind !== 'success'
-          || typeof value.result.sourceSequence !== 'number'
-          || !Number.isInteger(value.result.sourceSequence)
-          || value.result.sourceSequence < 1
-          || value.result.sourceSequence >= index + 1
-        ))
-      ) invalid(source, 'command/done has invalid fields')
+        typeof value.commandId !== 'string' ||
+        value.commandId.length === 0 ||
+        value.turnId !== value.commandId ||
+        typeof value.name !== 'string' ||
+        !/^[a-z][a-z0-9_-]*$/.test(value.name) ||
+        !isRecord(value.result) ||
+        !['success', 'error'].includes(String(value.result.kind)) ||
+        (value.result.text !== undefined && typeof value.result.text !== 'string') ||
+        (value.result.kind === 'error' && typeof value.result.text !== 'string') ||
+        (value.result.sourceSequence !== undefined &&
+          (value.result.kind !== 'success' ||
+            typeof value.result.sourceSequence !== 'number' ||
+            !Number.isInteger(value.result.sourceSequence) ||
+            value.result.sourceSequence < 1 ||
+            value.result.sourceSequence >= index + 1))
+      )
+        invalid(source, 'command/done has invalid fields')
       break
     case 'tool/result':
       if (
-        typeof value.callId !== 'string'
-        || typeof value.name !== 'string'
-        || typeof value.ok !== 'boolean'
-      ) invalid(source, 'tool/result has an invalid envelope')
+        typeof value.callId !== 'string' ||
+        typeof value.name !== 'string' ||
+        typeof value.ok !== 'boolean'
+      )
+        invalid(source, 'tool/result has an invalid envelope')
       if (value.ok) {
         if (!isJsonValue(value.output)) invalid(source, 'tool/result has invalid output')
       } else if (typeof value.error !== 'string') {
@@ -278,9 +291,11 @@ function validateEvent(value: unknown, index: number, source: string): SessionEv
       break
     case 'step/end':
       validateStep(value.step, source)
-      if (![
-        'tool_calls', 'completed', 'failed', 'aborted', 'interrupted',
-      ].includes(String(value.outcome))) {
+      if (
+        !['tool_calls', 'completed', 'failed', 'aborted', 'interrupted'].includes(
+          String(value.outcome),
+        )
+      ) {
         invalid(source, 'step/end has an invalid outcome')
       }
       break
@@ -315,12 +330,13 @@ function decodeDocument(contents: string, source: string): DecodedDocument {
   }
   if (!isRecord(value)) invalid(source, 'document is not an object')
 
-  const migrated = value.schemaVersion === undefined
-    || value.schemaVersion === 1
-    || value.schemaVersion === 2
-    || value.schemaVersion === 3
-    || value.schemaVersion === 4
-    || value.schemaVersion === 5
+  const migrated =
+    value.schemaVersion === undefined ||
+    value.schemaVersion === 1 ||
+    value.schemaVersion === 2 ||
+    value.schemaVersion === 3 ||
+    value.schemaVersion === 4 ||
+    value.schemaVersion === 5
   if (!migrated && value.schemaVersion !== SESSION_FILE_SCHEMA_VERSION) {
     throw new UnsupportedSessionSchemaError(value.schemaVersion, source)
   }
@@ -330,52 +346,61 @@ function decodeDocument(contents: string, source: string): DecodedDocument {
   const events = value.events.map((event, index) => validateEvent(event, index, source))
   for (const event of events) {
     if (
-      event.type !== 'command/done'
-      || event.result.kind !== 'success'
-      || event.result.sourceSequence === undefined
-    ) continue
+      event.type !== 'command/done' ||
+      event.result.kind !== 'success' ||
+      event.result.sourceSequence === undefined
+    )
+      continue
     const sourceEvent = events[event.result.sourceSequence - 1]
     if (
-      sourceEvent === undefined
-      || sourceEvent.type === 'command/run'
-      || sourceEvent.type === 'command/done'
-    ) invalid(source, 'command/done references an invalid source event')
+      sourceEvent === undefined ||
+      sourceEvent.type === 'command/run' ||
+      sourceEvent.type === 'command/done'
+    )
+      invalid(source, 'command/done references an invalid source event')
   }
   if (
-    (value.schemaVersion === undefined || value.schemaVersion === 1)
-    && events.some((event) => event.type === 'compaction/summary')
-  ) invalid(source, 'legacy schema contains an event introduced by a newer schema')
+    (value.schemaVersion === undefined || value.schemaVersion === 1) &&
+    events.some((event) => event.type === 'compaction/summary')
+  )
+    invalid(source, 'legacy schema contains an event introduced by a newer schema')
   if (
-    (value.schemaVersion === undefined
-      || value.schemaVersion === 1
-      || value.schemaVersion === 2)
-    && events.some((event) => event.type === 'context-budget/decision')
-  ) invalid(source, 'legacy schema contains an event introduced by a newer schema')
+    (value.schemaVersion === undefined || value.schemaVersion === 1 || value.schemaVersion === 2) &&
+    events.some((event) => event.type === 'context-budget/decision')
+  )
+    invalid(source, 'legacy schema contains an event introduced by a newer schema')
   if (
-    (value.schemaVersion === undefined
-      || value.schemaVersion === 1
-      || value.schemaVersion === 2
-      || value.schemaVersion === 3
-      || value.schemaVersion === 4)
-    && events.some((event) =>
-      (event.type === 'assistant/message' || event.type === 'assistant/tool-calls')
-      && event.usage !== undefined)
-  ) invalid(source, 'legacy schema contains an event introduced by a newer schema')
+    (value.schemaVersion === undefined ||
+      value.schemaVersion === 1 ||
+      value.schemaVersion === 2 ||
+      value.schemaVersion === 3 ||
+      value.schemaVersion === 4) &&
+    events.some(
+      (event) =>
+        (event.type === 'assistant/message' || event.type === 'assistant/tool-calls') &&
+        event.usage !== undefined,
+    )
+  )
+    invalid(source, 'legacy schema contains an event introduced by a newer schema')
   if (
-    value.schemaVersion !== SESSION_FILE_SCHEMA_VERSION
-    && events.some((event) => event.type === 'command/run' || event.type === 'command/done')
-  ) invalid(source, 'legacy schema contains an event introduced by a newer schema')
+    value.schemaVersion !== SESSION_FILE_SCHEMA_VERSION &&
+    events.some((event) => event.type === 'command/run' || event.type === 'command/done')
+  )
+    invalid(source, 'legacy schema contains an event introduced by a newer schema')
   if (
-    (value.schemaVersion === undefined
-      || value.schemaVersion === 1
-      || value.schemaVersion === 2
-      || value.schemaVersion === 3
-      || value.schemaVersion === 4)
-    && events.some((event) =>
-      event.type === 'approval/asked'
-      || event.type === 'approval/decided'
-      || event.type === 'sandbox/prepared')
-  ) invalid(source, 'legacy schema contains an event introduced by a newer schema')
+    (value.schemaVersion === undefined ||
+      value.schemaVersion === 1 ||
+      value.schemaVersion === 2 ||
+      value.schemaVersion === 3 ||
+      value.schemaVersion === 4) &&
+    events.some(
+      (event) =>
+        event.type === 'approval/asked' ||
+        event.type === 'approval/decided' ||
+        event.type === 'sandbox/prepared',
+    )
+  )
+    invalid(source, 'legacy schema contains an event introduced by a newer schema')
   try {
     deriveSessionSurface(events)
   } catch (error) {
@@ -414,15 +439,14 @@ export function interruptedTurnClosers(
 ): readonly SessionEvent[] {
   const closers: SessionEvent[] = []
   const append = (input: SessionEventInput) => {
-    closers.push(snapshot({
-      ...input,
-      sequence: events.length + closers.length + 1,
-    }) as SessionEvent)
+    closers.push(
+      snapshot({
+        ...input,
+        sequence: events.length + closers.length + 1,
+      }) as SessionEvent,
+    )
   }
-  const openCommands = new Map<
-    string,
-    Extract<SessionEvent, { readonly type: 'command/run' }>
-  >()
+  const openCommands = new Map<string, Extract<SessionEvent, { readonly type: 'command/run' }>>()
   let commandScanTurn: string | undefined
   for (const event of events) {
     if (event.type === 'turn/start') {
@@ -461,15 +485,12 @@ export function interruptedTurnClosers(
   if (suffix.length === 0) return closers
   const nextTurn = suffix.findIndex((event) => event.type === 'turn/start')
   const isMaintenance = (event: SessionEvent) =>
-    event.type === 'compaction/summary'
-    || event.type === 'context-budget/decision'
-    || event.type === 'command/run'
-    || event.type === 'command/done'
+    event.type === 'compaction/summary' ||
+    event.type === 'context-budget/decision' ||
+    event.type === 'command/run' ||
+    event.type === 'command/done'
   if (nextTurn === -1 && suffix.every(isMaintenance)) return closers
-  if (
-    nextTurn === -1
-    || suffix.slice(0, nextTurn).some((event) => !isMaintenance(event))
-  ) {
+  if (nextTurn === -1 || suffix.slice(0, nextTurn).some((event) => !isMaintenance(event))) {
     invalid(source, 'events follow the last closed turn without a new turn/start')
   }
   const tail = suffix.slice(nextTurn)
@@ -480,16 +501,16 @@ export function interruptedTurnClosers(
 
   for (const event of tail.slice(1)) {
     if (
-      event.type !== 'compaction/summary'
-      && event.type !== 'context-budget/decision'
-      && event.turnId !== turnId
+      event.type !== 'compaction/summary' &&
+      event.type !== 'context-budget/decision' &&
+      event.turnId !== turnId
     ) {
       invalid(source, 'open trailing turn contains a mismatched turn id')
     }
     switch (event.type) {
       case 'turn/start':
       case 'turn/end':
-        invalid(source, 'open trailing turn contains a nested turn boundary')
+        return invalid(source, 'open trailing turn contains a nested turn boundary')
       case 'step/start':
         if (openStep !== undefined) {
           invalid(source, 'open trailing turn contains nested step/start events')
@@ -539,10 +560,10 @@ export function interruptedTurnClosers(
       case 'sandbox/prepared': {
         const entry = pending.get(event.callId)
         if (
-          openStep === undefined
-          || !entry
-          || entry.approval !== 'allowed-once'
-          || entry.sandboxPrepared
+          openStep === undefined ||
+          !entry ||
+          entry.approval !== 'allowed-once' ||
+          entry.sandboxPrepared
         ) {
           invalid(source, `${event.type} ${JSON.stringify(event.callId)} is not approved`)
         }
@@ -585,7 +606,7 @@ export function interruptedTurnClosers(
         break
       case 'command/run':
       case 'command/done':
-        invalid(source, `${event.type} appears inside an open trailing turn`)
+        return invalid(source, `${event.type} appears inside an open trailing turn`)
       case 'user/message':
       case 'turn/error':
         break
@@ -635,10 +656,14 @@ export function atomicReplaceFile(filePath: string, contents: string): void {
     })
   } finally {
     if (descriptor !== undefined) {
-      try { closeSync(descriptor) } catch {}
+      try {
+        closeSync(descriptor)
+      } catch {}
     }
     if (!committed) {
-      try { unlinkSync(temporaryPath) } catch {}
+      try {
+        unlinkSync(temporaryPath)
+      } catch {}
     }
   }
 
@@ -652,7 +677,9 @@ export function atomicReplaceFile(filePath: string, contents: string): void {
     // Some platforms do not support fsync on directories.
   } finally {
     if (directoryDescriptor !== undefined) {
-      try { closeSync(directoryDescriptor) } catch {}
+      try {
+        closeSync(directoryDescriptor)
+      } catch {}
     }
   }
 }
@@ -677,16 +704,20 @@ export class FileSession implements Session {
   }
 
   append<const Input extends SessionEventInput>(input: Input): AppendedSessionEvent<Input> {
-    const event = validateEvent(snapshot({
-      ...input,
-      sequence: this.#events.length + 1,
-    }), this.#events.length, `session ${JSON.stringify(this.id)} append`)
+    const event = validateEvent(
+      snapshot({
+        ...input,
+        sequence: this.#events.length + 1,
+      }),
+      this.#events.length,
+      `session ${JSON.stringify(this.id)} append`,
+    )
     const candidate = [...this.#events, event]
     if (
-      event.type === 'compaction/summary'
-      || event.type === 'context-budget/decision'
-      || ((event.type === 'assistant/message' || event.type === 'assistant/tool-calls')
-        && event.usage !== undefined)
+      event.type === 'compaction/summary' ||
+      event.type === 'context-budget/decision' ||
+      ((event.type === 'assistant/message' || event.type === 'assistant/tool-calls') &&
+        event.usage !== undefined)
     ) {
       deriveSessionSurface(candidate)
     }
@@ -755,10 +786,7 @@ export class FileSessionStore implements SessionStore {
       const closers = interruptedTurnClosers(decoded.events, filePath)
       const events = [...decoded.events, ...closers]
       if (decoded.migrated || closers.length > 0) persist(events)
-      this.#sessions.set(
-        decoded.id,
-        new FileSession(decoded.id, events, persist),
-      )
+      this.#sessions.set(decoded.id, new FileSession(decoded.id, events, persist))
     }
   }
 }

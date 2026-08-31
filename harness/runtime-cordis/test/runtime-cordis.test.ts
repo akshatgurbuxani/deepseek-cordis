@@ -1,30 +1,29 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-
-import { ReplayModelAdapter } from '@deepseek-cordis/model/testing'
 import type { ApprovalService } from '@deepseek-cordis/approval'
-import { SessionCompactor } from '@deepseek-cordis/compaction'
 import { InMemoryCommandRegistry } from '@deepseek-cordis/commands'
+import { SessionCompactor } from '@deepseek-cordis/compaction'
+import { ReplayModelAdapter } from '@deepseek-cordis/model/testing'
 import type { JsonValue } from '@deepseek-cordis/protocol'
-import { InMemoryToolRegistry, type ToolDefinition } from '@deepseek-cordis/tools'
-import type { ToolSandbox } from '@deepseek-cordis/sandbox'
 import {
   createAgentLoopPlugin,
   createApprovalServicePlugin,
-  createCompactionPlugin,
   createCommandRegistrationPlugin,
   createCommandRegistryPlugin,
+  createCompactionPlugin,
   createModelAdapterPlugin,
   createPromptSectionPlugin,
-  createSessionStorePlugin,
   createSandboxPlugin,
+  createSessionStorePlugin,
   createSystemPromptPlugin,
+  createTokenMeterPlugin,
   createToolRegistrationPlugin,
   createToolRegistryPlugin,
-  createTokenMeterPlugin,
 } from '@deepseek-cordis/runtime-cordis'
-import { Context, FiberState, type Fiber, type Plugin } from 'cordis'
+import type { ToolSandbox } from '@deepseek-cordis/sandbox'
 import { InMemorySystemPrompt } from '@deepseek-cordis/system-prompt'
+import { InMemoryToolRegistry, type ToolDefinition } from '@deepseek-cordis/tools'
+import { Context, type Fiber, FiberState, type Plugin } from 'cordis'
 
 async function mount(context: Context, plugin: Plugin): Promise<Fiber> {
   const fiber = context.plugin(plugin)
@@ -50,12 +49,13 @@ function addTool(offset = 0): ToolDefinition {
     safety: { risk: 'none' },
     execute(argumentsValue: JsonValue) {
       if (
-        argumentsValue === null
-        || Array.isArray(argumentsValue)
-        || typeof argumentsValue !== 'object'
-        || typeof argumentsValue.a !== 'number'
-        || typeof argumentsValue.b !== 'number'
-      ) throw new Error('invalid add arguments')
+        argumentsValue === null ||
+        Array.isArray(argumentsValue) ||
+        typeof argumentsValue !== 'object' ||
+        typeof argumentsValue.a !== 'number' ||
+        typeof argumentsValue.b !== 'number'
+      )
+        throw new Error('invalid add arguments')
       return argumentsValue.a + argumentsValue.b + offset
     },
   }
@@ -69,13 +69,15 @@ test('the loop remains pending until every provider exists, then runs a complete
 
   const sessions = createSessionStorePlugin()
   const tools = createToolRegistryPlugin()
-  const model = createModelAdapterPlugin(new ReplayModelAdapter('calculator', [
-    {
-      type: 'tool_calls',
-      calls: [{ id: 'call-1', name: 'add', arguments: { a: 2, b: 3 } }],
-    },
-    { type: 'message', content: 'The answer is 5.' },
-  ]))
+  const model = createModelAdapterPlugin(
+    new ReplayModelAdapter('calculator', [
+      {
+        type: 'tool_calls',
+        calls: [{ id: 'call-1', name: 'add', arguments: { a: 2, b: 3 } }],
+      },
+      { type: 'message', content: 'The answer is 5.' },
+    ]),
+  )
   const fibers = [
     loopFiber,
     await mount(context, sessions.plugin),
@@ -102,19 +104,22 @@ test('the loop remains pending until every provider exists, then runs a complete
     content: 'The answer is 5.',
     steps: 2,
   })
-  assert.deepEqual(session.events.map((event) => event.type), [
-    'turn/start',
-    'user/message',
-    'step/start',
-    'assistant/tool-calls',
-    'tool/call',
-    'tool/result',
-    'step/end',
-    'step/start',
-    'assistant/message',
-    'step/end',
-    'turn/end',
-  ])
+  assert.deepEqual(
+    session.events.map((event) => event.type),
+    [
+      'turn/start',
+      'user/message',
+      'step/start',
+      'assistant/tool-calls',
+      'tool/call',
+      'tool/result',
+      'step/end',
+      'step/start',
+      'assistant/message',
+      'step/end',
+      'turn/end',
+    ],
+  )
 
   await disposeReverse(fibers)
 })
@@ -168,7 +173,10 @@ test('effect-owned tool registration withdraws once and replacement changes late
   fibers.push(secondTool)
   await context.agentLoop.run(session, 'second')
   const results = session.events.filter((event) => event.type === 'tool/result')
-  assert.deepEqual(results.map((event) => event.ok ? event.output : undefined), [2, 12])
+  assert.deepEqual(
+    results.map((event) => (event.ok ? event.output : undefined)),
+    [2, 12],
+  )
 
   await disposeReverse(fibers)
   assert.equal(registry.disposeCount, 2)
@@ -178,9 +186,9 @@ test('model withdrawal drains and reconnects the same loop without replacing ses
   const context = new Context()
   const sessions = createSessionStorePlugin()
   const tools = createToolRegistryPlugin()
-  const firstModel = createModelAdapterPlugin(new ReplayModelAdapter('model-v1', [
-    { type: 'message', content: 'from v1' },
-  ]))
+  const firstModel = createModelAdapterPlugin(
+    new ReplayModelAdapter('model-v1', [{ type: 'message', content: 'from v1' }]),
+  )
   const loop = createAgentLoopPlugin()
   const sessionFiber = await mount(context, sessions.plugin)
   const toolsFiber = await mount(context, tools.plugin)
@@ -200,10 +208,7 @@ test('model withdrawal drains and reconnects the same loop without replacing ses
   const secondAdapter = new ReplayModelAdapter('model-v2', [
     { type: 'message', content: 'from v2' },
   ])
-  const secondModelFiber = await mount(
-    context,
-    createModelAdapterPlugin(secondAdapter).plugin,
-  )
+  const secondModelFiber = await mount(context, createModelAdapterPlugin(secondAdapter).plugin)
   await loopFiber
   const result = await loop.value.run(session, 'second turn')
 
@@ -217,7 +222,13 @@ test('model withdrawal drains and reconnects the same loop without replacing ses
   ])
 
   await disposeReverse([
-    sessionFiber, toolsFiber, secondModelFiber, approvalFiber, sandboxFiber, promptFiber, loopFiber,
+    sessionFiber,
+    toolsFiber,
+    secondModelFiber,
+    approvalFiber,
+    sandboxFiber,
+    promptFiber,
+    loopFiber,
   ])
 })
 
@@ -235,12 +246,18 @@ test('isolated contexts inherit sessions and tools but resolve independent model
   const first = root.isolate('model').isolate('agentLoop')
   const second = root.isolate('model').isolate('agentLoop')
   const realmFibers = [
-    await mount(first, createModelAdapterPlugin(new ReplayModelAdapter('first', [
-      { type: 'message', content: 'from first realm' },
-    ])).plugin),
-    await mount(second, createModelAdapterPlugin(new ReplayModelAdapter('second', [
-      { type: 'message', content: 'from second realm' },
-    ])).plugin),
+    await mount(
+      first,
+      createModelAdapterPlugin(
+        new ReplayModelAdapter('first', [{ type: 'message', content: 'from first realm' }]),
+      ).plugin,
+    ),
+    await mount(
+      second,
+      createModelAdapterPlugin(
+        new ReplayModelAdapter('second', [{ type: 'message', content: 'from second realm' }]),
+      ).plugin,
+    ),
     await mount(first, createAgentLoopPlugin().plugin),
     await mount(second, createAgentLoopPlugin().plugin),
   ]
@@ -346,8 +363,12 @@ test('approval provider replacement drains and safely reconnects the stable loop
       return {
         ok: true,
         lease: {
-          provider: 'test-sandbox', enforcement: 'full',
-          async execute() { executions += 1; return request.arguments },
+          provider: 'test-sandbox',
+          enforcement: 'full',
+          async execute() {
+            executions += 1
+            return request.arguments
+          },
           dispose() {},
         },
       }
@@ -365,16 +386,19 @@ test('approval provider replacement drains and safely reconnects the stable loop
   const approvalFiber = await mount(context, createApprovalServicePlugin(reject).plugin)
   const loopFactory = createAgentLoopPlugin()
   const loopFiber = await mount(context, loopFactory.plugin)
-  const toolFiber = await mount(context, createToolRegistrationPlugin({
-    name: 'write-file',
-    description: 'Write a file',
-    inputSchema: {},
-    safety: {
-      risk: 'filesystem',
-      approvalReason: 'write a workspace file',
-      sandbox: { profile: 'workspace-write', requiredEnforcement: 'full' },
-    },
-  }))
+  const toolFiber = await mount(
+    context,
+    createToolRegistrationPlugin({
+      name: 'write-file',
+      description: 'Write a file',
+      inputSchema: {},
+      safety: {
+        risk: 'filesystem',
+        approvalReason: 'write a workspace file',
+        sandbox: { profile: 'workspace-write', requiredEnforcement: 'full' },
+      },
+    }),
+  )
   const session = context.sessions.create('approval-replacement')
   const stableLoop = context.agentLoop
 
@@ -389,7 +413,10 @@ test('approval provider replacement drains and safely reconnects the stable loop
 
   assert.equal(executions, 1)
   const decisions = session.events.filter((event) => event.type === 'approval/decided')
-  assert.deepEqual(decisions.map((event) => event.outcome), ['rejected', 'allowed-once'])
+  assert.deepEqual(
+    decisions.map((event) => event.outcome),
+    ['rejected', 'allowed-once'],
+  )
   assert.equal(session.events.filter((event) => event.type === 'sandbox/prepared').length, 1)
 
   await disposeReverse([...baseFibers, replacementFiber, loopFiber, toolFiber])
@@ -397,35 +424,71 @@ test('approval provider replacement drains and safely reconnects the stable loop
 
 test('prompt section effects follow provider availability and dispose exactly', async () => {
   const context = new Context()
-  const registration = context.plugin(createPromptSectionPlugin({
-    name: 'test:persona', order: 0, text: 'registered persona',
-  }))
+  const registration = context.plugin(
+    createPromptSectionPlugin({
+      name: 'test:persona',
+      order: 0,
+      text: 'registered persona',
+    }),
+  )
   assert.equal(registration.state, FiberState.PENDING)
 
   const first = createSystemPromptPlugin()
   const firstFiber = await mount(context, first.plugin)
   await registration
-  assert.equal((await context.systemPrompt.assemble({
-    sessionId: 'session', turnId: 'turn', step: 1, tools: [],
-  })).systemPrompt, 'registered persona')
+  assert.equal(
+    (
+      await context.systemPrompt.assemble({
+        sessionId: 'session',
+        turnId: 'turn',
+        step: 1,
+        tools: [],
+      })
+    ).systemPrompt,
+    'registered persona',
+  )
 
   await firstFiber.dispose()
-  assert.equal((await first.value.assemble({
-    sessionId: 'session', turnId: 'turn', step: 1, tools: [],
-  })).systemPrompt, undefined)
+  assert.equal(
+    (
+      await first.value.assemble({
+        sessionId: 'session',
+        turnId: 'turn',
+        step: 1,
+        tools: [],
+      })
+    ).systemPrompt,
+    undefined,
+  )
   assert.equal(registration.state, FiberState.PENDING)
 
   const replacement = new InMemorySystemPrompt()
   const replacementFiber = await mount(context, createSystemPromptPlugin(replacement).plugin)
   await registration
-  assert.equal((await replacement.assemble({
-    sessionId: 'session', turnId: 'turn', step: 1, tools: [],
-  })).systemPrompt, 'registered persona')
+  assert.equal(
+    (
+      await replacement.assemble({
+        sessionId: 'session',
+        turnId: 'turn',
+        step: 1,
+        tools: [],
+      })
+    ).systemPrompt,
+    'registered persona',
+  )
 
   await registration.dispose()
-  assert.equal((await replacement.assemble({
-    sessionId: 'session', turnId: 'turn', step: 1, tools: [],
-  })).systemPrompt, undefined)
+  assert.equal(
+    (
+      await replacement.assemble({
+        sessionId: 'session',
+        turnId: 'turn',
+        step: 1,
+        tools: [],
+      })
+    ).systemPrompt,
+    undefined,
+  )
   await replacementFiber.dispose()
 })
 
@@ -462,9 +525,10 @@ test('prompt provider replacement drains and reconnects the stable loop', async 
   assert.equal(context.agentLoop, stableLoop)
   await stableLoop.run(session, 'second turn')
 
-  assert.deepEqual(adapter.requests.map(({ systemPrompt }) => systemPrompt), [
-    'first persona', 'second persona',
-  ])
+  assert.deepEqual(
+    adapter.requests.map(({ systemPrompt }) => systemPrompt),
+    ['first persona', 'second persona'],
+  )
   await disposeReverse([...baseFibers, secondPromptFiber, loopFiber])
 })
 

@@ -6,9 +6,5 @@
     "tsBuildInfoFile": "../../.cache/tsbuildinfo/sandbox-workspace.tsbuildinfo"
   },
   "include": ["src/**/*.ts"],
-  "references": [
-    { "path": "../protocol" },
-    { "path": "../sandbox" },
-    { "path": "../tools" }
-  ]
+  "references": [{ "path": "../protocol" }, { "path": "../sandbox" }, { "path": "../tools" }]
 }

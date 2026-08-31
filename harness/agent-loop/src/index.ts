@@ -1,12 +1,9 @@
+import { type ApprovalService, UnavailableApprovalService } from '@deepseek-cordis/approval'
 import {
   completeModelResult,
-  ModelStreamAbortedError,
   type ModelAdapter,
+  ModelStreamAbortedError,
 } from '@deepseek-cordis/model'
-import {
-  type ApprovalService,
-  UnavailableApprovalService,
-} from '@deepseek-cordis/approval'
 import {
   type ModelResponse,
   type RunResult,
@@ -14,16 +11,10 @@ import {
   type ToolCall,
   type ToolSchema,
 } from '@deepseek-cordis/protocol'
+import { type ToolSandbox, UnavailableToolSandbox } from '@deepseek-cordis/sandbox'
 import { deriveSessionSurface, type Session, type SessionStore } from '@deepseek-cordis/session'
-import {
-  type ToolSandbox,
-  UnavailableToolSandbox,
-} from '@deepseek-cordis/sandbox'
+import { EmptySystemPrompt, type SystemPromptService } from '@deepseek-cordis/system-prompt'
 import type { ToolRegistry } from '@deepseek-cordis/tools'
-import {
-  EmptySystemPrompt,
-  type SystemPromptService,
-} from '@deepseek-cordis/system-prompt'
 
 export class StepLimitError extends Error {}
 
@@ -193,9 +184,7 @@ export class AgentLoop {
         const requestPolicyContext: AgentLoopPolicyContext = {
           ...policyContext,
           tools: requestTools,
-          ...(requestSystemPrompt === undefined
-            ? {}
-            : { systemPrompt: requestSystemPrompt }),
+          ...(requestSystemPrompt === undefined ? {} : { systemPrompt: requestSystemPrompt }),
         }
         session.append({ type: 'step/start', turnId, step })
         openStep = step
@@ -213,14 +202,10 @@ export class AgentLoop {
         let response: ModelResponse
         let usage: Awaited<ReturnType<typeof completeModelResult>>['usage']
         try {
-          const completion = await completeModelResult(
-            model,
-            request,
-            {
-              ...(options.signal ? { signal: options.signal } : {}),
-              ...(options.onTextDelta ? { onTextDelta: options.onTextDelta } : {}),
-            },
-          )
+          const completion = await completeModelResult(model, request, {
+            ...(options.signal ? { signal: options.signal } : {}),
+            ...(options.onTextDelta ? { onTextDelta: options.onTextDelta } : {}),
+          })
           response = completion.response
           usage = completion.usage
         } catch (error) {
@@ -229,7 +214,7 @@ export class AgentLoop {
           openStep = undefined
           let retry = false
           try {
-            retry = await this.#policy?.recoverModelError?.(requestPolicyContext, error) ?? false
+            retry = (await this.#policy?.recoverModelError?.(requestPolicyContext, error)) ?? false
           } catch (recoveryError) {
             if (options.signal?.aborted) throw recoveryError
           }
@@ -238,21 +223,27 @@ export class AgentLoop {
         }
         throwIfCancelled(options.signal)
 
-        const recordedUsage = usage === undefined ? {} : {
-          usage: {
-            ...usage,
-            model: model.id,
-            inputSurfaceSequences: inputSurface.map((node) => node.sequence),
-            inputTools: request.tools,
-            ...(request.systemPrompt === undefined
-              ? {}
-              : { inputSystemPrompt: request.systemPrompt }),
-          },
-        }
+        const recordedUsage =
+          usage === undefined
+            ? {}
+            : {
+                usage: {
+                  ...usage,
+                  model: model.id,
+                  inputSurfaceSequences: inputSurface.map((node) => node.sequence),
+                  inputTools: request.tools,
+                  ...(request.systemPrompt === undefined
+                    ? {}
+                    : { inputSystemPrompt: request.systemPrompt }),
+                },
+              }
 
         if (response.type === 'message') {
           session.append({
-            type: 'assistant/message', turnId, content: response.content, ...recordedUsage,
+            type: 'assistant/message',
+            turnId,
+            content: response.content,
+            ...recordedUsage,
           })
           session.append({ type: 'step/end', turnId, step, outcome: 'completed' })
           openStep = undefined
@@ -261,12 +252,14 @@ export class AgentLoop {
         }
 
         session.append({
-          type: 'assistant/tool-calls', turnId, calls: response.calls, ...recordedUsage,
+          type: 'assistant/tool-calls',
+          turnId,
+          calls: response.calls,
+          ...recordedUsage,
         })
-        pendingToolCalls = new Map(response.calls.map((call) => [
-          call.id,
-          { call, started: false },
-        ]))
+        pendingToolCalls = new Map(
+          response.calls.map((call) => [call.id, { call, started: false }]),
+        )
         for (const call of response.calls) {
           throwIfCancelled(options.signal)
           session.append({ type: 'tool/call', turnId, call })
@@ -280,23 +273,25 @@ export class AgentLoop {
             audit: (event) => session.append({ ...event, turnId }),
           })
           throwIfCancelled(options.signal)
-          session.append(execution.ok
-            ? {
-                type: 'tool/result',
-                turnId,
-                callId: call.id,
-                name: call.name,
-                ok: true,
-                output: execution.output,
-              }
-            : {
-                type: 'tool/result',
-                turnId,
-                callId: call.id,
-                name: call.name,
-                ok: false,
-                error: execution.error,
-              })
+          session.append(
+            execution.ok
+              ? {
+                  type: 'tool/result',
+                  turnId,
+                  callId: call.id,
+                  name: call.name,
+                  ok: true,
+                  output: execution.output,
+                }
+              : {
+                  type: 'tool/result',
+                  turnId,
+                  callId: call.id,
+                  name: call.name,
+                  ok: false,
+                  error: execution.error,
+                },
+          )
           pendingToolCalls.delete(call.id)
         }
         session.append({ type: 'step/end', turnId, step, outcome: 'tool_calls' })
@@ -306,9 +301,7 @@ export class AgentLoop {
       throw new StepLimitError(`turn exceeded the maximum of ${maxSteps} model steps`)
     } catch (error) {
       const cancelled = options.signal?.aborted || error instanceof ModelStreamAbortedError
-      const failure = cancelled
-        ? new TurnCancelledError(options.signal?.reason)
-        : error
+      const failure = cancelled ? new TurnCancelledError(options.signal?.reason) : error
       for (const { call, started } of pendingToolCalls.values()) {
         session.append({
           type: 'tool/result',
@@ -317,8 +310,12 @@ export class AgentLoop {
           name: call.name,
           ok: false,
           error: cancelled
-            ? started ? TOOL_CANCELLED_OUTCOME_UNKNOWN : TOOL_CANCELLED_BEFORE_START
-            : started ? TOOL_FAILED_OUTCOME_UNKNOWN : TOOL_FAILED_BEFORE_START,
+            ? started
+              ? TOOL_CANCELLED_OUTCOME_UNKNOWN
+              : TOOL_CANCELLED_BEFORE_START
+            : started
+              ? TOOL_FAILED_OUTCOME_UNKNOWN
+              : TOOL_FAILED_BEFORE_START,
         })
       }
       pendingToolCalls.clear()
