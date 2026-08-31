@@ -16,7 +16,9 @@ The command creates an `AppBoot` and installs lifecycle tracing before building
 its manifest. The manifest deliberately lists the agent loop before its
 providers, demonstrating that Cordis keeps it pending until the traced session
 store, tool registry, calculator, workspace filesystem tools, and traced model
-are available. The workspace adapter keeps observation/version state for the
+are available. A required prompt registry contributes the harness identity and
+tool-aware workspace policy; the loop remains pending until that provider is
+active. The workspace adapter keeps observation/version state for the
 mounted runtime and executes both the generalized family and the compatible
 Feature 14 create-only schema through provider-owned leases.
 

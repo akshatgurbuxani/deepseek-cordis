@@ -25,10 +25,12 @@ import {
   WORKSPACE_READ_FILE_TOOL,
   WORKSPACE_STAT_PATH_TOOL,
   WORKSPACE_WRITE_FILE_TOOL,
+  WORKSPACE_FILESYSTEM_PROMPT_SECTION,
 } from '@deepseek-cordis/filesystem-workspace'
 import type { JsonValue } from '@deepseek-cordis/protocol'
 import type { SandboxRequest } from '@deepseek-cordis/sandbox'
 import { InMemoryToolRegistry } from '@deepseek-cordis/tools'
+import { InMemorySystemPrompt } from '@deepseek-cordis/system-prompt'
 
 function temporaryDirectory(t: TestContext, prefix = 'deepseek-cordis-fs-'): string {
   const directory = mkdtempSync(join(tmpdir(), prefix))
@@ -350,4 +352,22 @@ test('prepared versions detect races and cancellation prevents publication', asy
     (error: unknown) => error instanceof FileSystemError && error.code === 'FS_ABORTED',
   )
   assert.equal(readdirSync(root).includes('cancelled.txt'), false)
+})
+
+test('workspace guidance appears only beside its model-visible tools', async () => {
+  const prompts = new InMemorySystemPrompt()
+  prompts.register(WORKSPACE_FILESYSTEM_PROMPT_SECTION)
+  const context = {
+    sessionId: 'session', turnId: 'turn', step: 1,
+  } as const
+
+  assert.deepEqual(await prompts.assemble({ ...context, tools: [] }), { sectionNames: [] })
+  const assembly = await prompts.assemble({
+    ...context,
+    tools: createWorkspaceFilesystemTools(),
+  })
+  assert.deepEqual(assembly.sectionNames, ['tool:workspace-filesystem'])
+  assert.match(assembly.systemPrompt ?? '', /Before creating a file, stat it/)
+  assert.match(assembly.systemPrompt ?? '', /FS_STALE_VERSION/)
+  assert.doesNotMatch(assembly.systemPrompt ?? '', /\/Users\//)
 })

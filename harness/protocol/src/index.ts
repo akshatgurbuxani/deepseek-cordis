@@ -27,6 +27,7 @@ export interface AssistantUsage extends ModelTokenUsage {
   readonly model: string
   readonly inputSurfaceSequences: readonly number[]
   readonly inputTools: readonly ToolSchema[]
+  readonly inputSystemPrompt?: string
 }
 
 export type ToolExecution =
@@ -198,6 +199,7 @@ export interface ModelRequest {
   readonly step: number
   readonly messages: readonly ModelMessage[]
   readonly tools: readonly ToolSchema[]
+  readonly systemPrompt?: string
 }
 
 export type ModelResponse =

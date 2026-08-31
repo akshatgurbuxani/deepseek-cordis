@@ -10,6 +10,7 @@
     { "path": "../filesystem" },
     { "path": "../protocol" },
     { "path": "../sandbox" },
+    { "path": "../system-prompt" },
     { "path": "../tools" }
   ]
 }

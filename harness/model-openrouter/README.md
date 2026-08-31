@@ -2,8 +2,9 @@
 
 Provider-neutral OpenRouter implementation of `ModelAdapter`.
 
-The adapter maps immutable harness messages and tool schemas to OpenRouter's
-chat-completions API. Its canonical model seam consumes server-sent events,
+The adapter maps an optional immutable system prompt, harness history, and tool
+schemas to OpenRouter's chat-completions API. The prompt is emitted as the
+first `system` message and never inserted into session history. Its canonical model seam consumes server-sent events,
 emits text deltas, assembles fragmented local tool calls, and terminates with a
 normalized finish. `complete()` remains available as a compatibility collector.
 Both paths report usage plus additive router metadata through a diagnostics

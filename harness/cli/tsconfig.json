@@ -17,6 +17,7 @@
     { "path": "../protocol" },
     { "path": "../session" },
     { "path": "../session-file" },
+    { "path": "../system-prompt" },
     { "path": "../compaction" },
     { "path": "../context-budget" },
     { "path": "../filesystem-workspace" },

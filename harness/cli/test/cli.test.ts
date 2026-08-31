@@ -414,7 +414,11 @@ test('live-mode composition maps a tool round trip and never traces its API key'
   assert.ok(records.some(({ label, value }) =>
     label === 'session/event'
     && JSON.stringify(value).includes('"inputTokens":14')))
-  assert.deepEqual(bodies[1]?.messages, [
+  const secondMessages = bodies[1]?.messages as Array<Record<string, unknown>>
+  assert.equal(secondMessages[0]?.role, 'system')
+  assert.match(String(secondMessages[0]?.content), /DeepSeek Cordis Harness/)
+  assert.match(String(secondMessages[0]?.content), /Before creating a file, stat it/)
+  assert.deepEqual(secondMessages.slice(1), [
     { role: 'user', content: 'add 8 and 9' },
     {
       role: 'assistant',

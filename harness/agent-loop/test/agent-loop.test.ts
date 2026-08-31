@@ -15,6 +15,7 @@ import type { JsonValue, ModelRequest, ModelResponse } from '@deepseek-cordis/pr
 import { InMemorySession, InMemorySessionStore } from '@deepseek-cordis/session'
 import type { ToolSandbox } from '@deepseek-cordis/sandbox'
 import { InMemoryToolRegistry } from '@deepseek-cordis/tools'
+import { InMemorySystemPrompt } from '@deepseek-cordis/system-prompt'
 
 function addTool(registry: InMemoryToolRegistry, offset = 0): () => void {
   return registry.register({
@@ -545,4 +546,100 @@ test('invalid step limits fail before recording a turn', async () => {
   await assert.rejects(loop.run(session, 'cancelled', { signal: controller.signal }),
     TurnCancelledError)
   assert.deepEqual(session.events, [])
+})
+
+test('one coherent prompt assembly follows policy-discovered tools', async () => {
+  const sessions = new InMemorySessionStore()
+  const tools = new InMemoryToolRegistry()
+  const model = new ReplayModelAdapter('prompted', [
+    { type: 'message', content: 'prompt received' },
+  ])
+  const prompts = new InMemorySystemPrompt()
+  let assemblies = 0
+  prompts.register({
+    name: 'dynamic-tools',
+    order: 0,
+    text: ({ sessionId, turnId, step, tools: visibleTools }) => {
+      assemblies += 1
+      return `${sessionId} ${turnId} step ${step}: ${visibleTools.map(({ name }) => name).join(',')}`
+    },
+  })
+  const loop = new AgentLoop({
+    async beforeStep(context) {
+      tools.register({
+        name: 'late-tool', description: 'Late tool', inputSchema: {},
+        safety: { risk: 'none' }, execute: () => null,
+      })
+      assert.match(await context.readSystemPrompt() ?? '', /late-tool/)
+    },
+  })
+  const disconnect = loop.connect(sessions, tools, model, { systemPrompt: prompts })
+  const session = sessions.create('prompt-session')
+
+  await loop.run(session, 'use your context')
+
+  assert.equal(assemblies, 1)
+  assert.equal(model.requests.length, 1)
+  assert.equal(model.requests[0]?.systemPrompt,
+    'prompt-session prompt-session:turn:1 step 1: late-tool')
+  assert.deepEqual(model.requests[0]?.tools.map(({ name }) => name), ['late-tool'])
+  disconnect()
+})
+
+test('provider usage records the exact system prompt sent with the request', async () => {
+  const sessions = new InMemorySessionStore()
+  const tools = new InMemoryToolRegistry()
+  const prompts = new InMemorySystemPrompt()
+  prompts.register({ name: 'persona', order: 0, text: 'Exact prompt.' })
+  let captured: ModelRequest | undefined
+  const model: ModelAdapter = {
+    id: 'usage-with-prompt',
+    async *stream(request) {
+      captured = request
+      yield {
+        type: 'finish' as const,
+        reason: 'completed' as const,
+        response: { type: 'message' as const, content: 'done' },
+        usage: { inputTokens: 12, outputTokens: 1 },
+      }
+    },
+  }
+  const loop = new AgentLoop()
+  const disconnect = loop.connect(sessions, tools, model, { systemPrompt: prompts })
+  const session = sessions.create('prompt-usage')
+
+  await loop.run(session, 'start')
+
+  assert.equal(captured?.systemPrompt, 'Exact prompt.')
+  const response = session.events.find((event) => event.type === 'assistant/message')
+  assert.equal(
+    response?.type === 'assistant/message' ? response.usage?.inputSystemPrompt : undefined,
+    'Exact prompt.',
+  )
+  disconnect()
+})
+
+test('cancellation during prompt assembly closes the turn before model work', async () => {
+  const sessions = new InMemorySessionStore()
+  const tools = new InMemoryToolRegistry()
+  const model = new ReplayModelAdapter('unused-prompt-model', [])
+  const prompts = new InMemorySystemPrompt()
+  const controller = new AbortController()
+  prompts.register({ name: 'cancel', order: 0, text: async () => {
+    controller.abort({ kind: 'prompt-test' })
+    return 'never sent'
+  } })
+  const loop = new AgentLoop()
+  const disconnect = loop.connect(sessions, tools, model, { systemPrompt: prompts })
+  const session = sessions.create('prompt-cancel')
+
+  await assert.rejects(loop.run(session, 'start', { signal: controller.signal }), TurnCancelledError)
+
+  assert.equal(model.requests.length, 0)
+  assert.deepEqual(session.events.map(({ type }) => type), [
+    'turn/start', 'user/message', 'turn/end',
+  ])
+  const terminal = session.events.at(-1)
+  assert.equal(terminal?.type === 'turn/end' ? terminal.status : undefined, 'aborted')
+  disconnect()
 })

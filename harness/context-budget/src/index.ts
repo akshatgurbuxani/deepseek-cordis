@@ -75,10 +75,15 @@ export class ContextBudgetPolicy implements AgentLoopPolicy {
       return
     }
     if (contextWindow === undefined) return
+    const systemPrompt = await context.readSystemPrompt()
+    throwIfAborted(context.signal)
     const measurement = this.#meter.measure(
       context.session,
       context.readTools(),
-      { model: context.model.id },
+      {
+        model: context.model.id,
+        ...(systemPrompt === undefined ? {} : { systemPrompt }),
+      },
     )
     const thresholdTokens = Math.max(1, Math.floor(contextWindow * this.#thresholdRatio))
     if (measurement.totalTokens < thresholdTokens) return
@@ -101,7 +106,10 @@ export class ContextBudgetPolicy implements AgentLoopPolicy {
     const measurement = this.#meter.measure(
       context.session,
       context.tools,
-      { model: context.model.id },
+      {
+        model: context.model.id,
+        ...(context.systemPrompt === undefined ? {} : { systemPrompt: context.systemPrompt }),
+      },
     )
     return this.#attempt(
       context,

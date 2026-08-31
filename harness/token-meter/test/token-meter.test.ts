@@ -4,6 +4,7 @@ import test from 'node:test'
 import { InMemorySessionStore } from '@deepseek-cordis/session'
 import {
   estimateMessage,
+  estimateSystemPrompt,
   estimateTools,
   TokenMeter,
 } from '@deepseek-cordis/token-meter'
@@ -30,6 +31,7 @@ test('measurements are immutable revisioned snapshots of surface and tools', () 
     estimateMessage({ role: 'user', content: 'abcdefgh' })
     + estimateMessage({ role: 'assistant', content: 'answer' }))
   assert.equal(first.toolTokens, estimateTools(tools))
+  assert.equal(first.systemPromptTokens, 0)
   assert.equal(first.totalTokens, first.surfaceTokens + first.toolTokens)
   assert.equal(first.source, 'heuristic')
   assert.equal(second.logRevision, 6)
@@ -81,6 +83,37 @@ test('provider input usage anchors later pressure while heuristic deltas stay li
   const otherRoute = meter.measure(session, expandedTools, { model: 'other/provider' })
   assert.equal(otherRoute.source, 'heuristic')
   assert.equal(otherRoute.anchor, undefined)
+})
+
+test('system prompt cost participates in heuristic and provider-anchored deltas', () => {
+  const session = new InMemorySessionStore().create('prompt-meter')
+  const originalPrompt = 'Original system prompt.'
+  const currentPrompt = 'Current system prompt with additional policy.'
+  session.append({ type: 'turn/start', turnId: 'turn-1' })
+  session.append({ type: 'user/message', turnId: 'turn-1', content: 'input' })
+  session.append({
+    type: 'assistant/message', turnId: 'turn-1', content: 'output',
+    usage: {
+      model: 'provider/model', inputTokens: 100, outputTokens: 5,
+      inputSurfaceSequences: [2], inputTools: [], inputSystemPrompt: originalPrompt,
+    },
+  })
+
+  const measurement = new TokenMeter().measure(session, [], {
+    model: 'provider/model', systemPrompt: currentPrompt,
+  })
+  assert.equal(measurement.systemPromptTokens, estimateSystemPrompt(currentPrompt))
+  assert.equal(measurement.totalTokens,
+    100
+    + estimateMessage({ role: 'assistant', content: 'output' })
+    + estimateSystemPrompt(currentPrompt)
+    - estimateSystemPrompt(originalPrompt))
+
+  const heuristic = new TokenMeter().measure(session, [], {
+    model: 'other/model', systemPrompt: currentPrompt,
+  })
+  assert.equal(heuristic.totalTokens,
+    heuristic.surfaceTokens + heuristic.toolTokens + heuristic.systemPromptTokens)
 })
 
 test('provider anchors survive provenance-preserving surface compaction', () => {

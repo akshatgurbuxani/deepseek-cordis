@@ -42,6 +42,10 @@ import type {
   ToolSandbox,
 } from '@deepseek-cordis/sandbox'
 import type { ConsequentialToolDefinition } from '@deepseek-cordis/tools'
+import type {
+  PromptAssemblyContext,
+  PromptSection,
+} from '@deepseek-cordis/system-prompt'
 
 export const WORKSPACE_FILESYSTEM_PROFILE = 'workspace-filesystem'
 export const WORKSPACE_READ_FILE_TOOL = 'read_workspace_file'
@@ -54,6 +58,31 @@ export const DEFAULT_MAX_DIRECTORY_ENTRIES = 200
 const legacyCreateTool = 'create_workspace_file'
 const legacyCreateProfile = 'workspace-create-file'
 const maxPathBytes = 4096
+
+const workspaceToolNames = new Set([
+  WORKSPACE_READ_FILE_TOOL,
+  WORKSPACE_LIST_DIRECTORY_TOOL,
+  WORKSPACE_STAT_PATH_TOOL,
+  WORKSPACE_WRITE_FILE_TOOL,
+  WORKSPACE_EDIT_FILE_TOOL,
+])
+
+export const WORKSPACE_FILESYSTEM_PROMPT_SECTION: PromptSection = Object.freeze({
+  name: 'tool:workspace-filesystem',
+  order: 100,
+  text: ({ tools }: PromptAssemblyContext) => {
+    if (!tools.some(({ name }) => workspaceToolNames.has(name))) return ''
+    return [
+      'Workspace filesystem policy:',
+      '- Treat every path as relative to the configured workspace root; never invent or request host paths.',
+      '- Inspect before acting: list directories, stat uncertain paths, and read files before reasoning about their contents.',
+      '- Before creating a file, stat it to establish absence. Before replacing a file, stat or read it. Before editing, read it.',
+      '- Use edit only when oldText identifies exactly one occurrence; otherwise read again and choose a more precise match.',
+      '- If an operation reports FS_STALE_VERSION, inspect the latest state and reconsider the change instead of retrying blindly.',
+      '- Do not claim a filesystem change succeeded until its tool result confirms the effect.',
+    ].join('\n')
+  },
+})
 
 export interface NodeWorkspaceFileSystemOptions {
   readonly root: string

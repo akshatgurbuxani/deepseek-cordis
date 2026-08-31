@@ -11,6 +11,7 @@
     { "path": "../protocol" },
     { "path": "../session" },
     { "path": "../sandbox" },
+    { "path": "../system-prompt" },
     { "path": "../model" },
     { "path": "../tools" }
   ]

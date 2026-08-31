@@ -43,12 +43,13 @@ approval            ──> protocol
 sandbox             ──> protocol
 sandbox-workspace   ──> sandbox + tools + protocol
 filesystem          ──> (provider-neutral contract and policy)
-filesystem-workspace──> filesystem + sandbox + tools + protocol
+system-prompt       ──> protocol
+filesystem-workspace──> filesystem + sandbox + system-prompt + tools + protocol
 commands            ──> session + protocol
 command-session     ──> commands + compaction + session
 tools               ──> protocol + approval + sandbox
-agent-loop          ──> protocol + session + model + approval + sandbox + tools
-runtime-cordis      ──> agent-loop + approval + sandbox + commands + compaction + token-meter + session + model + tools + cordis
+agent-loop          ──> protocol + session + model + approval + sandbox + system-prompt + tools
+runtime-cordis      ──> agent-loop + approval + sandbox + system-prompt + commands + compaction + token-meter + session + model + tools + cordis
 app-boot            ──> runtime-cordis
 model-openrouter    ──> protocol + model
 tool/storage plugins──> protocol + their capability contract
@@ -120,9 +121,16 @@ and model-facing exact-call adapter. It confines portable relative paths to a
 real workspace root, rejects symbolic-link traversal, and reports partial
 enforcement honestly.
 
+### `system-prompt`
+
+Owns provider-neutral ordered prompt registration and per-session shadowing.
+Dynamic sections receive exact request identity, visible tool schemas, and the
+turn signal; assembly returns one immutable prompt without importing a model
+adapter, the agent loop, concrete tools, or Cordis.
+
 ### `agent-loop`
 
-Consumes session, model, and tool contracts. It owns turn/step progression,
+Consumes session, model, tool, safety, and prompt contracts. It owns turn/step progression,
 model-history projection, ordered tool execution, failure events, per-session
 run exclusion, stream collection, cooperative cancellation, and the
 maximum-step guard. It knows nothing about Cordis, OpenRouter, CLI arguments,
@@ -813,9 +821,10 @@ claim exact provider tokenization where none exists.
 
 This smaller harness stores a self-contained request anchor on each successful
 assistant event rather than adding DeepSeek's request-header/context events,
-usage chunks, projections, and route registry. Failed-call billing, cache token
-buckets, system prompts, compaction-call billing, and a general model catalog
-service remain outside the present protocol.
+usage chunks, projections, and route registry. At Feature 11, failed-call
+billing, cache token buckets, system prompts, compaction-call billing, and a
+general model catalog remained deferred; Feature 16 now extends the same anchor
+with its exact system prompt.
 
 #### PR 11 result
 
@@ -1022,11 +1031,67 @@ coverage for observation isolation, bounds, UTF-8 validation, stale writes,
 exact edits, atomic cleanup, permission preservation, links, traversal,
 cancellation, approval, and legacy behavior.
 
+### Feature 16 — scoped agent context and system prompt
+
+Feature 16 gives model-facing instructions their own provider-neutral
+capability instead of smuggling them into user history or hard-coding them in
+the agent loop. `SystemPromptService` owns named ordered sections, synchronous
+or asynchronous per-step text providers, deterministic code-unit tie-breaking,
+empty-section removal, cancellation, and immutable assembly output. A section
+registered for one session shadows a same-named global section only in that
+scope; exact idempotent disposers restore the global layer without residue.
+
+`PromptAssemblyContext` contains the session, turn, step, exact visible tool
+schemas, and the explicit turn signal. The loop assembles against one
+authoritative tool snapshot for the request. Policy can ask for the current
+prompt after asynchronous model metadata work; matching assemblies are cached,
+while a genuinely changed tool envelope is reassembled before transmission.
+The loop itself knows no persona or filesystem wording.
+
+The CLI composes two contributors as Cordis-owned effects: a stable harness
+identity and `WORKSPACE_FILESYSTEM_PROMPT_SECTION`. Workspace guidance appears
+only when its generalized tools are visible. It teaches relative paths,
+inspection before reasoning, stat/read-before-write, read-before-edit, precise
+single-match edits, stale-version recovery, and result-confirmed claims. It
+never renders the provider's absolute host root.
+
+`ModelRequest.systemPrompt` remains distinct from durable model history, and
+OpenRouter emits it as the first native `system` message. Successful provider
+usage records the exact rendered prompt alongside the input surface and tools.
+`TokenMeter` prices prompt framing and applies signed prompt deltas to
+provider-anchored measurements, so proactive compaction still measures the
+actual request envelope introduced by this feature.
+
+Cordis publishes the registry as a required loop coeffect. Prompt-section
+registrations are reversible effects; provider withdrawal drains the loop and
+sections before replacement, then reconnects the same loop facade and session
+history. Direct non-Cordis embeddings retain an explicit empty implementation.
+
+#### Upstream motivation and adaptation boundary
+
+This feature was checked on August 31, 2026 against DeepSeek Harness
+`0a53fb5`, especially its
+[`system-prompt subsystem`](https://github.com/deepseek-ai/deepseek-harness/blob/0a53fb55bea101816fa226bb964ae2bed71c343b/docs/subsystems/system-prompt.md)
+and
+[`system-prompt package`](https://github.com/deepseek-ai/deepseek-harness/blob/0a53fb55bea101816fa226bb964ae2bed71c343b/packages/core/system-prompt/README.md).
+The local design adapts ordered contributors, scope shadowing, dynamic assembly
+context, and tool/prompt coherence to the smaller immutable request contract.
+It does not copy upstream's waterfall, variable interpolation, complete-prompt
+override, tool restriction/order registry, or durable runtime-context stream.
+
+#### PR 16 result
+
+Introduced the provider-neutral registry and Cordis lifecycle adapters, native
+OpenRouter system-role mapping, exact usage provenance, prompt-aware token
+pressure, capability-owned workspace guidance, scoped/disposal tests, provider
+replacement tests, and full CLI request verification.
+
 ### Later milestones
 
-Feature 16 can add scoped system prompt and agent context over these
-capabilities, including workspace guidance and explicit tool-use policy without
-hard-coding provider details into the agent loop.
+Feature 17 can introduce validated configuration profiles over the now-stable
+provider graph: persona/section selection, workspace and persistence settings,
+model route/capacity, tool visibility, and approval defaults without moving
+configuration parsing into capability packages.
 
 Cross-process writer coordination, parallel tools, subagents, attachments,
 scheduling, and UI remain outside the first production milestone.

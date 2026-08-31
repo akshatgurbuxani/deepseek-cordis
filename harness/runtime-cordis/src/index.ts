@@ -25,6 +25,12 @@ import {
 } from '@deepseek-cordis/tools'
 import type { Plugin } from 'cordis'
 import { TokenMeter } from '@deepseek-cordis/token-meter'
+import {
+  InMemorySystemPrompt,
+  type PromptRegistrationOptions,
+  type PromptSection,
+  type SystemPromptService,
+} from '@deepseek-cordis/system-prompt'
 
 export {
   Context as RuntimeContext,
@@ -53,6 +59,7 @@ declare module 'cordis' {
     tokenMeter: TokenMeter
     approval: ApprovalService
     sandbox: ToolSandbox
+    systemPrompt: SystemPromptService
     commands: CommandRegistry
   }
 }
@@ -109,6 +116,32 @@ export function createSandboxPlugin(
   namePlugin(plugin, 'sandbox')
   plugin.provide = 'sandbox'
   return { plugin, value: sandbox }
+}
+
+export function createSystemPromptPlugin(
+  service: SystemPromptService = new InMemorySystemPrompt(),
+): PluginFactory<SystemPromptService> {
+  const plugin: Plugin.Function<void> = (context) => {
+    context.provide('systemPrompt', service)
+  }
+  namePlugin(plugin, 'system-prompt')
+  plugin.provide = 'systemPrompt'
+  return { plugin, value: service }
+}
+
+export function createPromptSectionPlugin(
+  section: PromptSection,
+  options: PromptRegistrationOptions = {},
+): Plugin.Function<void> {
+  const plugin: Plugin.Function<void> = (context) => {
+    context.effect(
+      () => context.systemPrompt.register(section, options),
+      `register prompt section ${JSON.stringify(section.name)}`,
+    )
+  }
+  namePlugin(plugin, `prompt:${section.name}`)
+  plugin.inject = ['systemPrompt']
+  return plugin
 }
 
 export function createCommandRegistryPlugin(
@@ -169,13 +202,14 @@ export function createAgentLoopPlugin(
       () => loop.connect(context.sessions, context.tools, context.model, {
         approval: context.approval,
         sandbox: context.sandbox,
+        systemPrompt: context.systemPrompt,
       }),
       'connect agent loop',
     )
     context.provide('agentLoop', loop)
   }
   namePlugin(plugin, 'agent-loop')
-  plugin.inject = ['sessions', 'tools', 'model', 'approval', 'sandbox']
+  plugin.inject = ['sessions', 'tools', 'model', 'approval', 'sandbox', 'systemPrompt']
   plugin.provide = 'agentLoop'
   return { plugin, value: loop }
 }

@@ -15,6 +15,7 @@ import { ContextBudgetPolicy } from '@deepseek-cordis/context-budget'
 import {
   createWorkspaceFilesystemTools,
   NodeWorkspaceFileSystem,
+  WORKSPACE_FILESYSTEM_PROMPT_SECTION,
   WorkspaceFilesystemSandbox,
 } from '@deepseek-cordis/filesystem-workspace'
 import type { ModelAdapter } from '@deepseek-cordis/model'
@@ -25,6 +26,7 @@ import { InMemorySessionStore, type SessionStore } from '@deepseek-cordis/sessio
 import { FileSessionStore } from '@deepseek-cordis/session-file'
 import type { ToolSandbox } from '@deepseek-cordis/sandbox'
 import { TokenMeter } from '@deepseek-cordis/token-meter'
+import { HARNESS_IDENTITY_SECTION } from '@deepseek-cordis/system-prompt'
 import {
   createWorkspaceFileTool,
 } from '@deepseek-cordis/sandbox-workspace'
@@ -35,8 +37,10 @@ import {
   createCommandRegistrationPlugin,
   createCommandRegistryPlugin,
   createModelAdapterPlugin,
+  createPromptSectionPlugin,
   createSessionStorePlugin,
   createSandboxPlugin,
+  createSystemPromptPlugin,
   createToolRegistrationPlugin,
   createToolRegistryPlugin,
   createTokenMeterPlugin,
@@ -180,6 +184,7 @@ function manifestFor(
   const loop = createAgentLoopPlugin(new AgentLoop(policy))
   const compaction = createCompactionPlugin(compactor)
   const tokenMeter = createTokenMeterPlugin(meter)
+  const systemPrompt = createSystemPromptPlugin()
   const filesystemTools = createWorkspaceFilesystemTools()
   return [
     { id: 'loop', revision: 'v1', load: () => loop.plugin },
@@ -210,6 +215,11 @@ function manifestFor(
     { id: 'model', revision: 'v1', load: () => modelPlugin.plugin },
     { id: 'approval', revision: 'v1', load: () => createApprovalServicePlugin(approval).plugin },
     { id: 'sandbox', revision: 'v1', load: () => createSandboxPlugin(sandbox).plugin },
+    { id: 'system-prompt', revision: 'v1', load: () => systemPrompt.plugin },
+    { id: 'prompt-identity', revision: 'v1', load: () =>
+      createPromptSectionPlugin(HARNESS_IDENTITY_SECTION) },
+    { id: 'prompt-workspace-filesystem', revision: 'v1', load: () =>
+      createPromptSectionPlugin(WORKSPACE_FILESYSTEM_PROMPT_SECTION) },
     { id: 'compaction', revision: 'v1', load: () => compaction.plugin },
     { id: 'token-meter', revision: 'v1', load: () => tokenMeter.plugin },
     { id: 'commands', revision: 'v1', load: () => commands.plugin },

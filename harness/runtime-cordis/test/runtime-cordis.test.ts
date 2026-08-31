@@ -15,13 +15,16 @@ import {
   createCommandRegistrationPlugin,
   createCommandRegistryPlugin,
   createModelAdapterPlugin,
+  createPromptSectionPlugin,
   createSessionStorePlugin,
   createSandboxPlugin,
+  createSystemPromptPlugin,
   createToolRegistrationPlugin,
   createToolRegistryPlugin,
   createTokenMeterPlugin,
 } from '@deepseek-cordis/runtime-cordis'
 import { Context, FiberState, type Fiber, type Plugin } from 'cordis'
+import { InMemorySystemPrompt } from '@deepseek-cordis/system-prompt'
 
 async function mount(context: Context, plugin: Plugin): Promise<Fiber> {
   const fiber = context.plugin(plugin)
@@ -85,6 +88,8 @@ test('the loop remains pending until every provider exists, then runs a complete
   fibers.push(await mount(context, createApprovalServicePlugin().plugin))
   assert.equal(loopFiber.state, FiberState.PENDING)
   fibers.push(await mount(context, createSandboxPlugin().plugin))
+  assert.equal(loopFiber.state, FiberState.PENDING)
+  fibers.push(await mount(context, createSystemPromptPlugin().plugin))
   await loopFiber
   assert.equal(loopFiber.state, FiberState.ACTIVE)
   fibers.push(await mount(context, createToolRegistrationPlugin(addTool())))
@@ -147,6 +152,7 @@ test('effect-owned tool registration withdraws once and replacement changes late
     await mount(context, createModelAdapterPlugin(adapter).plugin),
     await mount(context, createApprovalServicePlugin().plugin),
     await mount(context, createSandboxPlugin().plugin),
+    await mount(context, createSystemPromptPlugin().plugin),
     await mount(context, createAgentLoopPlugin().plugin),
   ]
 
@@ -181,6 +187,7 @@ test('model withdrawal drains and reconnects the same loop without replacing ses
   const firstModelFiber = await mount(context, firstModel.plugin)
   const approvalFiber = await mount(context, createApprovalServicePlugin().plugin)
   const sandboxFiber = await mount(context, createSandboxPlugin().plugin)
+  const promptFiber = await mount(context, createSystemPromptPlugin().plugin)
   const loopFiber = await mount(context, loop.plugin)
   const session = context.sessions.create('model-replacement')
   const stableLoop = context.agentLoop
@@ -210,7 +217,7 @@ test('model withdrawal drains and reconnects the same loop without replacing ses
   ])
 
   await disposeReverse([
-    sessionFiber, toolsFiber, secondModelFiber, approvalFiber, sandboxFiber, loopFiber,
+    sessionFiber, toolsFiber, secondModelFiber, approvalFiber, sandboxFiber, promptFiber, loopFiber,
   ])
 })
 
@@ -223,6 +230,7 @@ test('isolated contexts inherit sessions and tools but resolve independent model
     await mount(root, tools.plugin),
     await mount(root, createApprovalServicePlugin().plugin),
     await mount(root, createSandboxPlugin().plugin),
+    await mount(root, createSystemPromptPlugin().plugin),
   ]
   const first = root.isolate('model').isolate('agentLoop')
   const second = root.isolate('model').isolate('agentLoop')
@@ -298,6 +306,7 @@ test('disposing all mounted fibers withdraws services, registrations, and connec
     await mount(context, model.plugin),
     await mount(context, createApprovalServicePlugin().plugin),
     await mount(context, createSandboxPlugin().plugin),
+    await mount(context, createSystemPromptPlugin().plugin),
     await mount(context, loop.plugin),
     await mount(context, createToolRegistrationPlugin(addTool())),
   ]
@@ -311,6 +320,7 @@ test('disposing all mounted fibers withdraws services, registrations, and connec
   assert.equal(context.get('model'), undefined)
   assert.equal(context.get('approval'), undefined)
   assert.equal(context.get('sandbox'), undefined)
+  assert.equal(context.get('systemPrompt'), undefined)
   assert.equal(context.get('agentLoop'), undefined)
   await assert.rejects(loop.value.run(session, 'cannot run'), /not connected/)
   assert.ok(fibers.every((fiber) => fiber.state === FiberState.DISPOSED))
@@ -350,6 +360,7 @@ test('approval provider replacement drains and safely reconnects the stable loop
     await mount(context, createToolRegistryPlugin().plugin),
     await mount(context, createModelAdapterPlugin(adapter).plugin),
     await mount(context, createSandboxPlugin(sandbox).plugin),
+    await mount(context, createSystemPromptPlugin().plugin),
   ]
   const approvalFiber = await mount(context, createApprovalServicePlugin(reject).plugin)
   const loopFactory = createAgentLoopPlugin()
@@ -382,6 +393,79 @@ test('approval provider replacement drains and safely reconnects the stable loop
   assert.equal(session.events.filter((event) => event.type === 'sandbox/prepared').length, 1)
 
   await disposeReverse([...baseFibers, replacementFiber, loopFiber, toolFiber])
+})
+
+test('prompt section effects follow provider availability and dispose exactly', async () => {
+  const context = new Context()
+  const registration = context.plugin(createPromptSectionPlugin({
+    name: 'test:persona', order: 0, text: 'registered persona',
+  }))
+  assert.equal(registration.state, FiberState.PENDING)
+
+  const first = createSystemPromptPlugin()
+  const firstFiber = await mount(context, first.plugin)
+  await registration
+  assert.equal((await context.systemPrompt.assemble({
+    sessionId: 'session', turnId: 'turn', step: 1, tools: [],
+  })).systemPrompt, 'registered persona')
+
+  await firstFiber.dispose()
+  assert.equal((await first.value.assemble({
+    sessionId: 'session', turnId: 'turn', step: 1, tools: [],
+  })).systemPrompt, undefined)
+  assert.equal(registration.state, FiberState.PENDING)
+
+  const replacement = new InMemorySystemPrompt()
+  const replacementFiber = await mount(context, createSystemPromptPlugin(replacement).plugin)
+  await registration
+  assert.equal((await replacement.assemble({
+    sessionId: 'session', turnId: 'turn', step: 1, tools: [],
+  })).systemPrompt, 'registered persona')
+
+  await registration.dispose()
+  assert.equal((await replacement.assemble({
+    sessionId: 'session', turnId: 'turn', step: 1, tools: [],
+  })).systemPrompt, undefined)
+  await replacementFiber.dispose()
+})
+
+test('prompt provider replacement drains and reconnects the stable loop', async () => {
+  const context = new Context()
+  const adapter = new ReplayModelAdapter('prompt-replacement', [
+    { type: 'message', content: 'first' },
+    { type: 'message', content: 'second' },
+  ])
+  const firstPrompt = new InMemorySystemPrompt()
+  firstPrompt.register({ name: 'persona', order: 0, text: 'first persona' })
+  const baseFibers = [
+    await mount(context, createSessionStorePlugin().plugin),
+    await mount(context, createToolRegistryPlugin().plugin),
+    await mount(context, createModelAdapterPlugin(adapter).plugin),
+    await mount(context, createApprovalServicePlugin().plugin),
+    await mount(context, createSandboxPlugin().plugin),
+  ]
+  const firstPromptFiber = await mount(context, createSystemPromptPlugin(firstPrompt).plugin)
+  const loopFactory = createAgentLoopPlugin()
+  const loopFiber = await mount(context, loopFactory.plugin)
+  const stableLoop = context.agentLoop
+  const session = context.sessions.create('prompt-replacement')
+  await stableLoop.run(session, 'first turn')
+
+  await firstPromptFiber.dispose()
+  assert.equal(context.get('agentLoop'), undefined)
+  await assert.rejects(loopFactory.value.run(session, 'disconnected'), /not connected/)
+
+  const secondPrompt = new InMemorySystemPrompt()
+  secondPrompt.register({ name: 'persona', order: 0, text: 'second persona' })
+  const secondPromptFiber = await mount(context, createSystemPromptPlugin(secondPrompt).plugin)
+  await loopFiber
+  assert.equal(context.agentLoop, stableLoop)
+  await stableLoop.run(session, 'second turn')
+
+  assert.deepEqual(adapter.requests.map(({ systemPrompt }) => systemPrompt), [
+    'first persona', 'second persona',
+  ])
+  await disposeReverse([...baseFibers, secondPromptFiber, loopFiber])
 })
 
 test('compaction is an optional Cordis capability with stable provider identity', async () => {

@@ -5,7 +5,7 @@ First runnable production composition for the harness.
 The CLI builds a complete `AppBoot` manifest containing a traced session store,
 tool registry, harmless calculator, consequential workspace filesystem family,
 channel/headless approval, concrete workspace provider, replay or OpenRouter
-model, and stable agent loop. It runs
+model, scoped system-prompt registry, and stable agent loop. It runs
 one turn, prints the final answer, and always reconciles to
 an empty manifest in `finally` so every fiber, registration, service, and
 connection is withdrawn before exit.
@@ -68,6 +68,13 @@ session to stat or read the target first; an edit requires a content read and
 exactly one `oldText` match. Opaque versions reject stale mutations. Directory
 responses are capped at 200 entries and text operations at 1 MiB. These tools
 use the same exact-argument approval and durable audit path as create.
+
+Every request receives a deterministic system prompt: the harness identity
+followed by workspace guidance derived from the exact visible filesystem tool
+set. The guidance contains no absolute host path. Prompt sections are Cordis
+effects, so provider replacement drains the loop and withdraws registrations
+before reconnection. Prompt cost participates in proactive context pressure and
+the exact rendered text accompanies successful provider-usage anchors.
 
 The process entry point streams assistant text to stdout and passes one
 turn-scoped signal through the loop. `Ctrl-C` cooperatively aborts model or tool

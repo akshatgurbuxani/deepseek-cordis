@@ -24,6 +24,8 @@ imports:
 - `ToolRegistry` supplies live schemas and contains tool execution failures.
 - `ApprovalService` and `ToolSandbox` provide independent fail-closed safety
   boundaries for consequential calls.
+- `SystemPromptService` resolves ordered global and session-scoped instruction
+  sections against the exact request tool snapshot.
 
 There is no Cordis import. Feature 2 defines agent behavior, while the later
 runtime adapter decides when providers exist and when the loop is connected or
@@ -33,17 +35,18 @@ plugin runtime.
 
 ## Stable facade and changing providers
 
-An `AgentLoop` instance has five private provider slots: the current session
-store, tool registry, model adapter, approval service, and sandbox. The object itself can survive provider
+An `AgentLoop` instance has six private provider slots: the current session
+store, tool registry, model adapter, approval service, sandbox, and system-prompt
+service. The object itself can survive provider
 replacement. A runtime can disconnect it from one provider set and reconnect
 the same facade to another set, preserving callers that hold the loop and
 preserving session history owned by the independent session store.
 
-`connect()` commits all five capabilities together. Direct callers may omit the
-safety pair only to receive fail-closed defaults. It rejects a second
+`connect()` commits all six capabilities together. Direct callers may omit the
+safety pair and prompt service only to receive fail-closed/empty defaults. It rejects a second
 connection rather than silently changing only part of the committed provider
 view. On success it returns an idempotent disposer. Calling that disposer clears
-all five slots together.
+all six slots together.
 
 The disposer refuses to disconnect while any turn is running. That failure is
 retryable: it does not mark the disposer as used, so the runtime can drain the
@@ -89,14 +92,16 @@ loop never maintains a second mutable transcript.
 
 ## Running one model step
 
-Each loop iteration begins with `step/start`. Immediately before calling the
-model, the loop builds a request from current capability state:
+Each loop iteration resolves policy and prompt context, then begins
+`step/start`. Immediately before calling the model, the loop builds a request
+from current capability state:
 
 - `session.projectMessages()` reconstructs model-visible history from events;
 - `tools.schemas()` reads the registry's schemas at that exact step; and
+- `systemPrompt.assemble()` resolves ordered guidance against those schemas;
 - `snapshot()` clones and freezes the complete request.
 
-Reading both history and schemas for every iteration is important. Tool calls
+Reading history, schemas, and prompt context for every iteration is important. Tool calls
 and results from the previous step enter the next request through projection,
 and a tool that registered or disposed during execution is reflected in the
 next schema list.
@@ -190,7 +195,7 @@ therefore proceed after success, model failure, or step-limit failure.
 ## Complete data flow
 
 ```text
-connected session, tool, model, approval, and sandbox capabilities
+connected session, tool, model, approval, sandbox, and system-prompt capabilities
                     |
                     v
 append turn/start and user/message
