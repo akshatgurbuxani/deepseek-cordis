@@ -1,17 +1,13 @@
 import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
-
-import { AppBoot, type ManifestEntry } from '@deepseek-cordis/app-boot'
 import { AgentLoop } from '@deepseek-cordis/agent-loop'
+import { AppBoot, type ManifestEntry } from '@deepseek-cordis/app-boot'
 import {
+  type ApprovalService,
   DenyApprovalService,
   UnavailableApprovalService,
-  type ApprovalService,
 } from '@deepseek-cordis/approval'
-import {
-  createCompactCommand,
-  createInspectCommand,
-} from '@deepseek-cordis/command-session'
+import { createCompactCommand, createInspectCommand } from '@deepseek-cordis/command-session'
 import { InMemoryCommandRegistry } from '@deepseek-cordis/commands'
 import {
   ModelSummaryAdapter,
@@ -20,9 +16,9 @@ import {
 } from '@deepseek-cordis/compaction'
 import {
   DEFAULT_HARNESS_PROFILE,
-  parseHarnessProfile,
   type HarnessProfile,
   type HarnessToolId,
+  parseHarnessProfile,
 } from '@deepseek-cordis/configuration'
 import { ContextBudgetPolicy } from '@deepseek-cordis/context-budget'
 import {
@@ -40,30 +36,30 @@ import type { ModelAdapter } from '@deepseek-cordis/model'
 import { ReplayModelAdapter } from '@deepseek-cordis/model/testing'
 import { OpenRouterModelAdapter } from '@deepseek-cordis/model-openrouter'
 import type { JsonValue, RunResult } from '@deepseek-cordis/protocol'
-import { InMemorySessionStore, type SessionStore } from '@deepseek-cordis/session'
-import { FileSessionStore } from '@deepseek-cordis/session-file'
-import { UnavailableToolSandbox, type ToolSandbox } from '@deepseek-cordis/sandbox'
-import { TokenMeter } from '@deepseek-cordis/token-meter'
-import { HARNESS_IDENTITY_SECTION } from '@deepseek-cordis/system-prompt'
+import {
+  createAgentLoopPlugin,
+  createApprovalServicePlugin,
+  createCommandRegistrationPlugin,
+  createCommandRegistryPlugin,
+  createCompactionPlugin,
+  createModelAdapterPlugin,
+  createPromptSectionPlugin,
+  createSandboxPlugin,
+  createSessionStorePlugin,
+  createSystemPromptPlugin,
+  createTokenMeterPlugin,
+  createToolRegistrationPlugin,
+  createToolRegistryPlugin,
+} from '@deepseek-cordis/runtime-cordis'
+import { type ToolSandbox, UnavailableToolSandbox } from '@deepseek-cordis/sandbox'
 import {
   createWorkspaceFileTool,
   WORKSPACE_CREATE_FILE_TOOL,
 } from '@deepseek-cordis/sandbox-workspace'
-import {
-  createAgentLoopPlugin,
-  createApprovalServicePlugin,
-  createCompactionPlugin,
-  createCommandRegistrationPlugin,
-  createCommandRegistryPlugin,
-  createModelAdapterPlugin,
-  createPromptSectionPlugin,
-  createSessionStorePlugin,
-  createSandboxPlugin,
-  createSystemPromptPlugin,
-  createToolRegistrationPlugin,
-  createToolRegistryPlugin,
-  createTokenMeterPlugin,
-} from '@deepseek-cordis/runtime-cordis'
+import { InMemorySessionStore, type SessionStore } from '@deepseek-cordis/session'
+import { FileSessionStore } from '@deepseek-cordis/session-file'
+import { HARNESS_IDENTITY_SECTION } from '@deepseek-cordis/system-prompt'
+import { TokenMeter } from '@deepseek-cordis/token-meter'
 
 import {
   type ApprovalPrompt,
@@ -74,9 +70,9 @@ import {
 import {
   consoleTrace,
   type TraceSink,
-  traceRuntimeLifecycle,
   TracingModelAdapter,
   TracingSessionStore,
+  traceRuntimeLifecycle,
 } from './tracing.js'
 
 const defaultInput = 'Use the add tool to calculate 17 + 25.'
@@ -151,7 +147,7 @@ export function parseCliArguments(
     mode: replay ? 'replay' : 'openrouter',
     interactive,
     input: inputParts.join(' ') || defaultInput,
-    model: replay ? 'replay/calculator' : env.OPENROUTER_MODEL ?? 'openrouter/free',
+    model: replay ? 'replay/calculator' : (env.OPENROUTER_MODEL ?? 'openrouter/free'),
     ...(profilePath === undefined ? {} : { profilePath }),
   }
 }
@@ -174,21 +170,19 @@ export function resolveCliConfiguration(
   parsed: CliConfiguration,
   env: Readonly<Record<string, string | undefined>>,
 ): ResolvedCliConfiguration {
-  const absoluteProfilePath = parsed.profilePath === undefined
-    ? undefined
-    : resolve(parsed.profilePath)
-  const profile = absoluteProfilePath === undefined
-    ? DEFAULT_HARNESS_PROFILE
-    : parseHarnessProfile(readFileSync(absoluteProfilePath, 'utf8'), absoluteProfilePath)
-  const profileBase = absoluteProfilePath === undefined
-    ? process.cwd()
-    : dirname(absoluteProfilePath)
+  const absoluteProfilePath =
+    parsed.profilePath === undefined ? undefined : resolve(parsed.profilePath)
+  const profile =
+    absoluteProfilePath === undefined
+      ? DEFAULT_HARNESS_PROFILE
+      : parseHarnessProfile(readFileSync(absoluteProfilePath, 'utf8'), absoluteProfilePath)
+  const profileBase =
+    absoluteProfilePath === undefined ? process.cwd() : dirname(absoluteProfilePath)
   const replay = parsed.mode === 'replay' || profile.model.provider === 'replay'
   const model = replay
     ? 'replay/calculator'
-    : env.OPENROUTER_MODEL ?? (profile.model.provider === 'openrouter'
-      ? profile.model.id
-      : 'openrouter/free')
+    : (env.OPENROUTER_MODEL ??
+      (profile.model.provider === 'openrouter' ? profile.model.id : 'openrouter/free'))
   const environmentContextWindow = optionalPositiveInteger(
     env.HARNESS_CONTEXT_WINDOW ?? env.OPENROUTER_CONTEXT_WINDOW,
     'HARNESS_CONTEXT_WINDOW',
@@ -223,25 +217,30 @@ function replayModel(input: string, contextWindow?: number): ReplayModelAdapter 
     throw new Error('replay mode expects the input to contain at least two numbers')
   }
   const answer = left + right
-  return new ReplayModelAdapter('calculator', [
-    {
-      type: 'tool_calls',
-      calls: [{ id: 'replay-add-1', name: 'add', arguments: { a: left, b: right } }],
-    },
-    { type: 'message', content: `The answer is ${answer}.` },
-  ], contextWindow === undefined ? {} : { contextWindow })
+  return new ReplayModelAdapter(
+    'calculator',
+    [
+      {
+        type: 'tool_calls',
+        calls: [{ id: 'replay-add-1', name: 'add', arguments: { a: left, b: right } }],
+      },
+      { type: 'message', content: `The answer is ${answer}.` },
+    ],
+    contextWindow === undefined ? {} : { contextWindow },
+  )
 }
 
 function calculator(argumentsValue: JsonValue): number {
   if (
-    argumentsValue === null
-    || Array.isArray(argumentsValue)
-    || typeof argumentsValue !== 'object'
-    || typeof argumentsValue.a !== 'number'
-    || typeof argumentsValue.b !== 'number'
-    || !Number.isFinite(argumentsValue.a)
-    || !Number.isFinite(argumentsValue.b)
-  ) throw new Error('calculator expects finite numeric a and b arguments')
+    argumentsValue === null ||
+    Array.isArray(argumentsValue) ||
+    typeof argumentsValue !== 'object' ||
+    typeof argumentsValue.a !== 'number' ||
+    typeof argumentsValue.b !== 'number' ||
+    !Number.isFinite(argumentsValue.a) ||
+    !Number.isFinite(argumentsValue.b)
+  )
+    throw new Error('calculator expects finite numeric a and b arguments')
   return argumentsValue.a + argumentsValue.b
 }
 
@@ -264,9 +263,7 @@ function openRouterModel(
   return new OpenRouterModelAdapter({
     apiKey: env.OPENROUTER_API_KEY ?? '',
     model: configuration.model,
-    ...(env.OPENROUTER_HTTP_REFERER
-      ? { httpReferer: env.OPENROUTER_HTTP_REFERER }
-      : {}),
+    ...(env.OPENROUTER_HTTP_REFERER ? { httpReferer: env.OPENROUTER_HTTP_REFERER } : {}),
     ...(env.OPENROUTER_APP_TITLE
       ? { appTitle: env.OPENROUTER_APP_TITLE }
       : env.OPENROUTER_HTTP_REFERER
@@ -308,21 +305,22 @@ function manifestFor(
       id: 'add',
       revision: 'v1',
       enabled: enabledTools.has('add'),
-      load: () => createToolRegistrationPlugin({
-        name: 'add',
-        description: 'Add two numbers. Use this tool for arithmetic addition.',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            a: { type: 'number' },
-            b: { type: 'number' },
+      load: () =>
+        createToolRegistrationPlugin({
+          name: 'add',
+          description: 'Add two numbers. Use this tool for arithmetic addition.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              a: { type: 'number' },
+              b: { type: 'number' },
+            },
+            required: ['a', 'b'],
+            additionalProperties: false,
           },
-          required: ['a', 'b'],
-          additionalProperties: false,
-        },
-        safety: { risk: 'none' },
-        execute: calculator,
-      }),
+          safety: { risk: 'none' },
+          execute: calculator,
+        }),
     },
     {
       id: 'create-workspace-file',
@@ -363,24 +361,45 @@ function manifestFor(
     { id: 'compaction', revision: 'v1', load: () => compaction.plugin },
     { id: 'token-meter', revision: 'v1', load: () => tokenMeter.plugin },
     { id: 'commands', revision: 'v1', load: () => commands.plugin },
-    { id: 'command-inspect', revision: 'v1', load: () =>
-      createCommandRegistrationPlugin(createInspectCommand()) },
-    { id: 'command-compact', revision: 'v1', load: () =>
-      createCommandRegistrationPlugin(createCompactCommand(compactor)) },
-    { id: 'command-help', revision: 'v1', load: () => createCommandRegistrationPlugin({
-      name: 'help',
-      description: 'List available commands',
-      handler: () => ({
-        kind: 'success',
-        text: commands.value.list().map((command) =>
-          `/${command.name}${command.inputHint ? ` ${command.inputHint}` : ''} — ${command.description}`
-        ).join('\n'),
-      }),
-    }) },
-    { id: 'command-exit', revision: 'v1', load: () => createCommandRegistrationPlugin({
-      name: 'exit', description: 'Exit the interactive session',
-      handler: () => ({ kind: 'success', text: 'Session closed.' }),
-    }) },
+    {
+      id: 'command-inspect',
+      revision: 'v1',
+      load: () => createCommandRegistrationPlugin(createInspectCommand()),
+    },
+    {
+      id: 'command-compact',
+      revision: 'v1',
+      load: () => createCommandRegistrationPlugin(createCompactCommand(compactor)),
+    },
+    {
+      id: 'command-help',
+      revision: 'v1',
+      load: () =>
+        createCommandRegistrationPlugin({
+          name: 'help',
+          description: 'List available commands',
+          handler: () => ({
+            kind: 'success',
+            text: commands.value
+              .list()
+              .map(
+                (command) =>
+                  `/${command.name}${command.inputHint ? ` ${command.inputHint}` : ''} — ${command.description}`,
+              )
+              .join('\n'),
+          }),
+        }),
+    },
+    {
+      id: 'command-exit',
+      revision: 'v1',
+      load: () =>
+        createCommandRegistrationPlugin({
+          name: 'exit',
+          description: 'Exit the interactive session',
+          handler: () => ({ kind: 'success', text: 'Session closed.' }),
+        }),
+    },
   ]
 }
 
@@ -404,8 +423,9 @@ async function mountCliRuntime(
   const boot = new AppBoot()
   const stopLifecycleTrace = traceRuntimeLifecycle(boot.context, trace)
   try {
-    const workspaceEnabled = configuration.profile.tools.enabled
-      .some((id) => id.startsWith('workspace.'))
+    const workspaceEnabled = configuration.profile.tools.enabled.some((id) =>
+      id.startsWith('workspace.'),
+    )
     const sandbox: ToolSandbox = workspaceEnabled
       ? new WorkspaceFilesystemSandbox({
           filesystem: new NodeWorkspaceFileSystem({
@@ -445,16 +465,18 @@ async function mountCliRuntime(
       sessionStore: configuration.sessionDirectory ? 'file' : 'memory',
       resumed: existingSession !== undefined,
     })
-    await boot.reconcile(manifestFor(
-      configuration.profile,
-      sessions,
-      model,
-      compactor,
-      meter,
-      policy,
-      approval,
-      sandbox,
-    ))
+    await boot.reconcile(
+      manifestFor(
+        configuration.profile,
+        sessions,
+        model,
+        compactor,
+        meter,
+        policy,
+        approval,
+        sandbox,
+      ),
+    )
     const session = existingSession ?? boot.context.sessions.create(sessionId)
     return {
       boot,
@@ -486,18 +508,25 @@ export async function runCli(options: RunCliOptions = {}): Promise<RunResult> {
 
   let runtime: MountedCliRuntime | undefined
   try {
-    const innerModel = configuration.mode === 'replay'
-      ? replayModel(configuration.input, configuration.contextWindow)
-      : openRouterModel(configuration, env, options, trace, configuration.contextWindow)
+    const innerModel =
+      configuration.mode === 'replay'
+        ? replayModel(configuration.input, configuration.contextWindow)
+        : openRouterModel(configuration, env, options, trace, configuration.contextWindow)
     runtime = await mountCliRuntime(
       configuration,
       options,
       innerModel,
-      (model) => new ModelSummaryAdapter(configuration.mode === 'replay'
-        ? new TracingModelAdapter(new ReplayModelAdapter('summary', [
-            { type: 'message', content: 'Earlier conversation compacted for replay.' },
-          ]), trace)
-        : model),
+      (model) =>
+        new ModelSummaryAdapter(
+          configuration.mode === 'replay'
+            ? new TracingModelAdapter(
+                new ReplayModelAdapter('summary', [
+                  { type: 'message', content: 'Earlier conversation compacted for replay.' },
+                ]),
+                trace,
+              )
+            : model,
+        ),
       configuration.profile.approval.default === 'deny'
         ? new DenyApprovalService()
         : new UnavailableApprovalService(),
@@ -534,20 +563,24 @@ export async function runInteractiveCli(
   const output = options.output ?? console.log
   const parsed = parseCliArguments(argv, env)
   const configuration = resolveCliConfiguration({ ...parsed, interactive: true }, env)
-  const innerModel = configuration.mode === 'replay'
-    ? new InteractiveReplayModelAdapter(configuration.contextWindow)
-    : openRouterModel(configuration, env, options, trace, configuration.contextWindow)
-  const promptApproval: ApprovalPrompt = options.approve ?? (async (request) => {
-    const answer = await options.readLine(
-      `[approval] ${request.toolName} (${request.risk}): ${request.reason}\n`
-        + `Arguments: ${JSON.stringify(request.arguments)}\nAllow once? [y/N] `,
-    )
-    if (answer === undefined) return undefined
-    return /^(?:y|yes)$/i.test(answer.trim())
-  })
-  const approval = configuration.profile.approval.default === 'ask'
-    ? new InteractiveApprovalService(promptApproval)
-    : new DenyApprovalService()
+  const innerModel =
+    configuration.mode === 'replay'
+      ? new InteractiveReplayModelAdapter(configuration.contextWindow)
+      : openRouterModel(configuration, env, options, trace, configuration.contextWindow)
+  const promptApproval: ApprovalPrompt =
+    options.approve ??
+    (async (request) => {
+      const answer = await options.readLine(
+        `[approval] ${request.toolName} (${request.risk}): ${request.reason}\n` +
+          `Arguments: ${JSON.stringify(request.arguments)}\nAllow once? [y/N] `,
+      )
+      if (answer === undefined) return undefined
+      return /^(?:y|yes)$/i.test(answer.trim())
+    })
+  const approval =
+    configuration.profile.approval.default === 'ask'
+      ? new InteractiveApprovalService(promptApproval)
+      : new DenyApprovalService()
   let runtime: MountedCliRuntime | undefined
   try {
     runtime = await mountCliRuntime(

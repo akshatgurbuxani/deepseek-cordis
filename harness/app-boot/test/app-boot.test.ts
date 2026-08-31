@@ -5,15 +5,15 @@ import { AppBoot, type ManifestEntry } from '@deepseek-cordis/app-boot'
 import { ReplayModelAdapter } from '@deepseek-cordis/model/testing'
 import type { JsonValue } from '@deepseek-cordis/protocol'
 import {
-  RuntimeFiberState,
   createAgentLoopPlugin,
   createApprovalServicePlugin,
   createModelAdapterPlugin,
-  createSessionStorePlugin,
   createSandboxPlugin,
+  createSessionStorePlugin,
   createSystemPromptPlugin,
   createToolRegistrationPlugin,
   createToolRegistryPlugin,
+  RuntimeFiberState,
   type RuntimePlugin,
 } from '@deepseek-cordis/runtime-cordis'
 
@@ -40,12 +40,13 @@ function addTool(offset = 0) {
     safety: { risk: 'none' },
     execute(argumentsValue: JsonValue) {
       if (
-        argumentsValue === null
-        || Array.isArray(argumentsValue)
-        || typeof argumentsValue !== 'object'
-        || typeof argumentsValue.a !== 'number'
-        || typeof argumentsValue.b !== 'number'
-      ) throw new Error('invalid add arguments')
+        argumentsValue === null ||
+        Array.isArray(argumentsValue) ||
+        typeof argumentsValue !== 'object' ||
+        typeof argumentsValue.a !== 'number' ||
+        typeof argumentsValue.b !== 'number'
+      )
+        throw new Error('invalid add arguments')
       return argumentsValue.a + argumentsValue.b + offset
     },
   })
@@ -63,13 +64,15 @@ test('initial boot follows Cordis dependencies and an identical manifest is a no
   let loads = 0
   const sessions = createSessionStorePlugin()
   const tools = createToolRegistryPlugin()
-  const model = createModelAdapterPlugin(new ReplayModelAdapter('calculator', [
-    {
-      type: 'tool_calls',
-      calls: [{ id: 'call-1', name: 'add', arguments: { a: 2, b: 3 } }],
-    },
-    { type: 'message', content: '5' },
-  ]))
+  const model = createModelAdapterPlugin(
+    new ReplayModelAdapter('calculator', [
+      {
+        type: 'tool_calls',
+        calls: [{ id: 'call-1', name: 'add', arguments: { a: 2, b: 3 } }],
+      },
+      { type: 'message', content: '5' },
+    ]),
+  )
   const loop = createAgentLoopPlugin()
   const plugins: Record<string, RuntimePlugin> = {
     loop: loop.plugin,
@@ -82,15 +85,24 @@ test('initial boot follows Cordis dependencies and an identical manifest is a no
     add: addTool(),
   }
   const manifest = [
-    'loop', 'add', 'sessions', 'tools', 'model', 'approval', 'sandbox', 'prompt',
-  ].map((id): ManifestEntry => ({
-    id,
-    revision: 'v1',
-    load() {
-      loads += 1
-      return plugins[id]!
-    },
-  }))
+    'loop',
+    'add',
+    'sessions',
+    'tools',
+    'model',
+    'approval',
+    'sandbox',
+    'prompt',
+  ].map(
+    (id): ManifestEntry => ({
+      id,
+      revision: 'v1',
+      load() {
+        loads += 1
+        return plugins[id]!
+      },
+    }),
+  )
 
   const first = await boot.reconcile(manifest)
   const loopFiber = boot.entry('loop')?.fiber
@@ -151,7 +163,10 @@ test('tool replacement changes execution while preserving the loop and session h
   assert.deepEqual(changed.updated, ['add'])
   assert.equal(boot.entry('loop')?.fiber, loopFiber)
   assert.equal(boot.context.sessions, sessions.value)
-  assert.deepEqual(results.map((event) => event.ok ? event.output : undefined), [2, 12])
+  assert.deepEqual(
+    results.map((event) => (event.ok ? event.output : undefined)),
+    [2, 12],
+  )
 
   await boot.dispose()
 })
@@ -189,9 +204,11 @@ test('model replacement preserves history and a failed candidate restores the wo
   brokenModel.provide = 'model'
 
   await assert.rejects(
-    boot.reconcile(stableManifest.map((item) => item.id === 'model'
-      ? entry('model', 'v2', brokenModel)
-      : item)),
+    boot.reconcile(
+      stableManifest.map((item) =>
+        item.id === 'model' ? entry('model', 'v2', brokenModel) : item,
+      ),
+    ),
     /broken model activation/,
   )
 
@@ -205,9 +222,13 @@ test('model replacement preserves history and a failed candidate restores the wo
   const nextAdapter = new ReplayModelAdapter('next', [
     { type: 'message', content: 'from next model' },
   ])
-  const replacement = await boot.reconcile(stableManifest.map((item) => item.id === 'model'
-    ? entry('model', 'v3', createModelAdapterPlugin(nextAdapter).plugin)
-    : item))
+  const replacement = await boot.reconcile(
+    stableManifest.map((item) =>
+      item.id === 'model'
+        ? entry('model', 'v3', createModelAdapterPlugin(nextAdapter).plugin)
+        : item,
+    ),
+  )
   assert.deepEqual(replacement.updated, ['model'])
   assert.equal(boot.entry('model'), modelHandle)
   assert.equal(boot.entry('loop')?.fiber, loopFiber)
@@ -231,13 +252,18 @@ test('module load failure leaves the exact running fibers untouched', async () =
   const handle = boot.entry('sessions')
   const fiber = handle?.fiber
 
-  await assert.rejects(boot.reconcile([{
-    id: 'sessions',
-    revision: 'v2',
-    load() {
-      throw new SyntaxError('invalid module syntax')
-    },
-  }]), /invalid module syntax/)
+  await assert.rejects(
+    boot.reconcile([
+      {
+        id: 'sessions',
+        revision: 'v2',
+        load() {
+          throw new SyntaxError('invalid module syntax')
+        },
+      },
+    ]),
+    /invalid module syntax/,
+  )
 
   assert.equal(boot.entry('sessions'), handle)
   assert.equal(handle?.fiber, fiber)
@@ -253,7 +279,9 @@ test('disabling a parent drains children first and preserves unrelated fibers', 
   const traced = (id: string): RuntimePlugin.Function<void> => {
     const plugin: RuntimePlugin.Function<void> = (context) => {
       trace.push(`${id}:activate`)
-      context.effect(() => () => { trace.push(`${id}:dispose`) })
+      context.effect(() => () => {
+        trace.push(`${id}:dispose`)
+      })
     }
     Object.defineProperty(plugin, 'name', { configurable: true, value: id })
     return plugin
@@ -268,9 +296,9 @@ test('disabling a parent drains children first and preserves unrelated fibers', 
   const childHandle = boot.entry('child')
   const unrelatedFiber = boot.entry('unrelated')?.fiber
 
-  const disabled = initial.map((item) => item.id === 'parent'
-    ? { ...item, enabled: false }
-    : item)
+  const disabled = initial.map((item) =>
+    item.id === 'parent' ? { ...item, enabled: false } : item,
+  )
   const result = await boot.reconcile(disabled)
 
   assert.deepEqual(result.removed, ['child', 'parent'])
@@ -301,17 +329,24 @@ test('manifest validation rejects duplicates, missing parents, and cycles before
     return () => undefined
   }
 
-  await assert.rejects(boot.reconcile([
-    { id: 'same', revision: '1', load },
-    { id: 'same', revision: '2', load },
-  ]), /duplicate entry "same"/)
-  await assert.rejects(boot.reconcile([
-    { id: 'child', parentId: 'missing', revision: '1', load },
-  ]), /missing parent "missing"/)
-  await assert.rejects(boot.reconcile([
-    { id: 'a', parentId: 'b', revision: '1', load },
-    { id: 'b', parentId: 'a', revision: '1', load },
-  ]), /parent cycle/)
+  await assert.rejects(
+    boot.reconcile([
+      { id: 'same', revision: '1', load },
+      { id: 'same', revision: '2', load },
+    ]),
+    /duplicate entry "same"/,
+  )
+  await assert.rejects(
+    boot.reconcile([{ id: 'child', parentId: 'missing', revision: '1', load }]),
+    /missing parent "missing"/,
+  )
+  await assert.rejects(
+    boot.reconcile([
+      { id: 'a', parentId: 'b', revision: '1', load },
+      { id: 'b', parentId: 'a', revision: '1', load },
+    ]),
+    /parent cycle/,
+  )
 
   assert.equal(loads, 0)
   assert.deepEqual(boot.entries, [])
@@ -320,22 +355,24 @@ test('manifest validation rejects duplicates, missing parents, and cycles before
 
 test('queued manifests converge on the newest submitted revision', async () => {
   let release!: () => void
-  const waiting = new Promise<void>((resolve) => { release = resolve })
+  const waiting = new Promise<void>((resolve) => {
+    release = resolve
+  })
   const boot = new AppBoot()
   const firstPlugin: RuntimePlugin.Function<void> = () => undefined
   const secondPlugin: RuntimePlugin.Function<void> = () => undefined
 
-  const first = boot.reconcile([{
-    id: 'version',
-    revision: 'v1',
-    async load() {
-      await waiting
-      return firstPlugin
+  const first = boot.reconcile([
+    {
+      id: 'version',
+      revision: 'v1',
+      async load() {
+        await waiting
+        return firstPlugin
+      },
     },
-  }])
-  const second = boot.reconcile([
-    entry('version', 'v2', secondPlugin),
   ])
+  const second = boot.reconcile([entry('version', 'v2', secondPlugin)])
 
   release()
   await Promise.all([first, second])
@@ -378,9 +415,7 @@ test('context changes remount an entry and rollback failure retains both errors'
   const broken: RuntimePlugin.Function<void> = () => {
     throw new Error('candidate activation failed')
   }
-  const error = await boot.reconcile([
-    entry('service', 'v2', broken),
-  ]).then(
+  const error = await boot.reconcile([entry('service', 'v2', broken)]).then(
     () => undefined,
     (reason: unknown) => reason,
   )

@@ -36,20 +36,16 @@ export type ToolExecution =
 
 export type ToolRisk = 'filesystem' | 'shell' | 'browser' | 'external'
 
-export type ApprovalOutcome =
-  | 'allowed-once'
-  | 'rejected'
-  | 'cancelled'
-  | 'unavailable'
+export type ApprovalOutcome = 'allowed-once' | 'rejected' | 'cancelled' | 'unavailable'
 
 export type SandboxEnforcement = 'full' | 'partial'
 
 export type CommandResult =
   | {
-    readonly kind: 'success'
-    readonly text?: string
-    readonly sourceSequence?: number
-  }
+      readonly kind: 'success'
+      readonly text?: string
+      readonly sourceSequence?: number
+    }
   | { readonly kind: 'error'; readonly text: string }
 
 interface EventBase {
@@ -58,115 +54,116 @@ interface EventBase {
 }
 
 export type SessionEvent =
-  | EventBase & { readonly type: 'turn/start' }
-  | EventBase & { readonly type: 'user/message'; readonly content: string }
-  | EventBase & { readonly type: 'step/start'; readonly step: number }
-  | EventBase & {
-    readonly type: 'assistant/tool-calls'
-    readonly calls: readonly ToolCall[]
-    readonly usage?: AssistantUsage
-  }
-  | EventBase & { readonly type: 'tool/call'; readonly call: ToolCall }
-  | EventBase & {
-    readonly type: 'approval/asked'
-    readonly callId: string
-    readonly name: string
-    readonly risk: ToolRisk
-    readonly reason: string
-  }
-  | EventBase & {
-    readonly type: 'approval/decided'
-    readonly callId: string
-    readonly name: string
-    readonly outcome: ApprovalOutcome
-  }
-  | EventBase & {
-    readonly type: 'sandbox/prepared'
-    readonly callId: string
-    readonly name: string
-    readonly profile: string
-    readonly provider: string
-    readonly enforcement: SandboxEnforcement
-  }
-  | EventBase & {
-    readonly type: 'command/run'
-    readonly commandId: string
-    readonly name: string
-    readonly rawInput: string
-  }
-  | EventBase & {
-    readonly type: 'command/done'
-    readonly commandId: string
-    readonly name: string
-    readonly result: CommandResult
-  }
-  | EventBase & {
-    readonly type: 'tool/result'
-    readonly callId: string
-    readonly name: string
-    readonly ok: true
-    readonly output: JsonValue
-  }
-  | EventBase & {
-    readonly type: 'tool/result'
-    readonly callId: string
-    readonly name: string
-    readonly ok: false
-    readonly error: string
-  }
-  | EventBase & {
-    readonly type: 'assistant/message'
-    readonly content: string
-    readonly usage?: AssistantUsage
-  }
-  | EventBase & {
-    readonly type: 'compaction/summary'
-    readonly summary: string
-    readonly shadowedSequences: readonly number[]
-    readonly summarizer: string
-  }
-  | EventBase & {
-    readonly type: 'context-budget/decision'
-    readonly model: string
-    readonly measuredTokens: number
-  } & (
-    | {
-      readonly trigger: 'pressure'
-      readonly contextWindow: number
-      readonly thresholdTokens: number
-    }
-    | {
-      readonly trigger: 'context_overflow'
-      readonly contextWindow?: number
-      readonly thresholdTokens?: never
-    }
-  ) & (
-    | {
-      readonly outcome: 'compacted'
-      readonly summarySequence: number
-      readonly error?: never
-    }
-    | {
-      readonly outcome: 'no_progress'
-      readonly summarySequence?: never
-      readonly error?: never
-    }
-    | {
-      readonly outcome: 'failed'
-      readonly summarySequence?: never
+  | (EventBase & { readonly type: 'turn/start' })
+  | (EventBase & { readonly type: 'user/message'; readonly content: string })
+  | (EventBase & { readonly type: 'step/start'; readonly step: number })
+  | (EventBase & {
+      readonly type: 'assistant/tool-calls'
+      readonly calls: readonly ToolCall[]
+      readonly usage?: AssistantUsage
+    })
+  | (EventBase & { readonly type: 'tool/call'; readonly call: ToolCall })
+  | (EventBase & {
+      readonly type: 'approval/asked'
+      readonly callId: string
+      readonly name: string
+      readonly risk: ToolRisk
+      readonly reason: string
+    })
+  | (EventBase & {
+      readonly type: 'approval/decided'
+      readonly callId: string
+      readonly name: string
+      readonly outcome: ApprovalOutcome
+    })
+  | (EventBase & {
+      readonly type: 'sandbox/prepared'
+      readonly callId: string
+      readonly name: string
+      readonly profile: string
+      readonly provider: string
+      readonly enforcement: SandboxEnforcement
+    })
+  | (EventBase & {
+      readonly type: 'command/run'
+      readonly commandId: string
+      readonly name: string
+      readonly rawInput: string
+    })
+  | (EventBase & {
+      readonly type: 'command/done'
+      readonly commandId: string
+      readonly name: string
+      readonly result: CommandResult
+    })
+  | (EventBase & {
+      readonly type: 'tool/result'
+      readonly callId: string
+      readonly name: string
+      readonly ok: true
+      readonly output: JsonValue
+    })
+  | (EventBase & {
+      readonly type: 'tool/result'
+      readonly callId: string
+      readonly name: string
+      readonly ok: false
       readonly error: string
-    }
-  )
-  | EventBase & {
-    readonly type: 'step/end'
-    readonly step: number
-    readonly outcome: 'tool_calls' | 'completed' | 'failed' | 'aborted' | 'interrupted'
-  }
-  | EventBase & { readonly type: 'turn/error'; readonly error: string }
-  | EventBase & {
-    readonly type: 'turn/end'
-    readonly status: 'completed' | 'failed' | 'aborted' | 'interrupted'
-  }
+    })
+  | (EventBase & {
+      readonly type: 'assistant/message'
+      readonly content: string
+      readonly usage?: AssistantUsage
+    })
+  | (EventBase & {
+      readonly type: 'compaction/summary'
+      readonly summary: string
+      readonly shadowedSequences: readonly number[]
+      readonly summarizer: string
+    })
+  | (EventBase & {
+      readonly type: 'context-budget/decision'
+      readonly model: string
+      readonly measuredTokens: number
+    } & (
+        | {
+            readonly trigger: 'pressure'
+            readonly contextWindow: number
+            readonly thresholdTokens: number
+          }
+        | {
+            readonly trigger: 'context_overflow'
+            readonly contextWindow?: number
+            readonly thresholdTokens?: never
+          }
+      ) &
+      (
+        | {
+            readonly outcome: 'compacted'
+            readonly summarySequence: number
+            readonly error?: never
+          }
+        | {
+            readonly outcome: 'no_progress'
+            readonly summarySequence?: never
+            readonly error?: never
+          }
+        | {
+            readonly outcome: 'failed'
+            readonly summarySequence?: never
+            readonly error: string
+          }
+      ))
+  | (EventBase & {
+      readonly type: 'step/end'
+      readonly step: number
+      readonly outcome: 'tool_calls' | 'completed' | 'failed' | 'aborted' | 'interrupted'
+    })
+  | (EventBase & { readonly type: 'turn/error'; readonly error: string })
+  | (EventBase & {
+      readonly type: 'turn/end'
+      readonly status: 'completed' | 'failed' | 'aborted' | 'interrupted'
+    })
 
 export type SessionEventInput = SessionEvent extends infer Event
   ? Event extends { sequence: number }
@@ -179,19 +176,19 @@ export type ModelMessage =
   | { readonly role: 'assistant'; readonly content: string }
   | { readonly role: 'assistant'; readonly toolCalls: readonly ToolCall[] }
   | {
-    readonly role: 'tool'
-    readonly callId: string
-    readonly name: string
-    readonly ok: true
-    readonly output: JsonValue
-  }
+      readonly role: 'tool'
+      readonly callId: string
+      readonly name: string
+      readonly ok: true
+      readonly output: JsonValue
+    }
   | {
-    readonly role: 'tool'
-    readonly callId: string
-    readonly name: string
-    readonly ok: false
-    readonly error: string
-  }
+      readonly role: 'tool'
+      readonly callId: string
+      readonly name: string
+      readonly ok: false
+      readonly error: string
+    }
 
 export interface ModelRequest {
   readonly sessionId: string
@@ -209,17 +206,17 @@ export type ModelResponse =
 export type ModelStreamChunk =
   | { readonly type: 'text-delta'; readonly delta: string }
   | {
-    readonly type: 'finish'
-    readonly reason: 'completed'
-    readonly response: ModelResponse
-    readonly usage?: ModelTokenUsage
-  }
+      readonly type: 'finish'
+      readonly reason: 'completed'
+      readonly response: ModelResponse
+      readonly usage?: ModelTokenUsage
+    }
   | {
-    readonly type: 'finish'
-    readonly reason: 'error'
-    readonly error: string
-    readonly code?: 'context_window_exceeded'
-  }
+      readonly type: 'finish'
+      readonly reason: 'error'
+      readonly error: string
+      readonly code?: 'context_window_exceeded'
+    }
   | { readonly type: 'finish'; readonly reason: 'aborted' }
 
 export interface RunResult {

@@ -19,7 +19,9 @@ test('a minimal versioned profile expands to immutable explicit defaults', () =>
   assert.deepEqual(profile.prompt, { identity: true, workspaceGuidance: true })
   assert.deepEqual(profile.approval, { default: 'ask' })
   assert.deepEqual(profile.context, {
-    thresholdRatio: 0.8, retainTurns: 1, maxOverflowRetries: 1,
+    thresholdRatio: 0.8,
+    retainTurns: 1,
+    maxOverflowRetries: 1,
   })
   assert.equal(Object.isFrozen(profile), true)
   assert.equal(Object.isFrozen(profile.tools.enabled), true)
@@ -56,11 +58,14 @@ test('all profile choices normalize without retaining caller-owned structures', 
 
 test('JSON parsing reports source provenance without exposing document content', () => {
   assert.equal(parseHarnessProfile('{"schemaVersion":1}', 'coding.json').name, 'default')
-  assert.throws(() => parseHarnessProfile('{secret', 'private.json'), (error: unknown) => {
-    assert.match((error as Error).message, /^private\.json: invalid JSON$/)
-    assert.equal((error as Error).message.includes('secret'), false)
-    return true
-  })
+  assert.throws(
+    () => parseHarnessProfile('{secret', 'private.json'),
+    (error: unknown) => {
+      assert.match((error as Error).message, /^private\.json: invalid JSON$/)
+      assert.equal((error as Error).message.includes('secret'), false)
+      return true
+    },
+  )
 })
 
 test('schema, objects, exact keys, and discriminated fields fail loud', () => {
@@ -72,8 +77,14 @@ test('schema, objects, exact keys, and discriminated fields fail loud', () => {
     [{ schemaVersion: 1, name: '  ' }, /name must be a non-empty string/],
     [{ schemaVersion: 1, model: { provider: 'other' } }, /model\.provider/],
     [{ schemaVersion: 1, model: { provider: 'replay', id: 'wrong' } }, /not allowed for replay/],
-    [{ schemaVersion: 1, model: { provider: 'openrouter', extra: true } }, /model contains unknown field/],
-    [{ schemaVersion: 1, persistence: { kind: 'memory', directory: 'x' } }, /not allowed for memory/],
+    [
+      { schemaVersion: 1, model: { provider: 'openrouter', extra: true } },
+      /model contains unknown field/,
+    ],
+    [
+      { schemaVersion: 1, persistence: { kind: 'memory', directory: 'x' } },
+      /not allowed for memory/,
+    ],
     [{ schemaVersion: 1, persistence: { kind: 'database' } }, /persistence\.kind/],
     [{ schemaVersion: 1, persistence: { kind: 'file' } }, /persistence\.directory/],
   ]

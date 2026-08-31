@@ -1,13 +1,13 @@
+import type { ApprovalService } from '@deepseek-cordis/approval'
 import {
   type ApprovalOutcome,
   type JsonValue,
   type SandboxEnforcement,
   snapshot,
-  type ToolRisk,
   type ToolExecution,
+  type ToolRisk,
   type ToolSchema,
 } from '@deepseek-cordis/protocol'
-import type { ApprovalService } from '@deepseek-cordis/approval'
 import type { SandboxLease, ToolSandbox } from '@deepseek-cordis/sandbox'
 
 export interface LocalToolDefinition extends ToolSchema {
@@ -40,26 +40,26 @@ export interface ToolExecutionContext {
 
 export type ToolSafetyAuditEvent =
   | {
-    readonly type: 'approval/asked'
-    readonly callId: string
-    readonly name: string
-    readonly risk: ToolRisk
-    readonly reason: string
-  }
+      readonly type: 'approval/asked'
+      readonly callId: string
+      readonly name: string
+      readonly risk: ToolRisk
+      readonly reason: string
+    }
   | {
-    readonly type: 'approval/decided'
-    readonly callId: string
-    readonly name: string
-    readonly outcome: ApprovalOutcome
-  }
+      readonly type: 'approval/decided'
+      readonly callId: string
+      readonly name: string
+      readonly outcome: ApprovalOutcome
+    }
   | {
-    readonly type: 'sandbox/prepared'
-    readonly callId: string
-    readonly name: string
-    readonly profile: string
-    readonly provider: string
-    readonly enforcement: SandboxEnforcement
-  }
+      readonly type: 'sandbox/prepared'
+      readonly callId: string
+      readonly name: string
+      readonly profile: string
+      readonly provider: string
+      readonly enforcement: SandboxEnforcement
+    }
 
 export interface ToolHandlerOptions {
   readonly signal?: AbortSignal
@@ -183,7 +183,7 @@ export class InMemoryToolRegistry implements ToolRegistry {
       try {
         const candidate = await approval.request(approvalRequest)
         outcome = isApprovalOutcome(candidate) ? candidate : 'unavailable'
-      } catch (error) {
+      } catch {
         options.signal?.throwIfAborted()
         outcome = 'unavailable'
       }
@@ -221,8 +221,8 @@ export class InMemoryToolRegistry implements ToolRegistry {
           return { ok: false, error: 'sandbox provider returned an invalid lease' }
         }
         if (
-          definition.safety.sandbox.requiredEnforcement === 'full'
-          && lease.enforcement !== 'full'
+          definition.safety.sandbox.requiredEnforcement === 'full' &&
+          lease.enforcement !== 'full'
         ) {
           return {
             ok: false,
@@ -272,32 +272,37 @@ function isApprovalOutcome(value: unknown): value is ApprovalOutcome {
   return ['allowed-once', 'rejected', 'cancelled', 'unavailable'].includes(String(value))
 }
 
-function isSandboxPreparation(value: unknown): value is Awaited<
-  ReturnType<ToolSandbox['prepare']>
-> {
+function isSandboxPreparation(
+  value: unknown,
+): value is Awaited<ReturnType<ToolSandbox['prepare']>> {
   if (value === null || typeof value !== 'object' || !('ok' in value)) return false
   if (value.ok === false) return 'reason' in value && typeof value.reason === 'string'
   return value.ok === true && 'lease' in value
 }
 
 function isSandboxLease(value: unknown): value is SandboxLease {
-  return value !== null
-    && typeof value === 'object'
-    && 'provider' in value
-    && typeof value.provider === 'string'
-    && value.provider.trim().length > 0
-    && 'enforcement' in value
-    && ['full', 'partial'].includes(String(value.enforcement))
-    && 'execute' in value
-    && typeof value.execute === 'function'
-    && 'dispose' in value
-    && typeof value.dispose === 'function'
+  return (
+    value !== null &&
+    typeof value === 'object' &&
+    'provider' in value &&
+    typeof value.provider === 'string' &&
+    value.provider.trim().length > 0 &&
+    'enforcement' in value &&
+    ['full', 'partial'].includes(String(value.enforcement)) &&
+    'execute' in value &&
+    typeof value.execute === 'function' &&
+    'dispose' in value &&
+    typeof value.dispose === 'function'
+  )
 }
 
 function approvalFailure(outcome: Exclude<ApprovalOutcome, 'allowed-once'>): string {
   switch (outcome) {
-    case 'rejected': return 'tool execution was rejected by approval policy'
-    case 'cancelled': return 'tool approval was cancelled'
-    case 'unavailable': return 'tool approval is unavailable'
+    case 'rejected':
+      return 'tool execution was rejected by approval policy'
+    case 'cancelled':
+      return 'tool approval was cancelled'
+    case 'unavailable':
+      return 'tool approval is unavailable'
   }
 }

@@ -1,8 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-
-import type { JsonValue } from '@deepseek-cordis/protocol'
 import type { ApprovalService } from '@deepseek-cordis/approval'
+import type { JsonValue } from '@deepseek-cordis/protocol'
 import type { ToolSandbox } from '@deepseek-cordis/sandbox'
 import {
   InMemoryToolRegistry,
@@ -59,11 +58,13 @@ test('schemas are isolated immutable snapshots', () => {
   const schemas = registry.schemas()
   ;(definition.inputSchema as { type: string }).type = 'mutated'
 
-  assert.deepEqual(schemas, [{
-    name: 'echo',
-    description: 'Echo input',
-    inputSchema: { type: 'object' },
-  }])
+  assert.deepEqual(schemas, [
+    {
+      name: 'echo',
+      description: 'Echo input',
+      inputSchema: { type: 'object' },
+    },
+  ])
   assert.equal(Object.isFrozen(schemas[0]), true)
   assert.equal(Object.isFrozen(schemas[0]?.inputSchema), true)
 })
@@ -105,14 +106,18 @@ test('missing and throwing tools return explicit failures', async () => {
     description: 'Throw an error',
     inputSchema: {},
     safety: { risk: 'none' },
-    execute() { throw new Error('boom failed') },
+    execute() {
+      throw new Error('boom failed')
+    },
   })
   registry.register({
     name: 'string-throw',
     description: 'Throw a string',
     inputSchema: {},
     safety: { risk: 'none' },
-    execute() { throw 'string failed' },
+    execute() {
+      throw 'string failed'
+    },
   })
 
   assert.deepEqual(await registry.execute('missing', null), {
@@ -151,27 +156,42 @@ test('execution propagates cancellation instead of converting it into a tool res
 
 test('consequential definitions require complete safety declarations', () => {
   const registry = new InMemoryToolRegistry()
-  assert.throws(() => registry.register({
-    name: 'bad-reason', description: 'Bad reason', inputSchema: {},
-    safety: {
-      risk: 'filesystem', approvalReason: ' ',
-      sandbox: { profile: 'workspace-write', requiredEnforcement: 'full' },
-    },
-  }), /empty approval reason/)
-  assert.throws(() => registry.register({
-    name: 'bad-profile', description: 'Bad profile', inputSchema: {},
-    safety: {
-      risk: 'filesystem', approvalReason: 'write a file',
-      sandbox: { profile: '', requiredEnforcement: 'full' },
-    },
-  }), /empty sandbox profile/)
+  assert.throws(
+    () =>
+      registry.register({
+        name: 'bad-reason',
+        description: 'Bad reason',
+        inputSchema: {},
+        safety: {
+          risk: 'filesystem',
+          approvalReason: ' ',
+          sandbox: { profile: 'workspace-write', requiredEnforcement: 'full' },
+        },
+      }),
+    /empty approval reason/,
+  )
+  assert.throws(
+    () =>
+      registry.register({
+        name: 'bad-profile',
+        description: 'Bad profile',
+        inputSchema: {},
+        safety: {
+          risk: 'filesystem',
+          approvalReason: 'write a file',
+          sandbox: { profile: '', requiredEnforcement: 'full' },
+        },
+      }),
+    /empty sandbox profile/,
+  )
 })
 
 test('registration snapshots safety declarations against later mutation', async () => {
   const registry = new InMemoryToolRegistry()
   const definition = writeDefinition()
   registry.register(definition)
-  ;(definition as unknown as { safety: { risk: string }; execute: () => string }).safety.risk = 'none'
+  ;(definition as unknown as { safety: { risk: string }; execute: () => string }).safety.risk =
+    'none'
   ;(definition as unknown as { execute: () => string }).execute = () => 'bypassed'
 
   assert.deepEqual(await registry.execute('write-file', null), {
@@ -193,34 +213,51 @@ test('consequential execution fails closed before a sandbox can run', async () =
   }
 
   assert.deepEqual(await registry.execute('write-file', { path: 'x' }), {
-    ok: false, error: 'consequential tool execution requires call context',
+    ok: false,
+    error: 'consequential tool execution requires call context',
   })
   assert.deepEqual(await registry.execute('write-file', null, { context: callContext }), {
-    ok: false, error: 'approval service is unavailable',
+    ok: false,
+    error: 'approval service is unavailable',
   })
-  assert.deepEqual(await registry.execute('write-file', null, {
-    context: callContext,
-    approval: { request: async () => 'rejected' },
-  }), { ok: false, error: 'sandbox service is unavailable' })
-  assert.deepEqual(await registry.execute('write-file', null, {
-    context: callContext,
-    approval: { request: async () => 'allowed-once' },
-    sandbox,
-  }), { ok: false, error: 'safety audit sink is unavailable' })
+  assert.deepEqual(
+    await registry.execute('write-file', null, {
+      context: callContext,
+      approval: { request: async () => 'rejected' },
+    }),
+    { ok: false, error: 'sandbox service is unavailable' },
+  )
+  assert.deepEqual(
+    await registry.execute('write-file', null, {
+      context: callContext,
+      approval: { request: async () => 'allowed-once' },
+      sandbox,
+    }),
+    { ok: false, error: 'safety audit sink is unavailable' },
+  )
 
   for (const outcome of ['rejected', 'cancelled', 'unavailable'] as const) {
     const approval: ApprovalService = { request: async () => outcome }
     const execution = await registry.execute('write-file', null, {
-      context: callContext, approval, sandbox, audit: (event) => audits.push(event),
+      context: callContext,
+      approval,
+      sandbox,
+      audit: (event) => audits.push(event),
     })
     assert.equal(execution.ok, false)
   }
   assert.equal(sandboxPrepared, 0)
-  assert.deepEqual(audits.map((event) => event.type), [
-    'approval/asked', 'approval/decided',
-    'approval/asked', 'approval/decided',
-    'approval/asked', 'approval/decided',
-  ])
+  assert.deepEqual(
+    audits.map((event) => event.type),
+    [
+      'approval/asked',
+      'approval/decided',
+      'approval/asked',
+      'approval/decided',
+      'approval/asked',
+      'approval/decided',
+    ],
+  )
 })
 
 test('approval and full sandbox preflight precede provider-owned execution', async () => {
@@ -233,14 +270,17 @@ test('approval and full sandbox preflight precede provider-owned execution', asy
   const approval: ApprovalService = {
     async request(request) {
       order.push('approval')
-      assert.deepEqual({ ...request, signal: undefined }, {
-        ...callContext,
-        toolName: 'write-file',
-        arguments: { path: 'note.txt', content: { value: 1 } },
-        risk: 'filesystem',
-        reason: 'write the requested workspace file',
-        signal: undefined,
-      })
+      assert.deepEqual(
+        { ...request, signal: undefined },
+        {
+          ...callContext,
+          toolName: 'write-file',
+          arguments: { path: 'note.txt', content: { value: 1 } },
+          risk: 'filesystem',
+          reason: 'write the requested workspace file',
+          signal: undefined,
+        },
+      )
       return 'allowed-once'
     },
   }
@@ -257,7 +297,9 @@ test('approval and full sandbox preflight precede provider-owned execution', asy
             order.push('sandbox-execute')
             return { written: request.arguments }
           },
-          dispose() { order.push('sandbox-dispose') },
+          dispose() {
+            order.push('sandbox-dispose')
+          },
         },
       }
     },
@@ -275,8 +317,13 @@ test('approval and full sandbox preflight precede provider-owned execution', asy
   input.content.value = 2
 
   assert.deepEqual(order, [
-    'approval/asked', 'approval', 'approval/decided',
-    'sandbox-prepare', 'sandbox/prepared', 'sandbox-execute', 'sandbox-dispose',
+    'approval/asked',
+    'approval',
+    'approval/decided',
+    'sandbox-prepare',
+    'sandbox/prepared',
+    'sandbox-execute',
+    'sandbox-dispose',
   ])
   assert.deepEqual(receivedArguments, { path: 'note.txt', content: { value: 1 } })
   assert.equal(receivedArguments !== undefined && Object.isFrozen(receivedArguments), true)
@@ -285,8 +332,12 @@ test('approval and full sandbox preflight precede provider-owned execution', asy
     output: { written: { path: 'note.txt', content: { value: 1 } } },
   })
   assert.deepEqual(audits.at(-1), {
-    type: 'sandbox/prepared', callId: 'call-1', name: 'write-file',
-    profile: 'workspace-write', provider: 'test/container-v1', enforcement: 'full',
+    type: 'sandbox/prepared',
+    callId: 'call-1',
+    name: 'write-file',
+    profile: 'workspace-write',
+    provider: 'test/container-v1',
+    enforcement: 'full',
   })
 })
 
@@ -295,46 +346,63 @@ test('provider errors and insufficient enforcement cannot escape fail-closed pol
   registry.register(writeDefinition())
   const audits: ToolSafetyAuditEvent[] = []
   const throwingApproval: ApprovalService = {
-    async request() { throw new Error('channel failed') },
+    async request() {
+      throw new Error('channel failed')
+    },
   }
-  assert.deepEqual(await registry.execute('write-file', null, {
-    context: callContext,
-    approval: throwingApproval,
-    sandbox: { prepare: async () => ({ ok: false, reason: 'unused' }) },
-    audit: (event) => audits.push(event),
-  }), { ok: false, error: 'tool approval is unavailable' })
+  assert.deepEqual(
+    await registry.execute('write-file', null, {
+      context: callContext,
+      approval: throwingApproval,
+      sandbox: { prepare: async () => ({ ok: false, reason: 'unused' }) },
+      audit: (event) => audits.push(event),
+    }),
+    { ok: false, error: 'tool approval is unavailable' },
+  )
   const decision = audits.at(-1)
   assert.equal(decision?.type, 'approval/decided')
   assert.equal(decision?.type === 'approval/decided' && decision.outcome, 'unavailable')
 
-  assert.deepEqual(await registry.execute('write-file', null, {
-    context: callContext,
-    approval: { request: async () => 'invalid' as never },
-    sandbox: { prepare: async () => ({ ok: false, reason: 'unused' }) },
-    audit() {},
-  }), { ok: false, error: 'tool approval is unavailable' })
+  assert.deepEqual(
+    await registry.execute('write-file', null, {
+      context: callContext,
+      approval: { request: async () => 'invalid' as never },
+      sandbox: { prepare: async () => ({ ok: false, reason: 'unused' }) },
+      audit() {},
+    }),
+    { ok: false, error: 'tool approval is unavailable' },
+  )
 
   const allowed = { request: async () => 'allowed-once' as const }
-  assert.deepEqual(await registry.execute('write-file', null, {
-    context: callContext,
-    approval: allowed,
-    sandbox: { prepare: async () => ({ ok: false, reason: 'profile unavailable' }) },
-    audit() {},
-  }), { ok: false, error: 'profile unavailable' })
-  assert.deepEqual(await registry.execute('write-file', null, {
-    context: callContext,
-    approval: allowed,
-    sandbox: { prepare: async () => null as never },
-    audit() {},
-  }), { ok: false, error: 'sandbox provider returned an invalid preparation' })
-  assert.deepEqual(await registry.execute('write-file', null, {
-    context: callContext,
-    approval: allowed,
-    sandbox: {
-      prepare: async () => ({ ok: true, lease: { provider: '', enforcement: 'full' } }) as never,
-    },
-    audit() {},
-  }), { ok: false, error: 'sandbox provider returned an invalid lease' })
+  assert.deepEqual(
+    await registry.execute('write-file', null, {
+      context: callContext,
+      approval: allowed,
+      sandbox: { prepare: async () => ({ ok: false, reason: 'profile unavailable' }) },
+      audit() {},
+    }),
+    { ok: false, error: 'profile unavailable' },
+  )
+  assert.deepEqual(
+    await registry.execute('write-file', null, {
+      context: callContext,
+      approval: allowed,
+      sandbox: { prepare: async () => null as never },
+      audit() {},
+    }),
+    { ok: false, error: 'sandbox provider returned an invalid preparation' },
+  )
+  assert.deepEqual(
+    await registry.execute('write-file', null, {
+      context: callContext,
+      approval: allowed,
+      sandbox: {
+        prepare: async () => ({ ok: true, lease: { provider: '', enforcement: 'full' } }) as never,
+      },
+      audit() {},
+    }),
+    { ok: false, error: 'sandbox provider returned an invalid lease' },
+  )
 
   let executed = false
   let disposed = false
@@ -343,22 +411,31 @@ test('provider errors and insufficient enforcement cannot escape fail-closed pol
       return {
         ok: true,
         lease: {
-          provider: 'partial-provider', enforcement: 'partial',
-          async execute() { executed = true; return null },
-          dispose() { disposed = true },
+          provider: 'partial-provider',
+          enforcement: 'partial',
+          async execute() {
+            executed = true
+            return null
+          },
+          dispose() {
+            disposed = true
+          },
         },
       }
     },
   }
-  assert.deepEqual(await registry.execute('write-file', null, {
-    context: callContext,
-    approval: { request: async () => 'allowed-once' },
-    sandbox: partial,
-    audit() {},
-  }), {
-    ok: false,
-    error: 'sandbox provider "partial-provider" reported partial enforcement',
-  })
+  assert.deepEqual(
+    await registry.execute('write-file', null, {
+      context: callContext,
+      approval: { request: async () => 'allowed-once' },
+      sandbox: partial,
+      audit() {},
+    }),
+    {
+      ok: false,
+      error: 'sandbox provider "partial-provider" reported partial enforcement',
+    },
+  )
   assert.equal(executed, false)
   assert.equal(disposed, true)
 })
@@ -369,16 +446,24 @@ test('an audit commit failure prevents consequential execution', async () => {
   let approvalRequests = 0
   let sandboxPreparations = 0
   const approval: ApprovalService = {
-    async request() { approvalRequests += 1; return 'allowed-once' },
+    async request() {
+      approvalRequests += 1
+      return 'allowed-once'
+    },
   }
   const sandbox: ToolSandbox = {
-    async prepare() { sandboxPreparations += 1; return { ok: false, reason: 'unused' } },
+    async prepare() {
+      sandboxPreparations += 1
+      return { ok: false, reason: 'unused' }
+    },
   }
   const execution = await registry.execute('write-file', null, {
     context: callContext,
     approval,
     sandbox,
-    audit() { throw new Error('audit storage failed') },
+    audit() {
+      throw new Error('audit storage failed')
+    },
   })
 
   assert.deepEqual(execution, { ok: false, error: 'audit storage failed' })
@@ -398,21 +483,29 @@ test('cancellation after sandbox preflight disposes the unexecuted lease', async
       return {
         ok: true,
         lease: {
-          provider: 'cancelled-provider', enforcement: 'full',
-          async execute() { executed = true; return null },
-          dispose() { disposed = true },
+          provider: 'cancelled-provider',
+          enforcement: 'full',
+          async execute() {
+            executed = true
+            return null
+          },
+          dispose() {
+            disposed = true
+          },
         },
       }
     },
   }
 
-  await assert.rejects(registry.execute('write-file', null, {
-    signal: controller.signal,
-    context: callContext,
-    approval: { request: async () => 'allowed-once' },
-    sandbox,
-    audit() {},
-  }))
+  await assert.rejects(
+    registry.execute('write-file', null, {
+      signal: controller.signal,
+      context: callContext,
+      approval: { request: async () => 'allowed-once' },
+      sandbox,
+      audit() {},
+    }),
+  )
   assert.equal(executed, false)
   assert.equal(disposed, true)
 })

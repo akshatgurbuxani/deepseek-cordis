@@ -89,9 +89,7 @@ function toWireMessage(message: ModelMessage): WireMessage {
   return {
     role: 'tool',
     tool_call_id: message.callId,
-    content: message.ok
-      ? JSON.stringify(message.output)
-      : JSON.stringify({ error: message.error }),
+    content: message.ok ? JSON.stringify(message.output) : JSON.stringify({ error: message.error }),
   }
 }
 
@@ -109,10 +107,10 @@ function isJsonValue(value: unknown): value is JsonValue {
 
 function readToolCall(value: unknown): ToolCall {
   if (
-    !isRecord(value)
-    || typeof value.id !== 'string'
-    || value.type !== 'function'
-    || !isRecord(value.function)
+    !isRecord(value) ||
+    typeof value.id !== 'string' ||
+    value.type !== 'function' ||
+    !isRecord(value.function)
   ) {
     throw new OpenRouterResponseError('OpenRouter returned an invalid tool call')
   }
@@ -146,18 +144,20 @@ function readModelUsage(payload: Record<string, unknown>): ModelTokenUsage | und
   const inputTokens = payload.usage.prompt_tokens
   const outputTokens = payload.usage.completion_tokens
   if (
-    typeof inputTokens !== 'number'
-    || !Number.isInteger(inputTokens)
-    || inputTokens < 0
-    || typeof outputTokens !== 'number'
-    || !Number.isInteger(outputTokens)
-    || outputTokens < 0
-  ) return undefined
+    typeof inputTokens !== 'number' ||
+    !Number.isInteger(inputTokens) ||
+    inputTokens < 0 ||
+    typeof outputTokens !== 'number' ||
+    !Number.isInteger(outputTokens) ||
+    outputTokens < 0
+  )
+    return undefined
   return { inputTokens, outputTokens }
 }
 
 function isContextOverflow(status: number, detail: string): boolean {
-  return (status === 400 || status === 413) && (
+  return (
+    (status === 400 || status === 413) &&
     /context[_ -]?(?:length|window)|maximum context|too many (?:input )?tokens/i.test(detail)
   )
 }
@@ -198,7 +198,9 @@ async function* readSsePayloads(body: ReadableStream<Uint8Array>): AsyncIterable
       }
     }
   } finally {
-    try { await reader.cancel() } catch {}
+    try {
+      await reader.cancel()
+    } catch {}
     reader.releaseLock()
   }
 }
@@ -268,9 +270,10 @@ export class OpenRouterModelAdapter implements ModelAdapter {
     this.#fetch = options.fetch ?? globalThis.fetch
     this.#onDiagnostics = options.onDiagnostics
     if (
-      options.contextWindow !== undefined
-      && (!Number.isInteger(options.contextWindow) || options.contextWindow < 1)
-    ) throw new OpenRouterRequestError('OpenRouter context window must be a positive integer')
+      options.contextWindow !== undefined &&
+      (!Number.isInteger(options.contextWindow) || options.contextWindow < 1)
+    )
+      throw new OpenRouterRequestError('OpenRouter context window must be a positive integer')
     if (options.contextWindow !== undefined) this.contextWindow = options.contextWindow
     this.id = `openrouter:${this.#model}`
   }
@@ -309,15 +312,20 @@ export class OpenRouterModelAdapter implements ModelAdapter {
     if (!isRecord(payload) || !Array.isArray(payload.data)) {
       throw new OpenRouterResponseError('OpenRouter returned invalid model metadata')
     }
-    const match = payload.data.find((value) => isRecord(value) && (
-      value.id === this.#model || value.canonical_slug === this.#model
-    ))
+    const match = payload.data.find(
+      (value) =>
+        isRecord(value) && (value.id === this.#model || value.canonical_slug === this.#model),
+    )
     if (!isRecord(match)) {
       this.#resolvedInfo = { model: this.#model }
       return this.#resolvedInfo
     }
     const contextWindow = match.context_length
-    if (typeof contextWindow !== 'number' || !Number.isInteger(contextWindow) || contextWindow < 1) {
+    if (
+      typeof contextWindow !== 'number' ||
+      !Number.isInteger(contextWindow) ||
+      contextWindow < 1
+    ) {
       this.#resolvedInfo = { model: this.#model }
       return this.#resolvedInfo
     }
@@ -355,11 +363,13 @@ export class OpenRouterModelAdapter implements ModelAdapter {
       ],
       session_id: request.sessionId,
       ...(stream ? { stream: true, stream_options: { include_usage: true } } : {}),
-      ...(wireTools.length === 0 ? {} : {
-        tools: wireTools,
-        tool_choice: 'auto' as const,
-        parallel_tool_calls: false,
-      }),
+      ...(wireTools.length === 0
+        ? {}
+        : {
+            tools: wireTools,
+            tool_choice: 'auto' as const,
+            parallel_tool_calls: false,
+          }),
     }
     return body
   }
@@ -404,14 +414,16 @@ export class OpenRouterModelAdapter implements ModelAdapter {
     const routerMetadata = isJsonValue(payload.openrouter_metadata)
       ? payload.openrouter_metadata
       : undefined
-    this.#onDiagnostics?.(snapshot({
-      requestedModel: this.#model,
-      ...(typeof payload.model === 'string' ? { selectedModel: payload.model } : {}),
-      ...(promptTokens === undefined ? {} : { promptTokens }),
-      ...(completionTokens === undefined ? {} : { completionTokens }),
-      ...(totalTokens === undefined ? {} : { totalTokens }),
-      ...(routerMetadata === undefined ? {} : { routerMetadata }),
-    }))
+    this.#onDiagnostics?.(
+      snapshot({
+        requestedModel: this.#model,
+        ...(typeof payload.model === 'string' ? { selectedModel: payload.model } : {}),
+        ...(promptTokens === undefined ? {} : { promptTokens }),
+        ...(completionTokens === undefined ? {} : { completionTokens }),
+        ...(totalTokens === undefined ? {} : { totalTokens }),
+        ...(routerMetadata === undefined ? {} : { routerMetadata }),
+      }),
+    )
   }
 
   async complete(
@@ -443,9 +455,7 @@ export class OpenRouterModelAdapter implements ModelAdapter {
     if (typeof message.content === 'string') {
       return snapshot({ type: 'message', content: message.content })
     }
-    throw new OpenRouterResponseError(
-      'OpenRouter completion contained neither text nor tool calls',
-    )
+    throw new OpenRouterResponseError('OpenRouter completion contained neither text nor tool calls')
   }
 
   async *stream(
@@ -466,14 +476,16 @@ export class OpenRouterModelAdapter implements ModelAdapter {
           throw new OpenRouterResponseError('OpenRouter returned an invalid streaming response')
         }
         if (isRecord(value.error)) {
-          const message = typeof value.error.message === 'string'
-            ? value.error.message
-            : 'OpenRouter stream failed'
+          const message =
+            typeof value.error.message === 'string'
+              ? value.error.message
+              : 'OpenRouter stream failed'
           if (
-            value.error.code === 'context_length_exceeded'
-            || value.error.code === 'context_window_exceeded'
-            || isContextOverflow(400, message)
-          ) throw new ModelContextOverflowError(message)
+            value.error.code === 'context_length_exceeded' ||
+            value.error.code === 'context_window_exceeded' ||
+            isContextOverflow(400, message)
+          )
+            throw new ModelContextOverflowError(message)
           throw new OpenRouterResponseError(message)
         }
         diagnostics = { ...diagnostics, ...value }
@@ -497,7 +509,9 @@ export class OpenRouterModelAdapter implements ModelAdapter {
           if (!Array.isArray(delta.tool_calls)) {
             throw new OpenRouterResponseError('OpenRouter returned invalid streaming tool calls')
           }
-          delta.tool_calls.forEach((call) => applyToolCallDelta(toolCalls, call))
+          delta.tool_calls.forEach((call) => {
+            applyToolCallDelta(toolCalls, call)
+          })
         }
       }
 
@@ -510,11 +524,13 @@ export class OpenRouterModelAdapter implements ModelAdapter {
       if (toolCalls.size > 0) {
         const calls = [...toolCalls.entries()]
           .sort(([left], [right]) => left - right)
-          .map(([, call]) => readToolCall({
-            id: call.id,
-            type: 'function',
-            function: { name: call.name, arguments: call.arguments },
-          }))
+          .map(([, call]) =>
+            readToolCall({
+              id: call.id,
+              type: 'function',
+              function: { name: call.name, arguments: call.arguments },
+            }),
+          )
         yield snapshot({
           type: 'finish',
           reason: 'completed',

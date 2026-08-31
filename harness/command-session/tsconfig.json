@@ -6,9 +6,5 @@
     "tsBuildInfoFile": "../../.cache/tsbuildinfo/command-session.tsbuildinfo"
   },
   "include": ["src/**/*.ts"],
-  "references": [
-    { "path": "../commands" },
-    { "path": "../compaction" },
-    { "path": "../session" }
-  ]
+  "references": [{ "path": "../commands" }, { "path": "../compaction" }, { "path": "../session" }]
 }

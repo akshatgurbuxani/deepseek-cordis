@@ -15,8 +15,8 @@ import {
 } from '@deepseek-cordis/compaction'
 import { ReplayModelAdapter } from '@deepseek-cordis/model/testing'
 import type { Session } from '@deepseek-cordis/session'
-import { FileSessionStore } from '@deepseek-cordis/session-file'
 import { InMemorySessionStore } from '@deepseek-cordis/session'
+import { FileSessionStore } from '@deepseek-cordis/session-file'
 
 function appendTurn(session: Session, number: number, user: string, assistant: string): void {
   const turnId = `${session.id}:turn:${number}`
@@ -115,15 +115,22 @@ test('whole-turn selection keeps assistant tool calls paired with their results'
   session.append({ type: 'user/message', turnId, content: 'read state' })
   session.append({ type: 'step/start', turnId, step: 1 })
   session.append({
-    type: 'assistant/tool-calls', turnId,
+    type: 'assistant/tool-calls',
+    turnId,
     calls: [{ id: 'read-1', name: 'read', arguments: null }],
   })
   session.append({
-    type: 'tool/call', turnId,
+    type: 'tool/call',
+    turnId,
     call: { id: 'read-1', name: 'read', arguments: null },
   })
   session.append({
-    type: 'tool/result', turnId, callId: 'read-1', name: 'read', ok: true, output: 'state',
+    type: 'tool/result',
+    turnId,
+    callId: 'read-1',
+    name: 'read',
+    ok: true,
+    output: 'state',
   })
   session.append({ type: 'step/end', turnId, step: 1, outcome: 'tool_calls' })
   session.append({ type: 'step/start', turnId, step: 2 })
@@ -170,9 +177,12 @@ test('model summary adapter replays the selected prefix and requires a text resp
     tools: [],
   })
 
-  const toolModel = new ReplayModelAdapter('bad-summary', [{
-    type: 'tool_calls', calls: [{ id: 'call', name: 'noop', arguments: null }],
-  }])
+  const toolModel = new ReplayModelAdapter('bad-summary', [
+    {
+      type: 'tool_calls',
+      calls: [{ id: 'call', name: 'noop', arguments: null }],
+    },
+  ])
   await assert.rejects(
     new ModelSummaryAdapter(toolModel).summarize(request),
     /returned tool calls instead of a summary/,
@@ -186,7 +196,10 @@ test('compaction refuses open, concurrent, changed, empty, and cancelled work', 
   let resolveSummary: ((summary: string) => void) | undefined
   const pending: SummaryAdapter = {
     id: 'pending',
-    summarize: () => new Promise((resolve) => { resolveSummary = resolve }),
+    summarize: () =>
+      new Promise((resolve) => {
+        resolveSummary = resolve
+      }),
   }
   const compactor = new SessionCompactor(pending)
   const running = compactor.compact(session)
@@ -195,7 +208,10 @@ test('compaction refuses open, concurrent, changed, empty, and cancelled work', 
   session.append({ type: 'turn/start', turnId: 'guards:turn:3' })
   resolveSummary?.('too late')
   await assert.rejects(running, CompactionChangedError)
-  assert.equal(session.events.some((event) => event.type === 'compaction/summary'), false)
+  assert.equal(
+    session.events.some((event) => event.type === 'compaction/summary'),
+    false,
+  )
   await assert.rejects(compactor.compact(session), /has an open turn/)
 
   session.append({ type: 'turn/end', turnId: 'guards:turn:3', status: 'interrupted' })
@@ -215,18 +231,19 @@ test('compaction refuses open, concurrent, changed, empty, and cancelled work', 
   let resolveCompeting: ((summary: string) => void) | undefined
   const slow = new SessionCompactor({
     id: 'slow',
-    summarize: () => new Promise((resolve) => { resolveCompeting = resolve }),
+    summarize: () =>
+      new Promise((resolve) => {
+        resolveCompeting = resolve
+      }),
   })
   const stale = slow.compact(competing)
   await Promise.resolve()
-  await new SessionCompactor({ id: 'fast', summarize: async () => 'fast checkpoint' })
-    .compact(competing)
+  await new SessionCompactor({ id: 'fast', summarize: async () => 'fast checkpoint' }).compact(
+    competing,
+  )
   resolveCompeting?.('stale checkpoint')
   await assert.rejects(stale, /selected session history changed/)
-  assert.equal(
-    competing.events.filter((event) => event.type === 'compaction/summary').length,
-    1,
-  )
+  assert.equal(competing.events.filter((event) => event.type === 'compaction/summary').length, 1)
 
   const failingSession = new InMemorySessionStore().create('failing')
   appendTurn(failingSession, 1, 'one', 'one')
@@ -234,7 +251,10 @@ test('compaction refuses open, concurrent, changed, empty, and cancelled work', 
   let failures = 0
   const failing = new SessionCompactor({
     id: 'failure',
-    summarize: async () => { failures += 1; throw new Error('summary unavailable') },
+    summarize: async () => {
+      failures += 1
+      throw new Error('summary unavailable')
+    },
   })
   await assert.rejects(failing.compact(failingSession), /summary unavailable/)
   await assert.rejects(failing.compact(failingSession), /summary unavailable/)
@@ -243,7 +263,9 @@ test('compaction refuses open, concurrent, changed, empty, and cancelled work', 
 
 test('file sessions persist the checkpoint and reconstruct the same surface after restart', async (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'deepseek-cordis-compaction-'))
-  t.after(() => { rmSync(directory, { recursive: true, force: true }) })
+  t.after(() => {
+    rmSync(directory, { recursive: true, force: true })
+  })
   const store = new FileSessionStore({ directory })
   const session = store.create('durable-compaction')
   appendTurn(session, 1, 'old user', 'old answer')

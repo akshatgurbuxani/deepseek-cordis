@@ -6,8 +6,5 @@
     "tsBuildInfoFile": "../../.cache/tsbuildinfo/model-openrouter.tsbuildinfo"
   },
   "include": ["src/**/*.ts"],
-  "references": [
-    { "path": "../protocol" },
-    { "path": "../model" }
-  ]
+  "references": [{ "path": "../protocol" }, { "path": "../model" }]
 }

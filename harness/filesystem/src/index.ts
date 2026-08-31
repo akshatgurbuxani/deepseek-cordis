@@ -14,7 +14,7 @@ export const FILESYSTEM_ERROR_CODES = [
   'FS_SANDBOX_DENIED',
 ] as const
 
-export type FileSystemErrorCode = typeof FILESYSTEM_ERROR_CODES[number]
+export type FileSystemErrorCode = (typeof FILESYSTEM_ERROR_CODES)[number]
 export type FileKind = 'file' | 'directory' | 'symlink' | 'other'
 
 export class FileSystemError extends Error {
@@ -93,11 +93,7 @@ export interface FileSystem {
   stat(target: FileTarget, options?: FileOperationOptions): Promise<FileStat>
   list(target: FileTarget, options: ListOptions): Promise<DirectoryListing>
   readText(target: FileTarget, options: ReadTextOptions): Promise<TextRead>
-  writeText(
-    target: FileTarget,
-    content: string,
-    options: WriteTextOptions,
-  ): Promise<FileWrite>
+  writeText(target: FileTarget, content: string, options: WriteTextOptions): Promise<FileWrite>
   editText(
     target: FileTarget,
     oldText: string,
@@ -137,7 +133,10 @@ export class FileObservationPolicy {
   writeGuard(sessionId: string, target: FileTarget): string | null {
     const observation = this.#observations.get(observationKey(sessionId, target))
     if (!observation) {
-      throw new FileSystemError('FS_NOT_OBSERVED', `${target.displayPath} must be statted or read first`)
+      throw new FileSystemError(
+        'FS_NOT_OBSERVED',
+        `${target.displayPath} must be statted or read first`,
+      )
     }
     return observation.state === 'absent' ? null : observation.version
   }
@@ -145,7 +144,10 @@ export class FileObservationPolicy {
   editGuard(sessionId: string, target: FileTarget): string {
     const observation = this.#observations.get(observationKey(sessionId, target))
     if (observation?.state !== 'content') {
-      throw new FileSystemError('FS_NOT_OBSERVED', `${target.displayPath} must be read before editing`)
+      throw new FileSystemError(
+        'FS_NOT_OBSERVED',
+        `${target.displayPath} must be read before editing`,
+      )
     }
     return observation.version
   }

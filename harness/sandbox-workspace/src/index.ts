@@ -11,12 +11,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs'
-import {
-  isAbsolute,
-  join,
-  relative,
-  resolve,
-} from 'node:path'
+import { isAbsolute, join, relative, resolve } from 'node:path'
 
 import type { JsonValue } from '@deepseek-cordis/protocol'
 import type {
@@ -84,12 +79,12 @@ export function createWorkspaceFileTool(): ConsequentialToolDefinition {
 
 function parseArguments(value: JsonValue, maxFileBytes: number): CreateFileArguments {
   if (
-    value === null
-    || Array.isArray(value)
-    || typeof value !== 'object'
-    || typeof value.path !== 'string'
-    || typeof value.content !== 'string'
-    || Object.keys(value).some((key) => key !== 'path' && key !== 'content')
+    value === null ||
+    Array.isArray(value) ||
+    typeof value !== 'object' ||
+    typeof value.path !== 'string' ||
+    typeof value.content !== 'string' ||
+    Object.keys(value).some((key) => key !== 'path' && key !== 'content')
   ) {
     throw new WorkspaceFileSandboxError(
       'workspace file arguments must contain only path and content strings',
@@ -103,12 +98,13 @@ function parseArguments(value: JsonValue, maxFileBytes: number): CreateFileArgum
 
 function pathSegments(path: string): readonly string[] {
   if (
-    path.length === 0
-    || path.includes('\0')
-    || path.includes('\\')
-    || isAbsolute(path)
-    || Buffer.byteLength(path, 'utf8') > maxPathBytes
-  ) throw new WorkspaceFileSandboxError('workspace file path must be a portable relative path')
+    path.length === 0 ||
+    path.includes('\0') ||
+    path.includes('\\') ||
+    isAbsolute(path) ||
+    Buffer.byteLength(path, 'utf8') > maxPathBytes
+  )
+    throw new WorkspaceFileSandboxError('workspace file path must be a portable relative path')
   const segments = path.split('/')
   if (segments.some((segment) => segment.length === 0 || segment === '.' || segment === '..')) {
     throw new WorkspaceFileSandboxError('workspace file path contains an invalid segment')
@@ -125,12 +121,8 @@ function existingStatus(path: string): ReturnType<typeof lstatSync> | undefined 
   try {
     return lstatSync(path)
   } catch (error) {
-    if (
-      error !== null
-      && typeof error === 'object'
-      && 'code' in error
-      && error.code === 'ENOENT'
-    ) return undefined
+    if (error !== null && typeof error === 'object' && 'code' in error && error.code === 'ENOENT')
+      return undefined
     throw error
   }
 }
@@ -145,7 +137,8 @@ function verifyTarget(root: string, input: CreateFileArguments): PreparedTarget 
   for (const segment of segments.slice(0, -1)) {
     parent = join(parent, segment)
     const status = existingStatus(parent)
-    if (!status) throw new WorkspaceFileSandboxError('workspace file parent directory does not exist')
+    if (!status)
+      throw new WorkspaceFileSandboxError('workspace file parent directory does not exist')
     if (status.isSymbolicLink()) {
       throw new WorkspaceFileSandboxError('workspace file path crosses a symbolic link')
     }
@@ -190,6 +183,9 @@ class CreateFileLease implements SandboxLease {
     const temporaryPath = join(prepared.parent, `.deepseek-cordis-${randomUUID()}.tmp`)
     let descriptor: number | undefined
     let linked = false
+    let result: JsonValue | undefined
+    let operationError: unknown
+    let cleanupError: unknown
     try {
       descriptor = openSync(
         temporaryPath,
@@ -204,36 +200,62 @@ class CreateFileLease implements SandboxLease {
       linkSync(temporaryPath, prepared.target)
       linked = true
       this.#state = 'executed'
-      return {
+      result = {
         path: prepared.displayPath,
         bytesWritten: Buffer.byteLength(prepared.content, 'utf8'),
         created: true,
       }
     } catch (error) {
-      if (this.#signal?.aborted) this.#signal.throwIfAborted()
-      if (
-        error !== null
-        && typeof error === 'object'
-        && 'code' in error
-        && error.code === 'EEXIST'
-      ) throw new WorkspaceFileSandboxError('workspace file target already exists', { cause: error })
-      if (error instanceof WorkspaceFileSandboxError) throw error
-      throw new WorkspaceFileSandboxError('workspace file creation failed', { cause: error })
+      if (this.#signal?.aborted) {
+        try {
+          this.#signal.throwIfAborted()
+        } catch (abortError) {
+          operationError = abortError
+        }
+      } else if (
+        error !== null &&
+        typeof error === 'object' &&
+        'code' in error &&
+        error.code === 'EEXIST'
+      ) {
+        operationError = new WorkspaceFileSandboxError('workspace file target already exists', {
+          cause: error,
+        })
+      } else if (error instanceof WorkspaceFileSandboxError) {
+        operationError = error
+      } else {
+        operationError = new WorkspaceFileSandboxError('workspace file creation failed', {
+          cause: error,
+        })
+      }
     } finally {
-      if (descriptor !== undefined) closeSync(descriptor)
+      if (descriptor !== undefined) {
+        try {
+          closeSync(descriptor)
+        } catch (error) {
+          cleanupError = error
+        }
+      }
       try {
         unlinkSync(temporaryPath)
       } catch (error) {
         if (
-          error === null
-          || typeof error !== 'object'
-          || !('code' in error)
-          || error.code !== 'ENOENT'
+          error === null ||
+          typeof error !== 'object' ||
+          !('code' in error) ||
+          error.code !== 'ENOENT'
         ) {
-          if (!linked) throw error
+          if (!linked && cleanupError === undefined) cleanupError = error
         }
       }
     }
+    if (operationError !== undefined) throw operationError
+    if (cleanupError !== undefined) {
+      throw new WorkspaceFileSandboxError('workspace file cleanup failed', {
+        cause: cleanupError,
+      })
+    }
+    return result!
   }
 
   dispose(): void {
@@ -246,8 +268,10 @@ export class WorkspaceFileSandbox implements ToolSandbox {
   readonly maxFileBytes: number
 
   constructor(options: WorkspaceFileSandboxOptions) {
-    if (!Number.isInteger(options.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES)
-      || (options.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES) < 1) {
+    if (
+      !Number.isInteger(options.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES) ||
+      (options.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES) < 1
+    ) {
       throw new RangeError('maxFileBytes must be a positive integer')
     }
     let root: string
@@ -266,10 +290,11 @@ export class WorkspaceFileSandbox implements ToolSandbox {
   async prepare(request: SandboxRequest): Promise<SandboxPreparation> {
     request.signal?.throwIfAborted()
     if (
-      request.toolName !== WORKSPACE_CREATE_FILE_TOOL
-      || request.risk !== 'filesystem'
-      || request.profile !== WORKSPACE_WRITE_PROFILE
-    ) return { ok: false, reason: 'workspace sandbox does not support this operation' }
+      request.toolName !== WORKSPACE_CREATE_FILE_TOOL ||
+      request.risk !== 'filesystem' ||
+      request.profile !== WORKSPACE_WRITE_PROFILE
+    )
+      return { ok: false, reason: 'workspace sandbox does not support this operation' }
     try {
       const input = parseArguments(request.arguments, this.maxFileBytes)
       const prepared = verifyTarget(this.root, input)
@@ -281,9 +306,10 @@ export class WorkspaceFileSandbox implements ToolSandbox {
       request.signal?.throwIfAborted()
       return {
         ok: false,
-        reason: error instanceof WorkspaceFileSandboxError
-          ? error.message
-          : 'workspace sandbox could not validate the requested path',
+        reason:
+          error instanceof WorkspaceFileSandboxError
+            ? error.message
+            : 'workspace sandbox could not validate the requested path',
       }
     }
   }

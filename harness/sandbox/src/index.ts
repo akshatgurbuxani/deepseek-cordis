@@ -1,8 +1,4 @@
-import type {
-  JsonValue,
-  SandboxEnforcement,
-  ToolRisk,
-} from '@deepseek-cordis/protocol'
+import type { JsonValue, SandboxEnforcement, ToolRisk } from '@deepseek-cordis/protocol'
 
 export interface SandboxRequest {
   readonly sessionId: string

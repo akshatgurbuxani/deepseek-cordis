@@ -27,10 +27,7 @@ export interface ModelAdapter {
   readonly id: string
   readonly contextWindow?: number
   resolveInfo?(options?: ModelStreamOptions): Promise<ModelInfo>
-  stream(
-    request: ModelRequest,
-    options?: ModelStreamOptions,
-  ): AsyncIterable<ModelStreamChunk>
+  stream(request: ModelRequest, options?: ModelStreamOptions): AsyncIterable<ModelStreamChunk>
 }
 
 export class ModelStreamError extends Error {
@@ -61,11 +58,12 @@ export class ModelStreamProtocolError extends ModelStreamError {}
 function validateUsage(usage: ModelTokenUsage | undefined): ModelTokenUsage | undefined {
   if (usage === undefined) return undefined
   if (
-    !Number.isInteger(usage.inputTokens)
-    || usage.inputTokens < 0
-    || !Number.isInteger(usage.outputTokens)
-    || usage.outputTokens < 0
-  ) throw new ModelStreamProtocolError('model stream returned invalid token usage')
+    !Number.isInteger(usage.inputTokens) ||
+    usage.inputTokens < 0 ||
+    !Number.isInteger(usage.outputTokens) ||
+    usage.outputTokens < 0
+  )
+    throw new ModelStreamProtocolError('model stream returned invalid token usage')
   return usage
 }
 
@@ -74,9 +72,10 @@ function validateInfo(info: ModelInfo): ModelInfo {
     throw new Error('model info must contain a model id')
   }
   if (
-    info.contextWindow !== undefined
-    && (!Number.isInteger(info.contextWindow) || info.contextWindow < 1)
-  ) throw new Error('model info contextWindow must be a positive integer')
+    info.contextWindow !== undefined &&
+    (!Number.isInteger(info.contextWindow) || info.contextWindow < 1)
+  )
+    throw new Error('model info contextWindow must be a positive integer')
   return info
 }
 

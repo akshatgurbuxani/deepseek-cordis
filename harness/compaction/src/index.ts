@@ -1,16 +1,6 @@
-import {
-  completeModel,
-  type ModelAdapter,
-} from '@deepseek-cordis/model'
-import {
-  type ModelMessage,
-  type SessionEvent,
-  snapshot,
-} from '@deepseek-cordis/protocol'
-import {
-  deriveSessionSurface,
-  type Session,
-} from '@deepseek-cordis/session'
+import { completeModel, type ModelAdapter } from '@deepseek-cordis/model'
+import { type ModelMessage, type SessionEvent, snapshot } from '@deepseek-cordis/protocol'
+import { deriveSessionSurface, type Session } from '@deepseek-cordis/session'
 
 export interface SummaryRequest {
   readonly sessionId: string
@@ -43,16 +33,17 @@ export class ModelSummaryAdapter implements SummaryAdapter {
   }
 
   async summarize(request: SummaryRequest, options: SummaryOptions = {}): Promise<string> {
-    const response = await completeModel(this.#model, snapshot({
-      sessionId: request.sessionId,
-      turnId: `${request.sessionId}:compaction`,
-      step: 1,
-      messages: [
-        ...request.messages,
-        { role: 'user' as const, content: COMPACTION_INSTRUCTION },
-      ],
-      tools: [],
-    }), options.signal ? { signal: options.signal } : {})
+    const response = await completeModel(
+      this.#model,
+      snapshot({
+        sessionId: request.sessionId,
+        turnId: `${request.sessionId}:compaction`,
+        step: 1,
+        messages: [...request.messages, { role: 'user' as const, content: COMPACTION_INSTRUCTION }],
+        tools: [],
+      }),
+      options.signal ? { signal: options.signal } : {},
+    )
     if (response.type !== 'message') {
       throw new Error('compaction model returned tool calls instead of a summary')
     }
@@ -100,9 +91,7 @@ function executionState(events: readonly SessionEvent[]): ExecutionState {
 }
 
 function closedTurnIds(events: readonly SessionEvent[]): readonly string[] {
-  return events
-    .filter((event) => event.type === 'turn/end')
-    .map((event) => event.turnId)
+  return events.filter((event) => event.type === 'turn/end').map((event) => event.turnId)
 }
 
 export class SessionCompactor {
@@ -162,8 +151,8 @@ export class SessionCompactor {
       if (summary.trim().length === 0) throw new Error('summarizer returned an empty summary')
       const currentState = executionState(session.events)
       if (
-        currentState.openTurn !== initialState.openTurn
-        || currentState.openStep !== initialState.openStep
+        currentState.openTurn !== initialState.openTurn ||
+        currentState.openStep !== initialState.openStep
       ) {
         throw new CompactionChangedError('session execution changed while compaction was running')
       }
@@ -171,8 +160,8 @@ export class SessionCompactor {
         .slice(0, request.sourceSequences.length)
         .map((node) => node.sequence)
       if (
-        currentPrefix.length !== request.sourceSequences.length
-        || currentPrefix.some((sequence, index) => sequence !== request.sourceSequences[index])
+        currentPrefix.length !== request.sourceSequences.length ||
+        currentPrefix.some((sequence, index) => sequence !== request.sourceSequences[index])
       ) {
         throw new CompactionChangedError('selected session history changed during compaction')
       }

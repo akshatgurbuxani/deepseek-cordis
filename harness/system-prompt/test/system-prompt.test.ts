@@ -20,10 +20,14 @@ test('assembly is ordered, immutable, dynamic, and drops empty sections', async 
   const prompts = new InMemorySystemPrompt()
   const seen: PromptAssemblyContext[] = []
   prompts.register({ name: 'z-last-tie', order: 10, text: '  Z  ' })
-  prompts.register({ name: 'a-first-tie', order: 10, text: async (context) => {
-    seen.push(context)
-    return `step ${context.step}; tools ${context.tools.map(({ name }) => name).join(', ')}`
-  } })
+  prompts.register({
+    name: 'a-first-tie',
+    order: 10,
+    text: async (context) => {
+      seen.push(context)
+      return `step ${context.step}; tools ${context.tools.map(({ name }) => name).join(', ')}`
+    },
+  })
   prompts.register({ name: 'empty', order: 0, text: '  ' })
   prompts.register(HARNESS_IDENTITY_SECTION)
 
@@ -56,13 +60,17 @@ test('session-scoped names shadow globals and exact disposers restore them', asy
   prompts.register({ name: 'only-a', order: 1, text: 'only scoped' }, { scope: 'session-a' })
 
   assert.equal((await prompts.assemble(baseContext)).systemPrompt, 'scoped\n\nonly scoped')
-  assert.equal((await prompts.assemble({ ...baseContext, sessionId: 'session-b' })).systemPrompt, 'global')
+  assert.equal(
+    (await prompts.assemble({ ...baseContext, sessionId: 'session-b' })).systemPrompt,
+    'global',
+  )
   assert.throws(
     () => prompts.register({ name: 'persona', order: 2, text: 'duplicate' }),
     /already registered in global scope/,
   )
   assert.throws(
-    () => prompts.register({ name: 'persona', order: 2, text: 'duplicate' }, { scope: 'session-a' }),
+    () =>
+      prompts.register({ name: 'persona', order: 2, text: 'duplicate' }, { scope: 'session-a' }),
     /already registered in scope "session-a"/,
   )
 
@@ -85,7 +93,10 @@ test('registration and provider failures are loud and cancellation is control fl
   assert.deepEqual((await prompts.assemble(baseContext)).sectionNames, ['stable'])
 
   assert.throws(() => prompts.register({ name: ' ', order: 0, text: '' }), /must not be empty/)
-  assert.throws(() => prompts.register({ name: 'bad-order', order: Infinity, text: '' }), /must be finite/)
+  assert.throws(
+    () => prompts.register({ name: 'bad-order', order: Infinity, text: '' }),
+    /must be finite/,
+  )
   assert.throws(
     () => prompts.register({ name: 'bad-text', order: 0, text: 1 } as unknown as PromptSection),
     /text is invalid/,
@@ -97,17 +108,22 @@ test('registration and provider failures are loud and cancellation is control fl
 
   const invalid = new InMemorySystemPrompt()
   invalid.register({
-    name: 'invalid-provider', order: 0,
+    name: 'invalid-provider',
+    order: 0,
     text: (() => 42) as unknown as PromptSection['text'],
   })
   await assert.rejects(invalid.assemble(baseContext), /returned non-string text/)
 
   const controller = new AbortController()
   const cancelled = new InMemorySystemPrompt()
-  cancelled.register({ name: 'cancel', order: 0, text: async () => {
-    controller.abort(new Error('cancel prompt'))
-    return 'not published'
-  } })
+  cancelled.register({
+    name: 'cancel',
+    order: 0,
+    text: async () => {
+      controller.abort(new Error('cancel prompt'))
+      return 'not published'
+    },
+  })
   await assert.rejects(
     cancelled.assemble({ ...baseContext, signal: controller.signal }),
     /cancel prompt/,

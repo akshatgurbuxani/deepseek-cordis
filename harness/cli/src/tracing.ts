@@ -12,16 +12,13 @@ import type {
   SessionEvent,
   SessionEventInput,
 } from '@deepseek-cordis/protocol'
+import { type RuntimeContext, RuntimeFiberState } from '@deepseek-cordis/runtime-cordis'
 import {
   type AppendedSessionEvent,
   InMemorySessionStore,
   type Session,
   type SessionStore,
 } from '@deepseek-cordis/session'
-import {
-  RuntimeFiberState,
-  type RuntimeContext,
-} from '@deepseek-cordis/runtime-cordis'
 
 export type TraceSink = (label: string, value: unknown) => void
 
@@ -143,13 +140,20 @@ export class TracingModelAdapter implements ModelAdapter {
 
 function stateName(state: number): string {
   switch (state) {
-    case RuntimeFiberState.PENDING: return 'PENDING'
-    case RuntimeFiberState.LOADING: return 'LOADING'
-    case RuntimeFiberState.ACTIVE: return 'ACTIVE'
-    case RuntimeFiberState.FAILED: return 'FAILED'
-    case RuntimeFiberState.DISPOSED: return 'DISPOSED'
-    case RuntimeFiberState.UNLOADING: return 'UNLOADING'
-    default: return `UNKNOWN(${state})`
+    case RuntimeFiberState.PENDING:
+      return 'PENDING'
+    case RuntimeFiberState.LOADING:
+      return 'LOADING'
+    case RuntimeFiberState.ACTIVE:
+      return 'ACTIVE'
+    case RuntimeFiberState.FAILED:
+      return 'FAILED'
+    case RuntimeFiberState.DISPOSED:
+      return 'DISPOSED'
+    case RuntimeFiberState.UNLOADING:
+      return 'UNLOADING'
+    default:
+      return `UNKNOWN(${state})`
   }
 }
 
@@ -164,5 +168,7 @@ export function traceRuntimeLifecycle(
       to: stateName(fiber.state),
     })
   })
-  return () => { dispose() }
+  return () => {
+    dispose()
+  }
 }

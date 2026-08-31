@@ -12,10 +12,10 @@ import type { ApprovalService } from '@deepseek-cordis/approval'
 import type { ModelAdapter } from '@deepseek-cordis/model'
 import { ReplayModelAdapter } from '@deepseek-cordis/model/testing'
 import type { JsonValue, ModelRequest, ModelResponse } from '@deepseek-cordis/protocol'
-import { InMemorySession, InMemorySessionStore } from '@deepseek-cordis/session'
 import type { ToolSandbox } from '@deepseek-cordis/sandbox'
-import { InMemoryToolRegistry } from '@deepseek-cordis/tools'
+import { InMemorySession, InMemorySessionStore } from '@deepseek-cordis/session'
 import { InMemorySystemPrompt } from '@deepseek-cordis/system-prompt'
+import { InMemoryToolRegistry } from '@deepseek-cordis/tools'
 
 function addTool(registry: InMemoryToolRegistry, offset = 0): () => void {
   return registry.register({
@@ -36,7 +36,8 @@ function addTool(registry: InMemoryToolRegistry, offset = 0): () => void {
         typeof argumentsValue !== 'object' ||
         typeof argumentsValue.a !== 'number' ||
         typeof argumentsValue.b !== 'number'
-      ) throw new Error('invalid add arguments')
+      )
+        throw new Error('invalid add arguments')
       return argumentsValue.a + argumentsValue.b + offset
     },
   })
@@ -69,19 +70,22 @@ test('one tool-call turn is fully recorded and projected into the next request',
     content: 'The answer is 5.',
     steps: 2,
   })
-  assert.deepEqual(session.events.map((event) => event.type), [
-    'turn/start',
-    'user/message',
-    'step/start',
-    'assistant/tool-calls',
-    'tool/call',
-    'tool/result',
-    'step/end',
-    'step/start',
-    'assistant/message',
-    'step/end',
-    'turn/end',
-  ])
+  assert.deepEqual(
+    session.events.map((event) => event.type),
+    [
+      'turn/start',
+      'user/message',
+      'step/start',
+      'assistant/tool-calls',
+      'tool/call',
+      'tool/result',
+      'step/end',
+      'step/start',
+      'assistant/message',
+      'step/end',
+      'turn/end',
+    ],
+  )
   assert.deepEqual(adapter.requests[1]?.messages, [
     { role: 'user', content: 'add 2 and 3' },
     {
@@ -90,9 +94,10 @@ test('one tool-call turn is fully recorded and projected into the next request',
     },
     { role: 'tool', callId: 'call-1', name: 'add', ok: true, output: 5 },
   ])
-  assert.deepEqual(session.projectMessages(), adapter.requests[1]?.messages.concat([
-    { role: 'assistant', content: 'The answer is 5.' },
-  ]))
+  assert.deepEqual(
+    session.projectMessages(),
+    adapter.requests[1]?.messages.concat([{ role: 'assistant', content: 'The answer is 5.' }]),
+  )
 })
 
 test('successful provider usage is anchored to the exact request surface', async () => {
@@ -101,7 +106,8 @@ test('successful provider usage is anchored to the exact request surface', async
     async *stream() {
       yield { type: 'text-delta', delta: 'anchored' }
       yield {
-        type: 'finish', reason: 'completed',
+        type: 'finish',
+        reason: 'completed',
         response: { type: 'message', content: 'anchored' },
         usage: { inputTokens: 101, outputTokens: 3 },
       }
@@ -165,7 +171,10 @@ test('tool schemas are read live before every model step', async () => {
 
   await loop.run(sessions.create('live-schemas'), 'remove the tool')
 
-  assert.deepEqual(adapter.requests[0]?.tools.map((tool) => tool.name), ['remove_self'])
+  assert.deepEqual(
+    adapter.requests[0]?.tools.map((tool) => tool.name),
+    ['remove_self'],
+  )
   assert.deepEqual(adapter.requests[1]?.tools, [])
 })
 
@@ -192,9 +201,10 @@ test('tool replacement changes later execution without replacing history', async
   await loop.run(session, 'second')
 
   const results = session.events.filter((event) => event.type === 'tool/result')
-  assert.deepEqual(results.map((event) => event.type === 'tool/result' && event.ok
-    ? event.output
-    : undefined), [2, 12])
+  assert.deepEqual(
+    results.map((event) => (event.type === 'tool/result' && event.ok ? event.output : undefined)),
+    [2, 12],
+  )
   assert.deepEqual(adapter.requests[2]?.messages.slice(0, 3), [
     { role: 'user', content: 'first' },
     {
@@ -222,35 +232,39 @@ test('missing and throwing tool failures are recorded for the next model step', 
     description: 'Throw',
     inputSchema: {},
     safety: { risk: 'none' },
-    execute() { throw new Error('boom failed') },
+    execute() {
+      throw new Error('boom failed')
+    },
   })
 
   await loop.run(sessions.create('tool-errors'), 'try both')
 
   assert.deepEqual(adapter.requests[1]?.messages.slice(-2), [
     {
-      role: 'tool', callId: 'missing', name: 'missing', ok: false,
+      role: 'tool',
+      callId: 'missing',
+      name: 'missing',
+      ok: false,
       error: 'tool "missing" is not registered',
     },
     {
-      role: 'tool', callId: 'throwing', name: 'boom', ok: false,
+      role: 'tool',
+      callId: 'throwing',
+      name: 'boom',
+      ok: false,
       error: 'boom failed',
     },
   ])
 })
 
 test('reconnecting the stable loop changes the model and preserves session history', async () => {
-  const first = new ReplayModelAdapter('first', [
-    { type: 'message', content: 'from first' },
-  ])
+  const first = new ReplayModelAdapter('first', [{ type: 'message', content: 'from first' }])
   const { sessions, tools, loop, disconnect } = setup(first)
   const session = sessions.create('model-replacement')
   await loop.run(session, 'first turn')
 
   disconnect()
-  const second = new ReplayModelAdapter('second', [
-    { type: 'message', content: 'from second' },
-  ])
+  const second = new ReplayModelAdapter('second', [{ type: 'message', content: 'from second' }])
   loop.connect(sessions, tools, second)
   await loop.run(session, 'second turn')
 
@@ -264,15 +278,19 @@ test('reconnecting the stable loop changes the model and preserves session histo
 test('model failure durably closes the turn and releases its run lock', async () => {
   const failing: ModelAdapter = {
     id: 'failing',
-    async *stream() { throw 'model string failure' },
+    // biome-ignore lint/correctness/useYield: this throw-only adapter exercises stream failure.
+    async *stream() {
+      throw 'model string failure'
+    },
   }
   const { sessions, tools, loop, disconnect } = setup(failing)
   const session = sessions.create('model-failure')
 
   await assert.rejects(loop.run(session, 'fail'), (error) => error === 'model string failure')
-  assert.deepEqual(session.events.slice(-3).map((event) => event.type), [
-    'step/end', 'turn/error', 'turn/end',
-  ])
+  assert.deepEqual(
+    session.events.slice(-3).map((event) => event.type),
+    ['step/end', 'turn/error', 'turn/end'],
+  )
   assert.deepEqual(session.events.at(-2), {
     type: 'turn/error',
     turnId: 'model-failure:turn:1',
@@ -281,23 +299,31 @@ test('model failure durably closes the turn and releases its run lock', async ()
   })
 
   disconnect()
-  loop.connect(sessions, tools, new ReplayModelAdapter('recovered', [
-    { type: 'message', content: 'recovered' },
-  ]))
+  loop.connect(
+    sessions,
+    tools,
+    new ReplayModelAdapter('recovered', [{ type: 'message', content: 'recovered' }]),
+  )
   assert.equal((await loop.run(session, 'retry')).content, 'recovered')
 })
 
 test('model Error objects record their message before escaping', async () => {
   const failing: ModelAdapter = {
     id: 'error-object',
-    async *stream() { throw new Error('provider unavailable') },
+    // biome-ignore lint/correctness/useYield: this throw-only adapter exercises Error normalization.
+    async *stream() {
+      throw new Error('provider unavailable')
+    },
   }
   const { sessions, loop } = setup(failing)
   const session = sessions.create('error-object')
 
   await assert.rejects(loop.run(session, 'fail'), /provider unavailable/)
   const turnError = session.events.find((event) => event.type === 'turn/error')
-  assert.equal(turnError?.type === 'turn/error' ? turnError.error : undefined, 'provider unavailable')
+  assert.equal(
+    turnError?.type === 'turn/error' ? turnError.error : undefined,
+    'provider unavailable',
+  )
 })
 
 test('the maximum-step guard records failure and permits a later turn', async () => {
@@ -310,22 +336,28 @@ test('the maximum-step guard records failure and permits a later turn', async ()
   const session = sessions.create('bounded')
 
   await assert.rejects(loop.run(session, 'loop', { maxSteps: 2 }), StepLimitError)
-  assert.deepEqual(session.events.slice(-2).map((event) => event.type), [
-    'turn/error', 'turn/end',
-  ])
+  assert.deepEqual(
+    session.events.slice(-2).map((event) => event.type),
+    ['turn/error', 'turn/end'],
+  )
   assert.equal((await loop.run(session, 'later')).content, 'later turn works')
 })
 
 test('connection and session guards reject invalid ownership and concurrent work', async () => {
   let release: ((response: ModelResponse) => void) | undefined
   let announceStart: (() => void) | undefined
-  const started = new Promise<void>((resolve) => { announceStart = resolve })
+  const started = new Promise<void>((resolve) => {
+    announceStart = resolve
+  })
   const blocking: ModelAdapter = {
     id: 'blocking',
     async *stream(_request: ModelRequest) {
       announceStart?.()
-      const response = await new Promise<ModelResponse>((resolve) => { release = resolve })
-      if (response.type === 'message') yield { type: 'text-delta' as const, delta: response.content }
+      const response = await new Promise<ModelResponse>((resolve) => {
+        release = resolve
+      })
+      if (response.type === 'message')
+        yield { type: 'text-delta' as const, delta: response.content }
       yield { type: 'finish' as const, reason: 'completed' as const, response }
     },
   }
@@ -360,7 +392,8 @@ test('model-stream cancellation closes the durable turn without committing parti
       yield options.signal?.aborted
         ? { type: 'finish', reason: 'aborted' }
         : {
-            type: 'finish', reason: 'completed',
+            type: 'finish',
+            reason: 'completed',
             response: { type: 'message', content: 'partial' },
           }
     },
@@ -370,29 +403,43 @@ test('model-stream cancellation closes the durable turn without committing parti
   const controller = new AbortController()
   const deltas: string[] = []
 
-  await assert.rejects(loop.run(session, 'cancel me', {
-    signal: controller.signal,
-    onTextDelta: (delta) => {
-      deltas.push(delta)
-      controller.abort({ kind: 'user' })
-    },
-  }), TurnCancelledError)
+  await assert.rejects(
+    loop.run(session, 'cancel me', {
+      signal: controller.signal,
+      onTextDelta: (delta) => {
+        deltas.push(delta)
+        controller.abort({ kind: 'user' })
+      },
+    }),
+    TurnCancelledError,
+  )
 
   assert.deepEqual(deltas, ['partial'])
-  assert.equal(session.events.some((event) => event.type === 'assistant/message'), false)
-  assert.equal(session.events.some((event) => event.type === 'turn/error'), false)
+  assert.equal(
+    session.events.some((event) => event.type === 'assistant/message'),
+    false,
+  )
+  assert.equal(
+    session.events.some((event) => event.type === 'turn/error'),
+    false,
+  )
   assert.deepEqual(session.events.slice(-2), [
     {
-      type: 'step/end', turnId: 'cancel-model:turn:1', step: 1,
-      outcome: 'aborted', sequence: 4,
+      type: 'step/end',
+      turnId: 'cancel-model:turn:1',
+      step: 1,
+      outcome: 'aborted',
+      sequence: 4,
     },
     { type: 'turn/end', turnId: 'cancel-model:turn:1', status: 'aborted', sequence: 5 },
   ])
 
   disconnect()
-  loop.connect(sessions, tools, new ReplayModelAdapter('after-cancel', [
-    { type: 'message', content: 'next turn works' },
-  ]))
+  loop.connect(
+    sessions,
+    tools,
+    new ReplayModelAdapter('after-cancel', [{ type: 'message', content: 'next turn works' }]),
+  )
   assert.equal((await loop.run(session, 'retry')).content, 'next turn works')
 })
 
@@ -449,11 +496,25 @@ test('consequential calls durably audit approval and sandbox before execution', 
   await loop.run(session, 'write the note')
 
   assert.deepEqual(order, ['approval', 'prepare', 'execute'])
-  assert.deepEqual(session.events.map((event) => event.type), [
-    'turn/start', 'user/message', 'step/start', 'assistant/tool-calls', 'tool/call',
-    'approval/asked', 'approval/decided', 'sandbox/prepared', 'tool/result',
-    'step/end', 'step/start', 'assistant/message', 'step/end', 'turn/end',
-  ])
+  assert.deepEqual(
+    session.events.map((event) => event.type),
+    [
+      'turn/start',
+      'user/message',
+      'step/start',
+      'assistant/tool-calls',
+      'tool/call',
+      'approval/asked',
+      'approval/decided',
+      'sandbox/prepared',
+      'tool/result',
+      'step/end',
+      'step/start',
+      'assistant/message',
+      'step/end',
+      'turn/end',
+    ],
+  )
   assert.deepEqual(adapter.requests[1]?.messages, [
     { role: 'user', content: 'write the note' },
     {
@@ -461,23 +522,30 @@ test('consequential calls durably audit approval and sandbox before execution', 
       toolCalls: [{ id: 'write-1', name: 'write-file', arguments: { path: 'note.txt' } }],
     },
     {
-      role: 'tool', callId: 'write-1', name: 'write-file', ok: true,
+      role: 'tool',
+      callId: 'write-1',
+      name: 'write-file',
+      ok: true,
       output: { path: { path: 'note.txt' } },
     },
   ])
 })
 
 test('tool cancellation receives the turn signal and records a conservative result', async () => {
-  const adapter = new ReplayModelAdapter('cancel-tool', [{
-    type: 'tool_calls',
-    calls: [
-      { id: 'wait-1', name: 'wait', arguments: null },
-      { id: 'later-1', name: 'later', arguments: null },
-    ],
-  }])
+  const adapter = new ReplayModelAdapter('cancel-tool', [
+    {
+      type: 'tool_calls',
+      calls: [
+        { id: 'wait-1', name: 'wait', arguments: null },
+        { id: 'later-1', name: 'later', arguments: null },
+      ],
+    },
+  ])
   const { sessions, tools, loop } = setup(adapter)
   let started: (() => void) | undefined
-  const toolStarted = new Promise<void>((resolve) => { started = resolve })
+  const toolStarted = new Promise<void>((resolve) => {
+    started = resolve
+  })
   tools.register({
     name: 'wait',
     description: 'Wait until cancelled',
@@ -486,7 +554,13 @@ test('tool cancellation receives the turn signal and records a conservative resu
     async execute(_arguments, { signal }) {
       started?.()
       await new Promise<void>((_resolve, reject) => {
-        signal?.addEventListener('abort', () => { reject(signal.reason) }, { once: true })
+        signal?.addEventListener(
+          'abort',
+          () => {
+            reject(signal.reason)
+          },
+          { once: true },
+        )
       })
       return null
     },
@@ -501,17 +575,28 @@ test('tool cancellation receives the turn signal and records a conservative resu
   const results = session.events.filter((event) => event.type === 'tool/result')
   assert.deepEqual(results, [
     {
-      type: 'tool/result', turnId: 'cancel-tool:turn:1', callId: 'wait-1',
-      name: 'wait', ok: false, error: TOOL_CANCELLED_OUTCOME_UNKNOWN, sequence: 6,
+      type: 'tool/result',
+      turnId: 'cancel-tool:turn:1',
+      callId: 'wait-1',
+      name: 'wait',
+      ok: false,
+      error: TOOL_CANCELLED_OUTCOME_UNKNOWN,
+      sequence: 6,
     },
     {
-      type: 'tool/result', turnId: 'cancel-tool:turn:1', callId: 'later-1',
-      name: 'later', ok: false, error: TOOL_CANCELLED_BEFORE_START, sequence: 7,
+      type: 'tool/result',
+      turnId: 'cancel-tool:turn:1',
+      callId: 'later-1',
+      name: 'later',
+      ok: false,
+      error: TOOL_CANCELLED_BEFORE_START,
+      sequence: 7,
     },
   ])
-  assert.deepEqual(session.events.slice(-4).map((event) => event.type), [
-    'tool/result', 'tool/result', 'step/end', 'turn/end',
-  ])
+  assert.deepEqual(
+    session.events.slice(-4).map((event) => event.type),
+    ['tool/result', 'tool/result', 'step/end', 'turn/end'],
+  )
   assert.deepEqual(session.projectMessages().slice(-3), [
     {
       role: 'assistant',
@@ -521,11 +606,17 @@ test('tool cancellation receives the turn signal and records a conservative resu
       ],
     },
     {
-      role: 'tool', callId: 'wait-1', name: 'wait', ok: false,
+      role: 'tool',
+      callId: 'wait-1',
+      name: 'wait',
+      ok: false,
       error: TOOL_CANCELLED_OUTCOME_UNKNOWN,
     },
     {
-      role: 'tool', callId: 'later-1', name: 'later', ok: false,
+      role: 'tool',
+      callId: 'later-1',
+      name: 'later',
+      ok: false,
       error: TOOL_CANCELLED_BEFORE_START,
     },
   ])
@@ -543,8 +634,10 @@ test('invalid step limits fail before recording a turn', async () => {
 
   const controller = new AbortController()
   controller.abort({ kind: 'user' })
-  await assert.rejects(loop.run(session, 'cancelled', { signal: controller.signal }),
-    TurnCancelledError)
+  await assert.rejects(
+    loop.run(session, 'cancelled', { signal: controller.signal }),
+    TurnCancelledError,
+  )
   assert.deepEqual(session.events, [])
 })
 
@@ -567,10 +660,13 @@ test('one coherent prompt assembly follows policy-discovered tools', async () =>
   const loop = new AgentLoop({
     async beforeStep(context) {
       tools.register({
-        name: 'late-tool', description: 'Late tool', inputSchema: {},
-        safety: { risk: 'none' }, execute: () => null,
+        name: 'late-tool',
+        description: 'Late tool',
+        inputSchema: {},
+        safety: { risk: 'none' },
+        execute: () => null,
       })
-      assert.match(await context.readSystemPrompt() ?? '', /late-tool/)
+      assert.match((await context.readSystemPrompt()) ?? '', /late-tool/)
     },
   })
   const disconnect = loop.connect(sessions, tools, model, { systemPrompt: prompts })
@@ -580,9 +676,14 @@ test('one coherent prompt assembly follows policy-discovered tools', async () =>
 
   assert.equal(assemblies, 1)
   assert.equal(model.requests.length, 1)
-  assert.equal(model.requests[0]?.systemPrompt,
-    'prompt-session prompt-session:turn:1 step 1: late-tool')
-  assert.deepEqual(model.requests[0]?.tools.map(({ name }) => name), ['late-tool'])
+  assert.equal(
+    model.requests[0]?.systemPrompt,
+    'prompt-session prompt-session:turn:1 step 1: late-tool',
+  )
+  assert.deepEqual(
+    model.requests[0]?.tools.map(({ name }) => name),
+    ['late-tool'],
+  )
   disconnect()
 })
 
@@ -625,20 +726,28 @@ test('cancellation during prompt assembly closes the turn before model work', as
   const model = new ReplayModelAdapter('unused-prompt-model', [])
   const prompts = new InMemorySystemPrompt()
   const controller = new AbortController()
-  prompts.register({ name: 'cancel', order: 0, text: async () => {
-    controller.abort({ kind: 'prompt-test' })
-    return 'never sent'
-  } })
+  prompts.register({
+    name: 'cancel',
+    order: 0,
+    text: async () => {
+      controller.abort({ kind: 'prompt-test' })
+      return 'never sent'
+    },
+  })
   const loop = new AgentLoop()
   const disconnect = loop.connect(sessions, tools, model, { systemPrompt: prompts })
   const session = sessions.create('prompt-cancel')
 
-  await assert.rejects(loop.run(session, 'start', { signal: controller.signal }), TurnCancelledError)
+  await assert.rejects(
+    loop.run(session, 'start', { signal: controller.signal }),
+    TurnCancelledError,
+  )
 
   assert.equal(model.requests.length, 0)
-  assert.deepEqual(session.events.map(({ type }) => type), [
-    'turn/start', 'user/message', 'turn/end',
-  ])
+  assert.deepEqual(
+    session.events.map(({ type }) => type),
+    ['turn/start', 'user/message', 'turn/end'],
+  )
   const terminal = session.events.at(-1)
   assert.equal(terminal?.type === 'turn/end' ? terminal.status : undefined, 'aborted')
   disconnect()

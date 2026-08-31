@@ -9,9 +9,7 @@ export interface PromptAssemblyContext {
   readonly signal?: AbortSignal
 }
 
-export type PromptTextProvider = (
-  context: PromptAssemblyContext,
-) => string | Promise<string>
+export type PromptTextProvider = (context: PromptAssemblyContext) => string | Promise<string>
 
 export interface PromptSection {
   readonly name: string
@@ -64,13 +62,15 @@ export class InMemorySystemPrompt implements SystemPromptService {
       throw new Error('prompt scope must not be empty')
     }
     const normalized = validateSection(section)
-    const registry = scope === undefined
-      ? this.#global
-      : this.#scoped.get(scope) ?? (() => {
-          const created = new Map<string, RegisteredSection>()
-          this.#scoped.set(scope, created)
-          return created
-        })()
+    const registry =
+      scope === undefined
+        ? this.#global
+        : (this.#scoped.get(scope) ??
+          (() => {
+            const created = new Map<string, RegisteredSection>()
+            this.#scoped.set(scope, created)
+            return created
+          })())
     if (registry.has(normalized.name)) {
       throw new Error(
         `prompt section ${JSON.stringify(normalized.name)} is already registered in ${scopeName(scope)}`,
@@ -107,12 +107,13 @@ export class InMemorySystemPrompt implements SystemPromptService {
     const rendered: Array<{ readonly name: string; readonly text: string }> = []
     for (const section of ordered) {
       context.signal?.throwIfAborted()
-      const text = typeof section.text === 'string'
-        ? section.text
-        : await section.text(isolatedContext)
+      const text =
+        typeof section.text === 'string' ? section.text : await section.text(isolatedContext)
       context.signal?.throwIfAborted()
       if (typeof text !== 'string') {
-        throw new TypeError(`prompt section ${JSON.stringify(section.name)} returned non-string text`)
+        throw new TypeError(
+          `prompt section ${JSON.stringify(section.name)} returned non-string text`,
+        )
       }
       const normalized = text.trim()
       if (normalized.length > 0) rendered.push({ name: section.name, text: normalized })

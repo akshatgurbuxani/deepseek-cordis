@@ -6,9 +6,5 @@
     "tsBuildInfoFile": "../../.cache/tsbuildinfo/compaction.tsbuildinfo"
   },
   "include": ["src/**/*.ts"],
-  "references": [
-    { "path": "../model" },
-    { "path": "../protocol" },
-    { "path": "../session" }
-  ]
+  "references": [{ "path": "../model" }, { "path": "../protocol" }, { "path": "../session" }]
 }

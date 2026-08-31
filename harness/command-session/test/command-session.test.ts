@@ -25,9 +25,16 @@ test('session inspection is a pure durable projection', () => {
   const inspection = inspectSession(session)
 
   assert.deepEqual(inspection, {
-    id: 'inspect', events: 4, turns: 1, completedTurns: 1,
-    interruptedTurns: 0, failedTurns: 0, openTurn: false,
-    surfaceMessages: 2, compactions: 0, lastSequence: 4,
+    id: 'inspect',
+    events: 4,
+    turns: 1,
+    completedTurns: 1,
+    interruptedTurns: 0,
+    failedTurns: 0,
+    openTurn: false,
+    surfaceMessages: 2,
+    compactions: 0,
+    lastSequence: 4,
   })
   assert.match(formatSessionInspection(inspection), /Turns: 1 \(1 completed/)
 })
@@ -37,7 +44,8 @@ test('inspect and compact commands use the registry and authoritative compactor'
   appendTurn(session, 1)
   appendTurn(session, 2)
   const compactor = new SessionCompactor({
-    id: 'command-test', summarize: async () => 'checkpoint',
+    id: 'command-test',
+    summarize: async () => 'checkpoint',
   })
   const commands = new InMemoryCommandRegistry()
   commands.register(createInspectCommand())
@@ -60,6 +68,7 @@ test('inspect and compact commands use the registry and authoritative compactor'
 
   const invalid = await commands.execute(session, '/compact zero')
   assert.deepEqual(invalid?.result, {
-    kind: 'error', text: 'compact expects an optional positive integer retain-turn count',
+    kind: 'error',
+    text: 'compact expects an optional positive integer retain-turn count',
   })
 })
