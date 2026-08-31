@@ -1,7 +1,7 @@
 import {
-  EffectStack,
   type Disposer,
   type EffectSetup,
+  EffectStack,
 } from '../../001-effect-stack/src/effect-stack.ts'
 
 declare const serviceType: unique symbol
@@ -142,11 +142,7 @@ export class Runtime {
     do {
       changed = false
       for (const fiber of this.#fibers) {
-        if (
-          fiber.state !== 'pending' ||
-          attempted.has(fiber) ||
-          !this.#isEligible(fiber)
-        ) continue
+        if (fiber.state !== 'pending' || attempted.has(fiber) || !this.#isEligible(fiber)) continue
 
         attempted.add(fiber)
         try {
@@ -183,7 +179,9 @@ export class Runtime {
       get<T>(key: ServiceKey<T>): T {
         const binding = committed.get(key)
         if (!binding) {
-          throw new Error(`component ${JSON.stringify(fiber.name)} did not commit service ${JSON.stringify(key.name)}`)
+          throw new Error(
+            `component ${JSON.stringify(fiber.name)} did not commit service ${JSON.stringify(key.name)}`,
+          )
         }
         return binding.value as T
       },
@@ -231,9 +229,10 @@ export class Runtime {
       this.#withdraw(fiber)
       const dependents = [...this.#fibers]
         .reverse()
-        .filter((candidate) =>
-          candidate.state === 'active' &&
-          [...candidate.committed.values()].some((binding) => binding.fiber === fiber),
+        .filter(
+          (candidate) =>
+            candidate.state === 'active' &&
+            [...candidate.committed.values()].some((binding) => binding.fiber === fiber),
         )
       for (const dependent of dependents) {
         await this.#deactivateTree(dependent, 'pending', errors, visited)
@@ -262,14 +261,17 @@ export class Runtime {
     const ownKeys = new Set<AnyServiceKey>()
     for (const [key] of component.provides ?? []) {
       if (ownKeys.has(key)) {
-        throw new Error(`component ${JSON.stringify(component.name)} provides service ${JSON.stringify(key.name)} more than once`)
+        throw new Error(
+          `component ${JSON.stringify(component.name)} provides service ${JSON.stringify(key.name)} more than once`,
+        )
       }
       ownKeys.add(key)
 
-      const owner = this.#fibers.find((fiber) =>
-        fiber !== ignored &&
-        fiber.state !== 'disposed' &&
-        (fiber.component.provides ?? []).some(([provided]) => provided === key),
+      const owner = this.#fibers.find(
+        (fiber) =>
+          fiber !== ignored &&
+          fiber.state !== 'disposed' &&
+          (fiber.component.provides ?? []).some(([provided]) => provided === key),
       )
       if (owner) {
         throw new Error(

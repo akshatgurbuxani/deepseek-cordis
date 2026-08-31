@@ -1,7 +1,7 @@
 import {
-  EffectStack,
   type Disposer,
   type EffectSetup,
+  EffectStack,
 } from '../../001-effect-stack/src/effect-stack.ts'
 
 declare const serviceType: unique symbol
@@ -93,10 +93,7 @@ export class Realm {
     return current.#slot(key)
   }
 
-  intercept<T>(
-    key: ServiceKey<T>,
-    interceptor: Interceptor<T>,
-  ): InterceptorRegistration<T> {
+  intercept<T>(key: ServiceKey<T>, interceptor: Interceptor<T>): InterceptorRegistration<T> {
     const entry: InterceptorEntry = {
       interceptor: interceptor as Interceptor<unknown>,
       disposed: false,
@@ -126,11 +123,13 @@ export class Realm {
       lineage.push(current)
     }
 
-    return lineage.reverse().flatMap((realm) =>
-      (realm.#interceptors.get(key) ?? [])
-        .filter((entry) => !entry.disposed)
-        .map((entry) => entry.interceptor),
-    )
+    return lineage
+      .reverse()
+      .flatMap((realm) =>
+        (realm.#interceptors.get(key) ?? [])
+          .filter((entry) => !entry.disposed)
+          .map((entry) => entry.interceptor),
+      )
   }
 
   #slot(key: AnyServiceKey): ProviderSlot {
@@ -156,12 +155,7 @@ export interface Context {
   effect(setup: EffectSetup): Promise<Disposer>
 }
 
-export type FiberState =
-  | 'pending'
-  | 'activating'
-  | 'active'
-  | 'disposing'
-  | 'disposed'
+export type FiberState = 'pending' | 'activating' | 'active' | 'disposing' | 'disposed'
 
 type DesiredState = 'registered' | 'disposed'
 
@@ -315,9 +309,7 @@ export class Runtime {
       this.#dirty = false
       this.#finalizePendingRemovals()
 
-      const inactive = this.#inactiveRoots().map((fiber) =>
-        this.#driveInactive(fiber),
-      )
+      const inactive = this.#inactiveRoots().map((fiber) => this.#driveInactive(fiber))
       const active = this.#fibers
         .filter((fiber) => this.#canActivate(fiber))
         .map((fiber) => this.#driveActive(fiber))
@@ -341,19 +333,16 @@ export class Runtime {
 
   #finalizePendingRemovals(): void {
     for (const fiber of [...this.#fibers]) {
-      if (
-        fiber.desired === 'disposed' &&
-        fiber.state === 'pending' &&
-        !fiber.transition
-      ) this.#finalizeDisposed(fiber)
+      if (fiber.desired === 'disposed' && fiber.state === 'pending' && !fiber.transition)
+        this.#finalizeDisposed(fiber)
     }
   }
 
   #inactiveRoots(): Fiber[] {
     const invalid = this.#fibers.filter((fiber) => this.#needsDeactivation(fiber))
     const invalidSet = new Set(invalid)
-    return invalid.filter((fiber) =>
-      ![...fiber.committed.values()].some((binding) => invalidSet.has(binding.fiber)),
+    return invalid.filter(
+      (fiber) => ![...fiber.committed.values()].some((binding) => invalidSet.has(binding.fiber)),
     )
   }
 
@@ -371,7 +360,8 @@ export class Runtime {
       fiber.desired !== 'registered' ||
       fiber.transition ||
       this.#hasRetiringProvider(fiber)
-    ) return false
+    )
+      return false
 
     const target = this.#snapshotTarget(fiber)
     return target !== undefined && !this.#sameTarget(target, fiber.failedTarget)
@@ -380,13 +370,14 @@ export class Runtime {
   #hasRetiringProvider(fiber: Fiber): boolean {
     return (fiber.component.provides ?? []).some(([key]) => {
       const slot = fiber.realm.slotFor(key)
-      return this.#fibers.some((candidate) =>
-        candidate !== fiber &&
-        candidate.desired === 'disposed' &&
-        candidate.state !== 'disposed' &&
-        (candidate.component.provides ?? []).some(
-          ([provided]) => candidate.realm.slotFor(provided) === slot,
-        ),
+      return this.#fibers.some(
+        (candidate) =>
+          candidate !== fiber &&
+          candidate.desired === 'disposed' &&
+          candidate.state !== 'disposed' &&
+          (candidate.component.provides ?? []).some(
+            ([provided]) => candidate.realm.slotFor(provided) === slot,
+          ),
       )
     })
   }
@@ -395,25 +386,21 @@ export class Runtime {
     const providers = new Map<AnyServiceKey, ProviderBinding>()
     for (const key of fiber.component.requires ?? []) {
       const binding = this.#published.get(fiber.realm.slotFor(key))
-      if (!binding || binding.fiber.desired !== 'registered') return undefined
+      if (binding?.fiber.desired !== 'registered') return undefined
       providers.set(key, binding)
     }
     return { desiredRevision: fiber.desiredRevision, providers }
   }
 
-  #sameTarget(
-    first: ActivationTarget | undefined,
-    second: ActivationTarget | undefined,
-  ): boolean {
+  #sameTarget(first: ActivationTarget | undefined, second: ActivationTarget | undefined): boolean {
     if (!first || !second) return false
     if (
       first.desiredRevision !== second.desiredRevision ||
       first.providers.size !== second.providers.size
-    ) return false
-
-    return [...first.providers].every(
-      ([key, binding]) => second.providers.get(key) === binding,
     )
+      return false
+
+    return [...first.providers].every(([key, binding]) => second.providers.get(key) === binding)
   }
 
   async #driveActive(fiber: Fiber): Promise<void> {
@@ -484,10 +471,8 @@ export class Runtime {
   }
 
   #targetIsCurrent(fiber: Fiber, target: ActivationTarget): boolean {
-    if (
-      fiber.desired !== 'registered' ||
-      fiber.desiredRevision !== target.desiredRevision
-    ) return false
+    if (fiber.desired !== 'registered' || fiber.desiredRevision !== target.desiredRevision)
+      return false
 
     return [...target.providers].every(
       ([, binding]) => this.#published.get(binding.slot) === binding,
@@ -515,10 +500,7 @@ export class Runtime {
     return value as T
   }
 
-  async #recoverActivation(
-    fiber: Fiber,
-    scope: EffectStack,
-  ): Promise<unknown | undefined> {
+  async #recoverActivation(fiber: Fiber, scope: EffectStack): Promise<unknown | undefined> {
     let rollbackError: unknown | undefined
     try {
       await scope.dispose()
@@ -570,13 +552,12 @@ export class Runtime {
     const errors: unknown[] = []
     const dependents = [...this.#fibers]
       .reverse()
-      .filter((candidate) =>
-        (
-          candidate.state === 'activating' ||
-          candidate.state === 'active' ||
-          candidate.state === 'disposing'
-        ) &&
-        [...candidate.committed.values()].some((binding) => binding.fiber === fiber),
+      .filter(
+        (candidate) =>
+          (candidate.state === 'activating' ||
+            candidate.state === 'active' ||
+            candidate.state === 'disposing') &&
+          [...candidate.committed.values()].some((binding) => binding.fiber === fiber),
       )
     const results = await Promise.allSettled(
       dependents.map((dependent) => this.#driveInactive(dependent)),
@@ -614,11 +595,7 @@ export class Runtime {
     }
   }
 
-  #withdrawCascade(
-    fiber: Fiber,
-    visited = new Set<Fiber>(),
-    desiredRevision?: number,
-  ): void {
+  #withdrawCascade(fiber: Fiber, visited = new Set<Fiber>(), desiredRevision?: number): void {
     if (visited.has(fiber)) return
     visited.add(fiber)
 
@@ -667,12 +644,13 @@ export class Runtime {
       }
       ownSlots.add(slot)
 
-      const owner = this.#fibers.find((fiber) =>
-        fiber !== ignored &&
-        fiber.desired !== 'disposed' &&
-        (fiber.component.provides ?? []).some(
-          ([provided]) => fiber.realm.slotFor(provided) === slot,
-        ),
+      const owner = this.#fibers.find(
+        (fiber) =>
+          fiber !== ignored &&
+          fiber.desired !== 'disposed' &&
+          (fiber.component.provides ?? []).some(
+            ([provided]) => fiber.realm.slotFor(provided) === slot,
+          ),
       )
       if (owner) {
         throw new Error(

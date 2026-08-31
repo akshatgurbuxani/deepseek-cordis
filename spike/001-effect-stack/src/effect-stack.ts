@@ -1,10 +1,7 @@
 export type Disposer = () => void | Promise<void>
 
-export type EffectValue =
-  | void
-  | Disposer
-  | Iterable<Disposer>
-  | AsyncIterable<Disposer>
+// biome-ignore lint/suspicious/noConfusingVoidType: effect setup intentionally permits no return.
+export type EffectValue = void | Disposer | Iterable<Disposer> | AsyncIterable<Disposer>
 export type EffectSetup = () => EffectValue | Promise<EffectValue>
 
 interface EffectRecord {
@@ -121,17 +118,17 @@ export class EffectStack {
 
     this.#state = 'disposing'
     const records = [...this.#records].reverse()
-    this.#disposal = Promise.allSettled(
-      records.map((record) => this.#disposeRecord(record)),
-    ).then((results) => {
-      this.#state = 'disposed'
-      const errors = results.flatMap((result) =>
-        result.status === 'rejected' ? [result.reason] : [],
-      )
-      if (errors.length > 0) {
-        throw new AggregateError(errors, 'one or more effects failed to dispose')
-      }
-    })
+    this.#disposal = Promise.allSettled(records.map((record) => this.#disposeRecord(record))).then(
+      (results) => {
+        this.#state = 'disposed'
+        const errors = results.flatMap((result) =>
+          result.status === 'rejected' ? [result.reason] : [],
+        )
+        if (errors.length > 0) {
+          throw new AggregateError(errors, 'one or more effects failed to dispose')
+        }
+      },
+    )
 
     return this.#disposal
   }

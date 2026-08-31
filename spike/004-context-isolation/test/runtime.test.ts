@@ -25,13 +25,17 @@ test('isolated sibling realms resolve the same key to local providers', async ()
     name: 'consumer-a',
     realm: agentA,
     requires: [model],
-    setup(context) { seen.push(`a:${context.get(model).id}`) },
+    setup(context) {
+      seen.push(`a:${context.get(model).id}`)
+    },
   })
   const consumerB = runtime.add({
     name: 'consumer-b',
     realm: agentB,
     requires: [model],
-    setup(context) { seen.push(`b:${context.get(model).id}`) },
+    setup(context) {
+      seen.push(`b:${context.get(model).id}`)
+    },
   })
   runtime.add({
     name: 'model-a',
@@ -70,12 +74,13 @@ test('duplicate providers are rejected per effective provider slot', async () =>
   })
 
   assert.throws(
-    () => runtime.add({
-      name: 'nested-storage-a',
-      realm: nestedA,
-      provides: [[storage, {}]],
-      setup() {},
-    }),
+    () =>
+      runtime.add({
+        name: 'nested-storage-a',
+        realm: nestedA,
+        provides: [[storage, {}]],
+        setup() {},
+      }),
     /already provided by component "storage-a"/,
   )
 
@@ -105,13 +110,17 @@ test('ordinary keys inherit from root while isolation blocks ancestor fallback',
     name: 'inherited-consumer',
     realm: inherited,
     requires: [configuration],
-    setup(context) { trace.push(`inherited:${context.get(configuration).source}`) },
+    setup(context) {
+      trace.push(`inherited:${context.get(configuration).source}`)
+    },
   })
   const isolatedConsumer = runtime.add({
     name: 'isolated-consumer',
     realm: isolated,
     requires: [configuration],
-    setup(context) { trace.push(`isolated:${context.get(configuration).source}`) },
+    setup(context) {
+      trace.push(`isolated:${context.get(configuration).source}`)
+    },
   })
   await runtime.settle()
 
@@ -146,7 +155,9 @@ test('replacement in one isolated realm leaves its sibling active', async () => 
     realm: realmA,
     provides: [[model, { id: 'a1' }]],
     async setup(context) {
-      await context.effect(() => () => { cleanupsA += 1 })
+      await context.effect(() => () => {
+        cleanupsA += 1
+      })
     },
   })
   runtime.add({
@@ -154,7 +165,9 @@ test('replacement in one isolated realm leaves its sibling active', async () => 
     realm: realmB,
     provides: [[model, { id: 'b1' }]],
     async setup(context) {
-      await context.effect(() => () => { cleanupsB += 1 })
+      await context.effect(() => () => {
+        cleanupsB += 1
+      })
     },
   })
   const consumerA = runtime.add({
@@ -163,7 +176,9 @@ test('replacement in one isolated realm leaves its sibling active', async () => 
     requires: [model],
     async setup(context) {
       activationsA.push(context.get(model).id)
-      await context.effect(() => () => { cleanupsA += 1 })
+      await context.effect(() => () => {
+        cleanupsA += 1
+      })
     },
   })
   const consumerB = runtime.add({
@@ -172,7 +187,9 @@ test('replacement in one isolated realm leaves its sibling active', async () => 
     requires: [model],
     async setup(context) {
       activationsB.push(context.get(model).id)
-      await context.effect(() => () => { cleanupsB += 1 })
+      await context.effect(() => () => {
+        cleanupsB += 1
+      })
     },
   })
   await runtime.settle()
@@ -269,13 +286,17 @@ test('requester-aware denial does not change dependency satisfaction', async () 
     name: 'allowed',
     realm,
     requires: [secrets],
-    setup(context) { allowedRead = () => context.get(secrets).token },
+    setup(context) {
+      allowedRead = () => context.get(secrets).token
+    },
   })
   const denied = runtime.add({
     name: 'denied',
     realm,
     requires: [secrets],
-    setup(context) { deniedRead = () => context.get(secrets).token },
+    setup(context) {
+      deniedRead = () => context.get(secrets).token
+    },
   })
   await runtime.settle()
 
@@ -305,10 +326,7 @@ test('context rejects access to a service the component did not declare', async 
     },
   })
 
-  await assert.rejects(
-    runtime.settle(),
-    /did not declare and commit service "clock"/,
-  )
+  await assert.rejects(runtime.settle(), /did not declare and commit service "clock"/)
   assert.equal(undeclared.state, 'pending')
   assert.notEqual(runtime.get(clock), undefined)
 })
@@ -326,7 +344,9 @@ test('provider replacement during isolated setup cannot publish stale services',
     name: 'consumer',
     realm,
     requires: [model],
-    setup(context) { trace.push(`consumer:${context.get(model).id}`) },
+    setup(context) {
+      trace.push(`consumer:${context.get(model).id}`)
+    },
   })
   const first = runtime.add({
     name: 'model-v1',
@@ -335,7 +355,9 @@ test('provider replacement during isolated setup cannot publish stale services',
     async setup(context) {
       await context.effect(() => {
         trace.push('v1:acquire')
-        return () => { trace.push('v1:recover') }
+        return () => {
+          trace.push('v1:recover')
+        }
       })
       started.resolve()
       await finish.promise
@@ -345,7 +367,9 @@ test('provider replacement during isolated setup cannot publish stale services',
     name: 'sibling-model',
     realm: sibling,
     provides: [[model, { id: 'sibling' }]],
-    setup() { trace.push('sibling:active') },
+    setup() {
+      trace.push('sibling:active')
+    },
   })
 
   await started.promise
@@ -353,7 +377,9 @@ test('provider replacement during isolated setup cannot publish stale services',
     name: 'model-v2',
     realm,
     provides: [[model, { id: 'v2' }]],
-    setup() { trace.push('v2:active') },
+    setup() {
+      trace.push('v2:active')
+    },
   })
   finish.resolve()
   await runtime.settle()

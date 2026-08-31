@@ -1,4 +1,4 @@
-import { FiberState, type Context } from 'cordis'
+import { type Context, FiberState } from 'cordis'
 
 import {
   type ModelAdapter,
@@ -76,13 +76,20 @@ export class TracingModelAdapter implements ModelAdapter {
 
 function stateName(state: FiberState): string {
   switch (state) {
-    case FiberState.PENDING: return 'PENDING'
-    case FiberState.LOADING: return 'LOADING'
-    case FiberState.ACTIVE: return 'ACTIVE'
-    case FiberState.FAILED: return 'FAILED'
-    case FiberState.DISPOSED: return 'DISPOSED'
-    case FiberState.UNLOADING: return 'UNLOADING'
-    default: return `UNKNOWN(${state})`
+    case FiberState.PENDING:
+      return 'PENDING'
+    case FiberState.LOADING:
+      return 'LOADING'
+    case FiberState.ACTIVE:
+      return 'ACTIVE'
+    case FiberState.FAILED:
+      return 'FAILED'
+    case FiberState.DISPOSED:
+      return 'DISPOSED'
+    case FiberState.UNLOADING:
+      return 'UNLOADING'
+    default:
+      return `UNKNOWN(${state})`
   }
 }
 
