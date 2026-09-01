@@ -39,8 +39,9 @@ Selections normalize to that stable presentation order.
 Relative workspace and persistence paths are resolved against the profile
 file. `--replay` overrides its model provider; `OPENROUTER_MODEL`, context-window
 variables, `HARNESS_WORKSPACE_ROOT`, and `HARNESS_SESSION_DIR` are launch-local
-overlays and take precedence. A profile is frozen for one process invocation;
-interactive turns never observe a partially reloaded policy.
+overlays and take precedence. Launch overlays remain frozen for one invocation.
+Interactive profile changes become visible only after a successful `/reload`;
+turns never observe a partially applied policy.
 
 `approval.default: "ask"` uses the active interaction channel and fails closed
 when no channel exists. `"deny"` never invokes the channel and durably records
@@ -69,10 +70,26 @@ npm run cli:replay -- --interactive
 
 Interactive input that begins with `/` is dispatched directly, never sent to
 the model. `/inspect` reports durable session state, `/compact [retain-turns]`
-uses the authoritative compactor, `/help` lists live registrations, and `/exit`
+uses the authoritative compactor, `/reload` revalidates the selected profile,
+`/help` lists live registrations, and `/exit`
 records its command boundary before clean shutdown. Syntax and lookup misses
 append nothing. Replay mode derives a fresh deterministic calculator exchange
 for every turn; live mode reuses the configured OpenRouter adapter.
+
+`/reload` is an argument-free operator command available in interactive mode.
+It rereads the same `--profile` or `HARNESS_PROFILE` path, reapplies the frozen
+launch overlays, and constructs candidate model, safety, prompt, workspace,
+tool, compaction, and context-policy providers before touching the live graph.
+Stable manifest IDs and a content-derived revision drive one awaited AppBoot
+transaction. Parse, validation, provider construction, activation, or rollback
+errors are durably reported by the command while the last-known-good graph is
+retained whenever compensation succeeds. The active session store and resolved
+persistence directory cannot change mid-process; restart to change them.
+
+Command admission requires no open model turn and the interactive adapter is a
+single writer. Once reconciliation begins, reload uses admission-only
+cancellation so commit or rollback reaches a settled state. There is no file
+watcher: edits remain inert until the human invokes `/reload`.
 
 The interactive channel also owns the one-shot approval prompt. Yes grants the
 exact request once, any other answer rejects it, EOF cancels it, and prompt
@@ -155,6 +172,6 @@ No capacity or token count is guessed from a model name.
 Traces expose successful `model/info` resolution and safe `model/info-error`
 failures without including credentials.
 
-Profile hot reload, touch-driven nested instruction scope after filesystem tool
-calls, cross-process writer locking, parallel tool execution, and provider
-replacement during a running turn remain future work.
+Automatic profile watching, touch-driven nested instruction scope after
+filesystem tool calls, cross-process writer locking, parallel tool execution,
+and provider replacement during a running turn remain future work.

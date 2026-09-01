@@ -1,5 +1,6 @@
+import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
-import { dirname, resolve } from 'node:path'
+import { basename, dirname, resolve } from 'node:path'
 import { AgentLoop } from '@deepseek-cordis/agent-loop'
 import { AppBoot, type ManifestEntry } from '@deepseek-cordis/app-boot'
 import {
@@ -8,7 +9,7 @@ import {
   UnavailableApprovalService,
 } from '@deepseek-cordis/approval'
 import { createCompactCommand, createInspectCommand } from '@deepseek-cordis/command-session'
-import { InMemoryCommandRegistry } from '@deepseek-cordis/commands'
+import { type CommandDefinition, InMemoryCommandRegistry } from '@deepseek-cordis/commands'
 import {
   ModelSummaryAdapter,
   SessionCompactor,
@@ -289,6 +290,8 @@ function manifestFor(
   approval: ApprovalService,
   sandbox: ToolSandbox,
   workspaceInstructions?: NodeWorkspaceInstructions,
+  profileRevision = 'profile:1',
+  reload?: CommandDefinition['handler'],
 ): readonly ManifestEntry[] {
   const tools = createToolRegistryPlugin()
   const commands = createCommandRegistryPlugin(new InMemoryCommandRegistry())
@@ -305,7 +308,7 @@ function manifestFor(
     text: profile.prompt.persona ?? '',
   })
   return [
-    { id: 'loop', revision: 'v1', load: () => loop.plugin },
+    { id: 'loop', revision: profileRevision, load: () => loop.plugin },
     {
       id: 'add',
       revision: 'v1',
@@ -341,9 +344,17 @@ function manifestFor(
     })),
     { id: 'sessions', revision: 'v1', load: () => sessions.plugin },
     { id: 'tools', revision: 'v1', load: () => tools.plugin },
-    { id: 'model', revision: 'v1', load: () => modelPlugin.plugin },
-    { id: 'approval', revision: 'v1', load: () => createApprovalServicePlugin(approval).plugin },
-    { id: 'sandbox', revision: 'v1', load: () => createSandboxPlugin(sandbox).plugin },
+    { id: 'model', revision: profileRevision, load: () => modelPlugin.plugin },
+    {
+      id: 'approval',
+      revision: profileRevision,
+      load: () => createApprovalServicePlugin(approval).plugin,
+    },
+    {
+      id: 'sandbox',
+      revision: profileRevision,
+      load: () => createSandboxPlugin(sandbox).plugin,
+    },
     { id: 'system-prompt', revision: 'v1', load: () => systemPrompt.plugin },
     {
       id: 'prompt-identity',
@@ -353,7 +364,7 @@ function manifestFor(
     },
     {
       id: 'prompt-persona',
-      revision: 'v1',
+      revision: profileRevision,
       enabled: profile.prompt.persona !== undefined,
       load: () => createPromptSectionPlugin(personaSection),
     },
@@ -365,12 +376,12 @@ function manifestFor(
     },
     {
       id: 'prompt-workspace-instructions',
-      revision: 'v1',
+      revision: profileRevision,
       enabled: workspaceInstructions !== undefined,
       load: () =>
         createPromptSectionPlugin(createWorkspaceInstructionsSection(workspaceInstructions!)),
     },
-    { id: 'compaction', revision: 'v1', load: () => compaction.plugin },
+    { id: 'compaction', revision: profileRevision, load: () => compaction.plugin },
     { id: 'token-meter', revision: 'v1', load: () => tokenMeter.plugin },
     { id: 'commands', revision: 'v1', load: () => commands.plugin },
     {
@@ -380,8 +391,20 @@ function manifestFor(
     },
     {
       id: 'command-compact',
-      revision: 'v1',
+      revision: profileRevision,
       load: () => createCommandRegistrationPlugin(createCompactCommand(compactor)),
+    },
+    {
+      id: 'command-reload',
+      revision: 'v1',
+      enabled: reload !== undefined,
+      load: () =>
+        createCommandRegistrationPlugin({
+          name: 'reload',
+          description: 'Validate and apply the configured profile between turns',
+          cancellation: 'admission-only',
+          handler: reload!,
+        }),
     },
     {
       id: 'command-help',
@@ -418,9 +441,96 @@ function manifestFor(
 interface MountedCliRuntime {
   readonly boot: AppBoot
   readonly session: ReturnType<SessionStore['create']>
-  readonly model: ModelAdapter
-  readonly compactor: SessionCompactor
   close(): Promise<void>
+}
+
+interface CliRuntimeParts {
+  readonly innerModel: ModelAdapter
+  readonly createSummary: (model: ModelAdapter) => SummaryAdapter
+  readonly approval: ApprovalService
+}
+
+interface CliReloadOptions {
+  readonly loadConfiguration: () => ResolvedCliConfiguration
+  readonly createParts: (configuration: ResolvedCliConfiguration) => CliRuntimeParts
+}
+
+function profileFingerprint(configuration: ResolvedCliConfiguration): string {
+  return createHash('sha256')
+    .update(
+      JSON.stringify({
+        mode: configuration.mode,
+        model: configuration.model,
+        contextWindow: configuration.contextWindow ?? null,
+        workspaceRoot: configuration.workspaceRoot,
+        sessionDirectory: configuration.sessionDirectory ?? null,
+        profile: configuration.profile,
+      }),
+    )
+    .digest('hex')
+}
+
+function reloadError(error: unknown, profilePath?: string): Error {
+  const raw = error instanceof Error ? error.message : String(error)
+  const message =
+    profilePath === undefined ? raw : raw.replaceAll(profilePath, basename(profilePath))
+  return new Error(`profile reload rejected: ${message}`, { cause: error })
+}
+
+function runtimeManifest(
+  configuration: ResolvedCliConfiguration,
+  parts: CliRuntimeParts,
+  sessions: ReturnType<typeof createSessionStorePlugin>,
+  meter: TokenMeter,
+  trace: TraceSink,
+  revision: string,
+  reload?: CommandDefinition['handler'],
+): readonly ManifestEntry[] {
+  const workspaceEnabled = configuration.profile.tools.enabled.some((id) =>
+    id.startsWith('workspace.'),
+  )
+  const sandbox: ToolSandbox = workspaceEnabled
+    ? new WorkspaceFilesystemSandbox({
+        filesystem: new NodeWorkspaceFileSystem({
+          root: configuration.workspaceRoot,
+          maxFileBytes: configuration.profile.workspace.maxFileBytes,
+        }),
+      })
+    : new UnavailableToolSandbox()
+  const model = new TracingModelAdapter(parts.innerModel, trace)
+  const compactor = new SessionCompactor(parts.createSummary(model))
+  const policy = new ContextBudgetPolicy({
+    compactor,
+    meter,
+    thresholdRatio: configuration.profile.context.thresholdRatio,
+    retainTurns: configuration.profile.context.retainTurns,
+    maxOverflowRetries: configuration.profile.context.maxOverflowRetries,
+  })
+  const instructions = configuration.profile.instructions
+  const workspaceInstructions = instructions.enabled
+    ? new NodeWorkspaceInstructions({
+        workspaceRoot: configuration.workspaceRoot,
+        workingDirectory: resolve(configuration.workspaceRoot, instructions.directory),
+        maxBytes: instructions.maxBytes,
+        maxSourceBytes: instructions.maxSourceBytes,
+        projectRootMarkers: instructions.projectRootMarkers,
+        instructionFileCandidates: instructions.instructionFileCandidates,
+        localInstructionFileCandidates: instructions.localInstructionFileCandidates,
+      })
+    : undefined
+  return manifestFor(
+    configuration.profile,
+    sessions,
+    model,
+    compactor,
+    meter,
+    policy,
+    parts.approval,
+    sandbox,
+    workspaceInstructions,
+    `profile:${revision}`,
+    reload,
+  )
 }
 
 async function mountCliRuntime(
@@ -429,51 +539,84 @@ async function mountCliRuntime(
   innerModel: ModelAdapter,
   createSummary: (model: ModelAdapter) => SummaryAdapter,
   approval: ApprovalService = new UnavailableApprovalService(),
+  reloadOptions?: CliReloadOptions,
 ): Promise<MountedCliRuntime> {
   const env = options.env ?? process.env
   const trace = options.trace ?? consoleTrace
   const boot = new AppBoot()
   const stopLifecycleTrace = traceRuntimeLifecycle(boot.context, trace)
   try {
-    const workspaceEnabled = configuration.profile.tools.enabled.some((id) =>
-      id.startsWith('workspace.'),
-    )
-    const sandbox: ToolSandbox = workspaceEnabled
-      ? new WorkspaceFilesystemSandbox({
-          filesystem: new NodeWorkspaceFileSystem({
-            root: configuration.workspaceRoot,
-            maxFileBytes: configuration.profile.workspace.maxFileBytes,
-          }),
-        })
-      : new UnavailableToolSandbox()
     const sessionStore: SessionStore = configuration.sessionDirectory
       ? new FileSessionStore({ directory: configuration.sessionDirectory })
       : new InMemorySessionStore()
     const tracedSessions = new TracingSessionStore(trace, sessionStore)
     const sessions = createSessionStorePlugin(tracedSessions)
-    const model = new TracingModelAdapter(innerModel, trace)
-    const compactor = new SessionCompactor(createSummary(model))
     const meter = new TokenMeter()
-    const policy = new ContextBudgetPolicy({
-      compactor,
-      meter,
-      thresholdRatio: configuration.profile.context.thresholdRatio,
-      retainTurns: configuration.profile.context.retainTurns,
-      maxOverflowRetries: configuration.profile.context.maxOverflowRetries,
-    })
     const sessionId = options.sessionId ?? env.HARNESS_SESSION_ID ?? `cli-${Date.now()}`
     const existingSession = tracedSessions.get(sessionId)
-    const instructions = configuration.profile.instructions
-    const workspaceInstructions = instructions.enabled
-      ? new NodeWorkspaceInstructions({
-          workspaceRoot: configuration.workspaceRoot,
-          workingDirectory: resolve(configuration.workspaceRoot, instructions.directory),
-          maxBytes: instructions.maxBytes,
-          maxSourceBytes: instructions.maxSourceBytes,
-          projectRootMarkers: instructions.projectRootMarkers,
-          instructionFileCandidates: instructions.instructionFileCandidates,
-          localInstructionFileCandidates: instructions.localInstructionFileCandidates,
-        })
+    let currentConfiguration = configuration
+    let currentFingerprint = profileFingerprint(configuration)
+    const reload: CommandDefinition['handler'] | undefined = reloadOptions
+      ? async ({ rawInput, signal }) => {
+          if (rawInput.trim().length > 0) throw new Error('reload does not accept arguments')
+          signal?.throwIfAborted()
+          trace('cli/reload', { status: 'started', profile: currentConfiguration.profile.name })
+          let reconciliationStarted = false
+          try {
+            const nextConfiguration = reloadOptions.loadConfiguration()
+            signal?.throwIfAborted()
+            if (nextConfiguration.sessionDirectory !== currentConfiguration.sessionDirectory) {
+              throw new Error('persistence cannot change while a session is mounted')
+            }
+            const nextFingerprint = profileFingerprint(nextConfiguration)
+            if (nextFingerprint === currentFingerprint) {
+              trace('cli/reload', {
+                status: 'unchanged',
+                profile: currentConfiguration.profile.name,
+              })
+              return {
+                kind: 'success',
+                text: `Profile ${JSON.stringify(currentConfiguration.profile.name)} is unchanged.`,
+              }
+            }
+            const nextParts = reloadOptions.createParts(nextConfiguration)
+            const nextManifest = runtimeManifest(
+              nextConfiguration,
+              nextParts,
+              sessions,
+              meter,
+              trace,
+              nextFingerprint,
+              reload,
+            )
+            signal?.throwIfAborted()
+            reconciliationStarted = true
+            const result = await boot.reconcile(nextManifest)
+            currentConfiguration = nextConfiguration
+            currentFingerprint = nextFingerprint
+            const changed = result.added.length + result.updated.length + result.removed.length
+            trace('cli/reload', {
+              status: 'applied',
+              profile: nextConfiguration.profile.name,
+              added: result.added,
+              updated: result.updated,
+              removed: result.removed,
+            })
+            return {
+              kind: 'success',
+              text: `Reloaded profile ${JSON.stringify(nextConfiguration.profile.name)}; ${changed} runtime ${changed === 1 ? 'entry' : 'entries'} changed.`,
+            }
+          } catch (error) {
+            if (!reconciliationStarted) signal?.throwIfAborted()
+            const normalized = reloadError(error, currentConfiguration.profilePath)
+            trace('cli/reload', {
+              status: 'rejected',
+              profile: currentConfiguration.profile.name,
+              error: normalized.message,
+            })
+            throw normalized
+          }
+        }
       : undefined
 
     trace('cli/start', {
@@ -490,24 +633,20 @@ async function mountCliRuntime(
       resumed: existingSession !== undefined,
     })
     await boot.reconcile(
-      manifestFor(
-        configuration.profile,
+      runtimeManifest(
+        configuration,
+        { innerModel, createSummary, approval },
         sessions,
-        model,
-        compactor,
         meter,
-        policy,
-        approval,
-        sandbox,
-        workspaceInstructions,
+        trace,
+        currentFingerprint,
+        reload,
       ),
     )
     const session = existingSession ?? boot.context.sessions.create(sessionId)
     return {
       boot,
       session,
-      model,
-      compactor,
       async close() {
         await boot.dispose()
         stopLifecycleTrace()
@@ -522,7 +661,8 @@ async function mountCliRuntime(
 
 export async function runCli(options: RunCliOptions = {}): Promise<RunResult> {
   const argv = options.argv ?? process.argv.slice(2)
-  const env = options.env ?? process.env
+  const env = Object.freeze({ ...(options.env ?? process.env) })
+  const invocationOptions = { ...options, env }
   const trace = options.trace ?? consoleTrace
   const output = options.output ?? console.log
   const parsed = parseCliArguments(argv, env)
@@ -536,10 +676,10 @@ export async function runCli(options: RunCliOptions = {}): Promise<RunResult> {
     const innerModel =
       configuration.mode === 'replay'
         ? replayModel(configuration.input, configuration.contextWindow)
-        : openRouterModel(configuration, env, options, trace, configuration.contextWindow)
+        : openRouterModel(configuration, env, invocationOptions, trace, configuration.contextWindow)
     runtime = await mountCliRuntime(
       configuration,
-      options,
+      invocationOptions,
       innerModel,
       (model) =>
         new ModelSummaryAdapter(
@@ -583,15 +723,12 @@ export async function runInteractiveCli(
   options: InteractiveCliOptions,
 ): Promise<InteractiveCliResult> {
   const argv = options.argv ?? process.argv.slice(2)
-  const env = options.env ?? process.env
+  const env = Object.freeze({ ...(options.env ?? process.env) })
+  const invocationOptions = { ...options, env }
   const trace = options.trace ?? consoleTrace
   const output = options.output ?? console.log
   const parsed = parseCliArguments(argv, env)
   const configuration = resolveCliConfiguration({ ...parsed, interactive: true }, env)
-  const innerModel =
-    configuration.mode === 'replay'
-      ? new InteractiveReplayModelAdapter(configuration.contextWindow)
-      : openRouterModel(configuration, env, options, trace, configuration.contextWindow)
   const promptApproval: ApprovalPrompt =
     options.approve ??
     (async (request) => {
@@ -602,23 +739,41 @@ export async function runInteractiveCli(
       if (answer === undefined) return undefined
       return /^(?:y|yes)$/i.test(answer.trim())
     })
-  const approval =
-    configuration.profile.approval.default === 'ask'
-      ? new InteractiveApprovalService(promptApproval)
-      : new DenyApprovalService()
-  let runtime: MountedCliRuntime | undefined
-  try {
-    runtime = await mountCliRuntime(
-      configuration,
-      options,
-      innerModel,
-      configuration.mode === 'replay'
+  const createParts = (candidate: ResolvedCliConfiguration): CliRuntimeParts => ({
+    innerModel:
+      candidate.mode === 'replay'
+        ? new InteractiveReplayModelAdapter(candidate.contextWindow)
+        : openRouterModel(candidate, env, invocationOptions, trace, candidate.contextWindow),
+    createSummary:
+      candidate.mode === 'replay'
         ? () => ({
             id: 'replay:interactive-summary',
             summarize: async () => 'Earlier conversation compacted for replay.',
           })
         : (model) => new ModelSummaryAdapter(model),
-      approval,
+    approval:
+      candidate.profile.approval.default === 'ask'
+        ? new InteractiveApprovalService(promptApproval)
+        : new DenyApprovalService(),
+  })
+  const initialParts = createParts(configuration)
+  let runtime: MountedCliRuntime | undefined
+  try {
+    runtime = await mountCliRuntime(
+      configuration,
+      invocationOptions,
+      initialParts.innerModel,
+      initialParts.createSummary,
+      initialParts.approval,
+      {
+        loadConfiguration() {
+          if (configuration.profilePath === undefined) {
+            throw new Error('reload requires a profile selected by --profile or HARNESS_PROFILE')
+          }
+          return resolveCliConfiguration({ ...parsed, interactive: true }, env)
+        },
+        createParts,
+      },
     )
     while (!options.signal?.aborted) {
       const line = await options.readLine('> ')
