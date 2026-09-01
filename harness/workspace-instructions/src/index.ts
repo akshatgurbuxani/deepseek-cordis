@@ -1,4 +1,4 @@
-import { constants } from 'node:fs'
+import { constants, type Stats } from 'node:fs'
 import { lstat, open, realpath } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
@@ -159,7 +159,7 @@ function directoryChain(root: string, leaf: string): readonly string[] {
   return chain.reverse()
 }
 
-function sameFile(before: Awaited<ReturnType<typeof lstat>>, after: typeof before): boolean {
+function sameFile(before: Stats, after: Stats): boolean {
   return (
     before.dev === after.dev &&
     before.ino === after.ino &&
@@ -194,26 +194,16 @@ async function readCandidate(
   signal?: AbortSignal,
 ): Promise<WorkspaceInstructionSource | WorkspaceInstructionOmission | undefined> {
   signal?.throwIfAborted()
-  let before: Awaited<ReturnType<typeof lstat>>
-  try {
-    before = await lstat(filename)
-  } catch (error) {
-    signal?.throwIfAborted()
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
-    return { path: displayPath, reason: 'unavailable' }
-  }
-  signal?.throwIfAborted()
-  if (before.isSymbolicLink()) return { path: displayPath, reason: 'symbolic-link' }
-  if (!before.isFile()) return { path: displayPath, reason: 'not-regular-file' }
-  if (before.size > maxSourceBytes) return { path: displayPath, reason: 'source-budget' }
-
   let handle: Awaited<ReturnType<typeof open>> | undefined
   try {
-    handle = await open(filename, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0))
-    const opened = await handle.stat()
-    if (!sameFile(before, opened)) {
-      return { path: displayPath, reason: 'changed-during-read' }
+    if (typeof constants.O_NOFOLLOW !== 'number') {
+      return { path: displayPath, reason: 'unavailable' }
     }
+    handle = await open(filename, constants.O_RDONLY | constants.O_NOFOLLOW)
+    const opened = await handle.stat()
+    signal?.throwIfAborted()
+    if (!opened.isFile()) return { path: displayPath, reason: 'not-regular-file' }
+    if (opened.size > maxSourceBytes) return { path: displayPath, reason: 'source-budget' }
     const { bytes, exceeded } = await readBounded(handle, maxSourceBytes, signal)
     signal?.throwIfAborted()
     if (exceeded) return { path: displayPath, reason: 'source-budget' }
@@ -231,9 +221,10 @@ async function readCandidate(
     return { path: displayPath, bytes: bytes.byteLength, content }
   } catch (error) {
     signal?.throwIfAborted()
-    if (['ENOENT', 'ELOOP'].includes((error as NodeJS.ErrnoException).code ?? '')) {
-      return { path: displayPath, reason: 'changed-during-read' }
-    }
+    const code = (error as NodeJS.ErrnoException).code
+    if (code === 'ENOENT') return undefined
+    if (code === 'ELOOP') return { path: displayPath, reason: 'symbolic-link' }
+    if (code === 'EISDIR') return { path: displayPath, reason: 'not-regular-file' }
     return { path: displayPath, reason: 'unavailable' }
   } finally {
     await handle?.close()
