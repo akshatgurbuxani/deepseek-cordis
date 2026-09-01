@@ -25,7 +25,8 @@ npm run cli -- --profile ./harness-profile.json "inspect the workspace"
 ```
 
 Profiles select the model provider and optional exact capacity, workspace root
-and size bound, memory or file persistence, exact visible tool IDs, prompt
+and size bound, guarded-process allowlist and budgets, memory or file
+persistence, exact visible tool IDs, prompt
 identity/persona/workspace guidance, ask-or-deny approval default, and context
 pressure settings. The separate `instructions` section controls bounded
 `AGENTS.md`/`CLAUDE.md` discovery without turning persona text into a file path.
@@ -33,7 +34,8 @@ Omitted sections receive explicit defaults. Unknown fields,
 unknown/duplicate tools, invalid bounds, incompatible provider fields, invalid
 JSON, and unsupported schema versions fail before `AppBoot` exists.
 Recognized tool IDs are `add`, `workspace.create`, `workspace.read`,
-`workspace.list`, `workspace.stat`, `workspace.write`, and `workspace.edit`.
+`workspace.list`, `workspace.stat`, `workspace.write`, `workspace.edit`, and
+`workspace.command`.
 Selections normalize to that stable presentation order.
 
 Relative workspace and persistence paths are resolved against the profile
@@ -117,6 +119,22 @@ session to stat or read the target first; an edit requires a content read and
 exactly one `oldText` match. Opaque versions reject stale mutations. Directory
 responses are capped at 200 entries and text operations at 1 MiB. These tools
 use the same exact-argument approval and durable audit path as create.
+
+`run_workspace_command` runs one profile-allowed executable with explicit
+arguments in `.` or another portable workspace-relative directory. It does not
+interpret shell syntax, accept stdin or environment arguments, detach
+background work, or expose an interactive terminal. The child environment
+keeps only selected launch values plus no-color/pager defaults; model-provider
+credentials are not inherited. Timeout and output limits come from the
+profile's `process` section, nonzero exits remain result data, and every call
+requires one-shot approval.
+
+The command provider reports `partial` enforcement. Its argv, executable-name,
+cwd, environment, lifecycle, and output controls are real, but an allowed
+program still has the host filesystem and network authority of the CLI. In
+particular, package managers and package scripts may execute further code. Use
+this provider only for trusted workspaces and inspect the exact approval
+arguments; full isolation remains a separate backend.
 
 By default, every request receives a deterministic system prompt: the harness
 identity followed by workspace guidance derived from the exact visible

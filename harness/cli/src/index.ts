@@ -26,6 +26,7 @@ import {
   createWorkspaceFilesystemTools,
   NodeWorkspaceFileSystem,
   WORKSPACE_EDIT_FILE_TOOL,
+  WORKSPACE_FILESYSTEM_PROFILE,
   WORKSPACE_FILESYSTEM_PROMPT_SECTION,
   WORKSPACE_LIST_DIRECTORY_TOOL,
   WORKSPACE_READ_FILE_TOOL,
@@ -36,6 +37,15 @@ import {
 import type { ModelAdapter } from '@deepseek-cordis/model'
 import { ReplayModelAdapter } from '@deepseek-cordis/model/testing'
 import { OpenRouterModelAdapter } from '@deepseek-cordis/model-openrouter'
+import {
+  commandEnvironment,
+  createWorkspaceCommandTool,
+  NodeWorkspaceProcessRunner,
+  WORKSPACE_COMMAND_PROFILE,
+  WORKSPACE_COMMAND_PROMPT_SECTION,
+  WORKSPACE_COMMAND_TOOL,
+  WorkspaceCommandSandbox,
+} from '@deepseek-cordis/process-workspace'
 import type { JsonValue, RunResult } from '@deepseek-cordis/protocol'
 import {
   createAgentLoopPlugin,
@@ -52,10 +62,15 @@ import {
   createToolRegistrationPlugin,
   createToolRegistryPlugin,
 } from '@deepseek-cordis/runtime-cordis'
-import { type ToolSandbox, UnavailableToolSandbox } from '@deepseek-cordis/sandbox'
+import {
+  ProfiledToolSandbox,
+  type ToolSandbox,
+  UnavailableToolSandbox,
+} from '@deepseek-cordis/sandbox'
 import {
   createWorkspaceFileTool,
   WORKSPACE_CREATE_FILE_TOOL,
+  WORKSPACE_WRITE_PROFILE,
 } from '@deepseek-cordis/sandbox-workspace'
 import { InMemorySessionStore, type SessionStore } from '@deepseek-cordis/session'
 import { FileSessionStore } from '@deepseek-cordis/session-file'
@@ -256,6 +271,7 @@ const workspaceToolIds = new Map<string, HarnessToolId>([
   [WORKSPACE_STAT_PATH_TOOL, 'workspace.stat'],
   [WORKSPACE_WRITE_FILE_TOOL, 'workspace.write'],
   [WORKSPACE_EDIT_FILE_TOOL, 'workspace.edit'],
+  [WORKSPACE_COMMAND_TOOL, 'workspace.command'],
 ])
 
 function openRouterModel(
@@ -301,6 +317,7 @@ function manifestFor(
   const tokenMeter = createTokenMeterPlugin(meter)
   const systemPrompt = createSystemPromptPlugin()
   const filesystemTools = createWorkspaceFilesystemTools()
+  const commandTool = createWorkspaceCommandTool()
   const enabledTools = new Set(profile.tools.enabled)
   const personaSection = Object.freeze({
     name: 'profile:persona',
@@ -342,6 +359,12 @@ function manifestFor(
       enabled: enabledTools.has(workspaceToolIds.get(definition.name)!),
       load: () => createToolRegistrationPlugin(definition),
     })),
+    {
+      id: WORKSPACE_COMMAND_TOOL,
+      revision: 'v1',
+      enabled: enabledTools.has('workspace.command'),
+      load: () => createToolRegistrationPlugin(commandTool),
+    },
     { id: 'sessions', revision: 'v1', load: () => sessions.plugin },
     { id: 'tools', revision: 'v1', load: () => tools.plugin },
     { id: 'model', revision: profileRevision, load: () => modelPlugin.plugin },
@@ -380,6 +403,12 @@ function manifestFor(
       enabled: workspaceInstructions !== undefined,
       load: () =>
         createPromptSectionPlugin(createWorkspaceInstructionsSection(workspaceInstructions!)),
+    },
+    {
+      id: 'prompt-workspace-command',
+      revision: 'v1',
+      enabled: profile.prompt.workspaceGuidance,
+      load: () => createPromptSectionPlugin(WORKSPACE_COMMAND_PROMPT_SECTION),
     },
     { id: 'compaction', revision: profileRevision, load: () => compaction.plugin },
     { id: 'token-meter', revision: 'v1', load: () => tokenMeter.plugin },
@@ -483,20 +512,43 @@ function runtimeManifest(
   sessions: ReturnType<typeof createSessionStorePlugin>,
   meter: TokenMeter,
   trace: TraceSink,
+  env: Readonly<Record<string, string | undefined>>,
   revision: string,
   reload?: CommandDefinition['handler'],
 ): readonly ManifestEntry[] {
-  const workspaceEnabled = configuration.profile.tools.enabled.some((id) =>
-    id.startsWith('workspace.'),
+  const filesystemEnabled = configuration.profile.tools.enabled.some(
+    (id) => id.startsWith('workspace.') && id !== 'workspace.command',
   )
-  const sandbox: ToolSandbox = workspaceEnabled
-    ? new WorkspaceFilesystemSandbox({
-        filesystem: new NodeWorkspaceFileSystem({
+  const routes = new Map<string, ToolSandbox>()
+  if (filesystemEnabled) {
+    const filesystemSandbox = new WorkspaceFilesystemSandbox({
+      filesystem: new NodeWorkspaceFileSystem({
+        root: configuration.workspaceRoot,
+        maxFileBytes: configuration.profile.workspace.maxFileBytes,
+      }),
+    })
+    routes.set(WORKSPACE_FILESYSTEM_PROFILE, filesystemSandbox)
+    routes.set(WORKSPACE_WRITE_PROFILE, filesystemSandbox)
+  }
+  if (configuration.profile.tools.enabled.includes('workspace.command')) {
+    const processProfile = configuration.profile.process
+    routes.set(
+      WORKSPACE_COMMAND_PROFILE,
+      new WorkspaceCommandSandbox({
+        runner: new NodeWorkspaceProcessRunner({
           root: configuration.workspaceRoot,
-          maxFileBytes: configuration.profile.workspace.maxFileBytes,
+          allowedPrograms: processProfile.allowedPrograms,
+          environment: commandEnvironment(env),
+          maxOutputBytes: processProfile.maxOutputBytes,
+          killGraceMs: processProfile.killGraceMs,
         }),
-      })
-    : new UnavailableToolSandbox()
+        timeoutMs: processProfile.timeoutMs,
+        maxTimeoutMs: processProfile.maxTimeoutMs,
+      }),
+    )
+  }
+  const sandbox: ToolSandbox =
+    routes.size === 0 ? new UnavailableToolSandbox() : new ProfiledToolSandbox(routes)
   const model = new TracingModelAdapter(parts.innerModel, trace)
   const compactor = new SessionCompactor(parts.createSummary(model))
   const policy = new ContextBudgetPolicy({
@@ -586,6 +638,7 @@ async function mountCliRuntime(
               sessions,
               meter,
               trace,
+              env,
               nextFingerprint,
               reload,
             )
@@ -639,6 +692,7 @@ async function mountCliRuntime(
         sessions,
         meter,
         trace,
+        env,
         currentFingerprint,
         reload,
       ),

@@ -9,6 +9,8 @@
     { "path": "./harness/sandbox-workspace" },
     { "path": "./harness/filesystem" },
     { "path": "./harness/filesystem-workspace" },
+    { "path": "./harness/process" },
+    { "path": "./harness/process-workspace" },
     { "path": "./harness/system-prompt" },
     { "path": "./harness/workspace-instructions" },
     { "path": "./harness/configuration" },

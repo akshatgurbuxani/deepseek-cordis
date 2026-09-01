@@ -4,6 +4,13 @@ export const HARNESS_PROFILE_SCHEMA_VERSION = 1
 export const DEFAULT_PROFILE_NAME = 'default'
 export const DEFAULT_OPENROUTER_MODEL = 'openrouter/free'
 export const DEFAULT_WORKSPACE_MAX_FILE_BYTES = 1024 * 1024
+export const DEFAULT_ALLOWED_PROGRAMS = Object.freeze(['git', 'node', 'npm', 'npx', 'rg'] as const)
+export const DEFAULT_PROCESS_TIMEOUT_MS = 120_000
+export const DEFAULT_PROCESS_MAX_TIMEOUT_MS = 600_000
+export const DEFAULT_PROCESS_MAX_OUTPUT_BYTES = 64_000
+export const DEFAULT_PROCESS_KILL_GRACE_MS = 3_000
+export const MAX_PROCESS_TIMER_MS = 2_147_483_647
+export const MAX_PROCESS_OUTPUT_BYTES = 16 * 1024 * 1024
 export const DEFAULT_INSTRUCTION_MAX_BYTES = 65_536
 export const DEFAULT_INSTRUCTION_MAX_SOURCE_BYTES = 1024 * 1024
 export const DEFAULT_PROJECT_ROOT_MARKERS = Object.freeze(['.git'] as const)
@@ -24,6 +31,7 @@ export const HARNESS_TOOL_IDS = Object.freeze([
   'workspace.stat',
   'workspace.write',
   'workspace.edit',
+  'workspace.command',
 ] as const)
 
 export type HarnessToolId = (typeof HARNESS_TOOL_IDS)[number]
@@ -45,6 +53,14 @@ export interface WorkspaceProfile {
   /** Absolute or profile-file-relative directory. */
   readonly root: string
   readonly maxFileBytes: number
+}
+
+export interface ProcessProfile {
+  readonly allowedPrograms: readonly string[]
+  readonly timeoutMs: number
+  readonly maxTimeoutMs: number
+  readonly maxOutputBytes: number
+  readonly killGraceMs: number
 }
 
 export type PersistenceProfile =
@@ -88,6 +104,7 @@ export interface HarnessProfile {
   readonly name: string
   readonly model: ProfileModel
   readonly workspace: WorkspaceProfile
+  readonly process: ProcessProfile
   readonly persistence: PersistenceProfile
   readonly tools: ToolsProfile
   readonly prompt: PromptProfile
@@ -242,6 +259,74 @@ function workspace(value: unknown, source: string): WorkspaceProfile {
       source,
       'workspace.maxFileBytes',
     ),
+  }
+}
+
+function processProfile(value: unknown, source: string): ProcessProfile {
+  if (value === undefined) {
+    return {
+      allowedPrograms: [...DEFAULT_ALLOWED_PROGRAMS],
+      timeoutMs: DEFAULT_PROCESS_TIMEOUT_MS,
+      maxTimeoutMs: DEFAULT_PROCESS_MAX_TIMEOUT_MS,
+      maxOutputBytes: DEFAULT_PROCESS_MAX_OUTPUT_BYTES,
+      killGraceMs: DEFAULT_PROCESS_KILL_GRACE_MS,
+    }
+  }
+  const candidate = object(value, source, 'process')
+  exactKeys(
+    candidate,
+    ['allowedPrograms', 'timeoutMs', 'maxTimeoutMs', 'maxOutputBytes', 'killGraceMs'],
+    source,
+    'process',
+  )
+  const allowedPrograms = pathComponents(
+    candidate.allowedPrograms,
+    DEFAULT_ALLOWED_PROGRAMS,
+    source,
+    'process.allowedPrograms',
+  )
+  if (allowedPrograms.length === 0) fail(source, 'process.allowedPrograms must not be empty')
+  const timeoutMs = positiveInteger(
+    candidate.timeoutMs,
+    DEFAULT_PROCESS_TIMEOUT_MS,
+    source,
+    'process.timeoutMs',
+  )
+  const maxTimeoutMs = positiveInteger(
+    candidate.maxTimeoutMs,
+    DEFAULT_PROCESS_MAX_TIMEOUT_MS,
+    source,
+    'process.maxTimeoutMs',
+  )
+  if (maxTimeoutMs > MAX_PROCESS_TIMER_MS) {
+    fail(source, `process.maxTimeoutMs must not exceed ${MAX_PROCESS_TIMER_MS}`)
+  }
+  if (timeoutMs > maxTimeoutMs)
+    fail(source, 'process.timeoutMs must not exceed process.maxTimeoutMs')
+  const maxOutputBytes = positiveInteger(
+    candidate.maxOutputBytes,
+    DEFAULT_PROCESS_MAX_OUTPUT_BYTES,
+    source,
+    'process.maxOutputBytes',
+  )
+  if (maxOutputBytes > MAX_PROCESS_OUTPUT_BYTES) {
+    fail(source, `process.maxOutputBytes must not exceed ${MAX_PROCESS_OUTPUT_BYTES}`)
+  }
+  const killGraceMs = positiveInteger(
+    candidate.killGraceMs,
+    DEFAULT_PROCESS_KILL_GRACE_MS,
+    source,
+    'process.killGraceMs',
+  )
+  if (killGraceMs > MAX_PROCESS_TIMER_MS) {
+    fail(source, `process.killGraceMs must not exceed ${MAX_PROCESS_TIMER_MS}`)
+  }
+  return {
+    allowedPrograms,
+    timeoutMs,
+    maxTimeoutMs,
+    maxOutputBytes,
+    killGraceMs,
   }
 }
 
@@ -417,6 +502,7 @@ export function validateHarnessProfile(value: unknown, source = 'harness profile
       'name',
       'model',
       'workspace',
+      'process',
       'persistence',
       'tools',
       'prompt',
@@ -438,6 +524,7 @@ export function validateHarnessProfile(value: unknown, source = 'harness profile
         : nonEmptyString(candidate.name, source, 'name').trim(),
     model: model(candidate.model, source),
     workspace: workspace(candidate.workspace, source),
+    process: processProfile(candidate.process, source),
     persistence: persistence(candidate.persistence, source),
     tools: tools(candidate.tools, source),
     prompt: prompt(candidate.prompt, source),

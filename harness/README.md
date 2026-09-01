@@ -47,6 +47,8 @@ system-prompt       ──> protocol
 workspace-instructions──> system-prompt + protocol
 configuration       ──> protocol
 filesystem-workspace──> filesystem + sandbox + system-prompt + tools + protocol
+process             ──> (provider-neutral contract)
+process-workspace   ──> process + sandbox + system-prompt + tools + protocol
 commands            ──> session + protocol
 command-session     ──> commands + compaction + session
 tools               ──> protocol + approval + sandbox
@@ -122,6 +124,17 @@ tools, sandbox, or Cordis. `filesystem-workspace` is the selected Node provider
 and model-facing exact-call adapter. It confines portable relative paths to a
 real workspace root, rejects symbolic-link traversal, and reports partial
 enforcement honestly.
+
+### `process` and `process-workspace`
+
+`process` owns the provider-neutral request, result, output, and error contracts
+for foreground executable-plus-argv work. `process-workspace` supplies the Node
+provider, exact consequential-tool lease, and tool-specific prompt guidance. It
+allows only configured executable names, confines the selected working
+directory to non-symlink workspace paths, scrubs the child environment, bounds
+time and output, and terminates process groups. It reports partial enforcement
+because allowed programs retain the harness process's host and network
+authority.
 
 ### `system-prompt`
 
@@ -1274,12 +1287,76 @@ tracing, and end-to-end tests proving live persona/tool replacement, unchanged
 no-ops, validation rejection, incompatible persistence rejection, provider
 preflight failure, and continued use of the last-known-good model graph.
 
+### Feature 21 — guarded workspace command execution
+
+Feature 21 closes the largest gap between a file-editing demonstration and a
+usable coding harness: the agent can run focused inspection, build, lint, and
+test commands. `@deepseek-cordis/process` defines Cordis-free foreground
+process contracts. `@deepseek-cordis/process-workspace` owns the Node runner,
+the `run_workspace_command` consequential definition, its exact sandbox lease,
+and dynamic model guidance.
+
+The model supplies `program`, `args`, optional workspace-relative `cwd`, and an
+optional bounded timeout. The harness never passes model text to a shell. The
+configured executable allowlist defaults to `git`, `node`, `npm`, `npx`, and
+`rg`; arguments have count, per-entry, and aggregate byte bounds. Working
+directories reject absolute paths, parent traversal, and every symbolic-link
+component. Stdin is EOF, execution is foreground-only, and model-controlled
+environment variables are absent. The CLI constructs a small terminal-friendly
+environment from selected launch values and never forwards provider API keys.
+
+Each stream retains a bounded tail and reports truncation. Nonzero exits,
+signals, and command timeouts are returned as model-visible result facts rather
+than mislabeled infrastructure failures. Turn cancellation remains control
+flow. Timeout and cancellation terminate the process group with
+SIGTERM-to-SIGKILL escalation on POSIX and the available child-process
+equivalent on Windows. Spawn failures are normalized without host-path or
+environment disclosure.
+
+Every command crosses the existing one-shot approval and durable safety-audit
+pipeline. The sandbox package now routes exact profile names to independently
+replaceable providers, allowing filesystem and process capabilities to coexist
+without a permissive composite. Leases are exact, single-use, and idempotently
+disposable. Profile reload reconstructs process policy transactionally with
+the rest of the runtime graph.
+
+The provider deliberately reports `partial`. Structured argv removes shell
+interpolation at this boundary and cwd checks prevent accidental workspace
+escape, but an allowed executable can still read host paths, access the
+network, execute package scripts, or spawn descendants with inherited
+authority. The allowlist and approval are policy controls, not an OS sandbox.
+Full enforcement requires a platform isolation backend.
+
+#### Upstream motivation and adaptation boundary
+
+This feature was checked on September 2, 2026 against DeepSeek Harness
+`4e84901`, especially its
+[`bash-local executor`](https://github.com/deepseek-ai/DeepSeek-Harness/tree/4e84901e6471b79ec0338099867ebb4606d12bb5/packages/shell/bash-local),
+[`bash tool`](https://github.com/deepseek-ai/DeepSeek-Harness/tree/4e84901e6471b79ec0338099867ebb4606d12bb5/packages/shell/tool-bash),
+and
+[`bash sandbox`](https://github.com/deepseek-ai/DeepSeek-Harness/tree/4e84901e6471b79ec0338099867ebb4606d12bb5/packages/shell/bash-sandbox).
+The local design adopts fresh-process execution, explicit time/output budgets,
+process-group termination, credential scrubbing, result-level nonzero exits,
+and a separate confinement seam. It intentionally starts with structured argv,
+no background jobs, no persistent PTY, no spill files, and no escalation mode;
+those surfaces should not precede a stronger isolation backend and demonstrated
+workflow need.
+
+#### PR 21 result
+
+Introduced both process packages, profile-routed sandbox composition, explicit
+schema-V1 command policy, transactional CLI wiring, command-specific prompt
+guidance, direct lifecycle/confinement tests, and an end-to-end OpenRouter turn
+proving approval, execution, result delivery, and API-key scrubbing.
+
 ### Later milestones
 
-Feature 21 should add cross-process session writer coordination before parallel
-tools or subagents multiply contention. Parallel tools, subagents, attachments,
-scheduling, and UI remain later product layers; automatic config watching can
-be added when it owns an exact-path watcher and disposal/drain contract.
+The next reliability feature should add cross-process session writer
+coordination before parallel tools or subagents multiply contention. A
+platform-backed command sandbox is the next security milestone. Parallel tools,
+subagents, attachments, scheduling, and UI remain later product layers;
+automatic config watching can be added when it owns an exact-path watcher and
+disposal/drain contract.
 
 ## Promotion rules
 
