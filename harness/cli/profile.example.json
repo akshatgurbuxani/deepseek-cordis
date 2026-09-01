@@ -10,6 +10,13 @@
     "root": ".",
     "maxFileBytes": 1048576
   },
+  "process": {
+    "allowedPrograms": ["git", "node", "npm", "npx", "rg"],
+    "timeoutMs": 120000,
+    "maxTimeoutMs": 600000,
+    "maxOutputBytes": 64000,
+    "killGraceMs": 3000
+  },
   "persistence": {
     "kind": "file",
     "directory": ".sessions"
@@ -21,7 +28,8 @@
       "workspace.list",
       "workspace.stat",
       "workspace.write",
-      "workspace.edit"
+      "workspace.edit",
+      "workspace.command"
     ]
   },
   "prompt": {

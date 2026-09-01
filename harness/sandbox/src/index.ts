@@ -38,3 +38,33 @@ export class UnavailableToolSandbox implements ToolSandbox {
     return { ok: false, reason: 'no sandbox provider is available' }
   }
 }
+
+/** Route sandbox requests by their declared profile without weakening either provider. */
+export class ProfiledToolSandbox implements ToolSandbox {
+  readonly #providers: ReadonlyMap<string, ToolSandbox>
+
+  constructor(routes: Readonly<Record<string, ToolSandbox>> | ReadonlyMap<string, ToolSandbox>) {
+    const entries = routes instanceof Map ? [...routes] : Object.entries(routes)
+    const providers = new Map<string, ToolSandbox>()
+    for (const [profile, provider] of entries) {
+      if (profile.trim().length === 0) throw new Error('sandbox route profile must not be empty')
+      if (providers.has(profile)) {
+        throw new Error(`sandbox route ${JSON.stringify(profile)} is duplicated`)
+      }
+      providers.set(profile, provider)
+    }
+    this.#providers = providers
+  }
+
+  async prepare(request: SandboxRequest): Promise<SandboxPreparation> {
+    request.signal?.throwIfAborted()
+    const provider = this.#providers.get(request.profile)
+    if (!provider) {
+      return {
+        ok: false,
+        reason: `no sandbox provider is registered for profile ${JSON.stringify(request.profile)}`,
+      }
+    }
+    return provider.prepare(request)
+  }
+}

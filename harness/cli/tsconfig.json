@@ -23,11 +23,13 @@
     { "path": "../configuration" },
     { "path": "../context-budget" },
     { "path": "../filesystem-workspace" },
+    { "path": "../process-workspace" },
     { "path": "../token-meter" },
     { "path": "../model" },
     { "path": "../model-openrouter" },
     { "path": "../runtime-cordis" },
     { "path": "../sandbox-workspace" },
+    { "path": "../sandbox" },
     { "path": "../app-boot" }
   ]
 }

@@ -11,6 +11,8 @@
     "harness/sandbox-workspace",
     "harness/filesystem",
     "harness/filesystem-workspace",
+    "harness/process",
+    "harness/process-workspace",
     "harness/system-prompt",
     "harness/workspace-instructions",
     "harness/configuration",

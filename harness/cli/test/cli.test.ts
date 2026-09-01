@@ -141,6 +141,14 @@ test('the documented coding profile remains valid and complete', () => {
   assert.equal(configuration.model, 'openrouter/free')
   assert.equal(configuration.contextWindow, 128_000)
   assert.equal(configuration.profile.tools.enabled.includes('workspace.edit'), true)
+  assert.equal(configuration.profile.tools.enabled.includes('workspace.command'), true)
+  assert.deepEqual(configuration.profile.process.allowedPrograms, [
+    'git',
+    'node',
+    'npm',
+    'npx',
+    'rg',
+  ])
   assert.equal(configuration.profile.approval.default, 'ask')
 })
 
@@ -1203,6 +1211,88 @@ test('interactive live mode reads before an exact guarded workspace edit', async
   assert.match(approvals[0]!, /read_workspace_file/)
   assert.match(approvals[1]!, /edit_workspace_file/)
   assert.equal(completion, 3)
+})
+
+test('interactive live mode runs an approved argv command with a scrubbed environment', async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'deepseek-cordis-cli-command-'))
+  t.after(() => rmSync(directory, { recursive: true, force: true }))
+  const bodies: Array<Record<string, unknown>> = []
+  const fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    if (String(input).endsWith('/api/v1/models')) {
+      return new Response(
+        JSON.stringify({ data: [{ id: 'workspace/model', context_length: 64_000 }] }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      )
+    }
+    bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>)
+    return bodies.length === 1
+      ? sseResponse([
+          {
+            model: 'workspace/model',
+            choices: [
+              {
+                delta: {
+                  tool_calls: [
+                    {
+                      index: 0,
+                      id: 'command-call',
+                      type: 'function',
+                      function: {
+                        name: 'run_workspace_command',
+                        arguments: JSON.stringify({
+                          program: 'node',
+                          args: [
+                            '-e',
+                            'console.log(process.env.OPENROUTER_API_KEY ?? "environment-clean")',
+                          ],
+                        }),
+                      },
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        ])
+      : sseResponse([
+          {
+            model: 'workspace/model',
+            choices: [{ delta: { content: 'Command completed with a clean environment.' } }],
+          },
+        ])
+  }) as typeof globalThis.fetch
+  const lines = ['run the check', '/exit']
+  const approvals: string[] = []
+
+  const result = await runInteractiveCli({
+    argv: ['--interactive'],
+    env: {
+      OPENROUTER_API_KEY: 'must-not-reach-command',
+      OPENROUTER_MODEL: 'workspace/model',
+      HARNESS_WORKSPACE_ROOT: directory,
+      PATH: process.env.PATH,
+    },
+    fetch,
+    trace: () => undefined,
+    output: () => undefined,
+    readLine: (prompt) => {
+      if (prompt.startsWith('[approval]')) {
+        approvals.push(prompt)
+        return 'yes'
+      }
+      return lines.shift()
+    },
+    sessionId: 'workspace-command-cli',
+  })
+
+  assert.deepEqual(result, { sessionId: 'workspace-command-cli', turns: 1, commands: 1 })
+  assert.equal(approvals.length, 1)
+  assert.match(approvals[0]!, /run_workspace_command \(shell\)/)
+  const messages = bodies[1]?.messages as Array<Record<string, unknown>>
+  const toolMessage = messages.find((message) => message.role === 'tool')
+  assert.match(String(toolMessage?.content), /environment-clean/)
+  assert.equal(String(toolMessage?.content).includes('must-not-reach-command'), false)
+  assert.match(String((messages[0] as { content?: string }).content), /Workspace command policy/)
 })
 
 test('a deny-default profile never invokes the interactive approval channel', async (t) => {

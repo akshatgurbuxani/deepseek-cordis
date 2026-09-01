@@ -15,6 +15,13 @@ test('a minimal versioned profile expands to immutable explicit defaults', () =>
   assert.deepEqual(profile, DEFAULT_HARNESS_PROFILE)
   assert.deepEqual(profile.model, { provider: 'openrouter', id: 'openrouter/free' })
   assert.deepEqual(profile.persistence, { kind: 'memory' })
+  assert.deepEqual(profile.process, {
+    allowedPrograms: ['git', 'node', 'npm', 'npx', 'rg'],
+    timeoutMs: 120_000,
+    maxTimeoutMs: 600_000,
+    maxOutputBytes: 64_000,
+    killGraceMs: 3_000,
+  })
   assert.deepEqual(profile.tools.enabled, HARNESS_TOOL_IDS)
   assert.deepEqual(profile.prompt, { identity: true, workspaceGuidance: true })
   assert.deepEqual(profile.instructions, {
@@ -42,6 +49,13 @@ test('all profile choices normalize without retaining caller-owned structures', 
     name: 'coding',
     model: { provider: 'replay', contextWindow: 4096 },
     workspace: { root: './project', maxFileBytes: 2048 },
+    process: {
+      allowedPrograms: ['node', 'npm'],
+      timeoutMs: 5_000,
+      maxTimeoutMs: 10_000,
+      maxOutputBytes: 4_096,
+      killGraceMs: 100,
+    },
     persistence: { kind: 'file', directory: './sessions' },
     tools: { enabled: ['add', 'workspace.read', 'workspace.edit'] },
     prompt: { identity: false, workspaceGuidance: false, persona: '  Be precise.  ' },
@@ -66,6 +80,13 @@ test('all profile choices normalize without retaining caller-owned structures', 
     name: 'coding',
     model: { provider: 'replay', contextWindow: 4096 },
     workspace: { root: './project', maxFileBytes: 2048 },
+    process: {
+      allowedPrograms: ['node', 'npm'],
+      timeoutMs: 5_000,
+      maxTimeoutMs: 10_000,
+      maxOutputBytes: 4_096,
+      killGraceMs: 100,
+    },
     persistence: { kind: 'file', directory: './sessions' },
     tools: { enabled: ['add', 'workspace.read', 'workspace.edit'] },
     prompt: { identity: false, workspaceGuidance: false, persona: 'Be precise.' },
@@ -123,6 +144,13 @@ test('schema, objects, exact keys, and discriminated fields fail loud', () => {
 test('bounds, booleans, tools, and policy vocabulary are validated', () => {
   const invalid: readonly [unknown, RegExp][] = [
     [{ workspace: { maxFileBytes: 0 } }, /workspace\.maxFileBytes/],
+    [{ process: { allowedPrograms: [] } }, /must not be empty/],
+    [{ process: { allowedPrograms: ['bin/node'] } }, /one non-empty path component/],
+    [{ process: { timeoutMs: 100, maxTimeoutMs: 99 } }, /must not exceed/],
+    [{ process: { maxOutputBytes: 0 } }, /process\.maxOutputBytes/],
+    [{ process: { maxOutputBytes: 16_777_217 } }, /must not exceed/],
+    [{ process: { maxTimeoutMs: 2_147_483_648 } }, /must not exceed/],
+    [{ process: { killGraceMs: 2_147_483_648 } }, /must not exceed/],
     [{ model: { provider: 'openrouter', contextWindow: 1.5 } }, /model\.contextWindow/],
     [{ tools: { enabled: 'add' } }, /tools\.enabled must be an array/],
     [{ tools: { enabled: ['unknown'] } }, /not a recognized tool id/],
