@@ -336,6 +336,223 @@ test('interactive replay runs multiple turns and direct control commands', async
   )
 })
 
+test('interactive profile reload transactionally replaces runtime policy between turns', async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'deepseek-cordis-profile-reload-'))
+  t.after(() => {
+    rmSync(directory, { recursive: true, force: true })
+  })
+  const initial = {
+    schemaVersion: 1,
+    name: 'reloadable',
+    model: { provider: 'replay' },
+    workspace: { root: '.' },
+    persistence: { kind: 'memory' },
+    tools: { enabled: ['add'] },
+    prompt: { identity: false, workspaceGuidance: false, persona: 'Persona before reload.' },
+    instructions: { enabled: false },
+    approval: { default: 'deny' },
+  }
+  const filename = writeProfile(directory, initial)
+  const lines = ['add 1 and 2', '/reload', 'add 3 and 4', '/reload', '/exit']
+  const launchEnv = { HARNESS_CONTEXT_WINDOW: '4096' }
+  let prompt = 0
+  const output: string[] = []
+  const { records, trace } = recorder()
+
+  const result = await runInteractiveCli({
+    argv: ['--interactive', '--profile', filename],
+    env: launchEnv,
+    sessionId: 'profile-reload',
+    trace,
+    readLine: () => {
+      prompt += 1
+      if (prompt === 2) {
+        launchEnv.HARNESS_CONTEXT_WINDOW = '8192'
+        writeProfile(directory, {
+          ...initial,
+          tools: { enabled: ['add', 'workspace.read'] },
+          prompt: {
+            identity: false,
+            workspaceGuidance: false,
+            persona: 'Persona after reload.',
+          },
+          context: { thresholdRatio: 0.7, retainTurns: 2, maxOverflowRetries: 0 },
+        })
+      }
+      return lines.shift()
+    },
+    output: (content) => {
+      output.push(content)
+    },
+  })
+
+  assert.deepEqual(result, { sessionId: 'profile-reload', turns: 2, commands: 3 })
+  const requests = records
+    .filter(({ label }) => label === 'model/request')
+    .map(({ value }) => JSON.stringify(value))
+  assert.equal(requests.length, 4)
+  assert.ok(requests.slice(0, 2).every((request) => request.includes('Persona before reload.')))
+  assert.ok(requests.slice(2).every((request) => request.includes('Persona after reload.')))
+  assert.ok(requests.slice(0, 2).every((request) => !request.includes('read_workspace_file')))
+  assert.ok(requests.slice(2).every((request) => request.includes('read_workspace_file')))
+  const modelInfo = records.filter(({ label }) => label === 'model/info')
+  assert.ok(modelInfo.length > 0)
+  assert.ok(
+    modelInfo.every(({ value }) => (value as { contextWindow?: number }).contextWindow === 4096),
+  )
+  assert.match(output.join('\n'), /Reloaded profile "reloadable"; \d+ runtime entries changed\./)
+  assert.match(output.join('\n'), /Profile "reloadable" is unchanged\./)
+  assert.deepEqual(
+    records
+      .filter(({ label }) => label === 'cli/reload')
+      .map(({ value }) => (value as { status: string }).status),
+    ['started', 'applied', 'started', 'unchanged'],
+  )
+})
+
+test('invalid, incompatible, and unmountable reloads retain the last-known-good runtime', async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'deepseek-cordis-profile-reload-rejection-'))
+  t.after(() => {
+    rmSync(directory, { recursive: true, force: true })
+  })
+  const stable = {
+    schemaVersion: 1,
+    name: 'stable-profile',
+    model: { provider: 'replay' },
+    workspace: { root: '.' },
+    persistence: { kind: 'memory' },
+    tools: { enabled: ['add'] },
+    prompt: { identity: false, workspaceGuidance: false, persona: 'Stable persona.' },
+    instructions: { enabled: false },
+  }
+  const filename = writeProfile(directory, stable)
+  const missingWorkspace = join(directory, 'missing-workspace')
+  const lines = ['/reload', '/reload', '/reload', 'add 8 and 9', '/exit']
+  let prompt = 0
+  const output: string[] = []
+  const { records, trace } = recorder()
+
+  await runInteractiveCli({
+    argv: ['--interactive', '--profile', filename],
+    env: {},
+    sessionId: 'profile-reload-rejected',
+    trace,
+    readLine: () => {
+      prompt += 1
+      if (prompt === 1) writeFileSync(filename, '{ invalid')
+      if (prompt === 2) {
+        writeProfile(directory, {
+          ...stable,
+          persistence: { kind: 'file', directory: './new-sessions' },
+        })
+      }
+      if (prompt === 3) {
+        writeProfile(directory, {
+          ...stable,
+          workspace: { root: './missing-workspace' },
+          tools: { enabled: ['add', 'workspace.read'] },
+        })
+      }
+      return lines.shift()
+    },
+    output: (content) => {
+      output.push(content)
+    },
+  })
+
+  const text = output.join('\n')
+  assert.match(text, /profile reload rejected: profile\.json: invalid JSON/)
+  assert.match(text, /persistence cannot change while a session is mounted/)
+  assert.match(text, /workspace root does not exist or is inaccessible/)
+  assert.equal(text.includes(directory), false)
+  assert.equal(text.includes(missingWorkspace), false)
+  const requests = records.filter(({ label }) => label === 'model/request')
+  assert.equal(requests.length, 2)
+  assert.ok(requests.every(({ value }) => JSON.stringify(value).includes('Stable persona.')))
+  assert.deepEqual(
+    records
+      .filter(({ label }) => label === 'cli/reload')
+      .map(({ value }) => (value as { status: string }).status),
+    ['started', 'rejected', 'started', 'rejected', 'started', 'rejected'],
+  )
+})
+
+test('reload is an argument-free operator command and fails closed without a profile', async () => {
+  const output: string[] = []
+  const lines = ['/reload now', '/reload', '/exit']
+  const result = await runInteractiveCli({
+    argv: ['--interactive', '--replay'],
+    env: {},
+    sessionId: 'reload-without-profile',
+    trace: () => undefined,
+    readLine: () => lines.shift(),
+    output: (content) => {
+      output.push(content)
+    },
+  })
+
+  assert.deepEqual(result, { sessionId: 'reload-without-profile', turns: 0, commands: 3 })
+  assert.match(output.join('\n'), /reload does not accept arguments/)
+  assert.match(
+    output.join('\n'),
+    /reload requires a profile selected by --profile or HARNESS_PROFILE/,
+  )
+})
+
+test('reload settles its admitted transaction when cancellation arrives during reconciliation', async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'deepseek-cordis-profile-reload-cancel-'))
+  t.after(() => {
+    rmSync(directory, { recursive: true, force: true })
+  })
+  const profile = {
+    schemaVersion: 1,
+    name: 'atomic-reload',
+    model: { provider: 'replay' },
+    tools: { enabled: ['add'] },
+    prompt: { identity: false, workspaceGuidance: false, persona: 'Before.' },
+    instructions: { enabled: false },
+  }
+  const filename = writeProfile(directory, profile)
+  const controller = new AbortController()
+  const output: string[] = []
+  let reloadStarted = false
+  const trace: TraceSink = (label, value) => {
+    if (label === 'cli/reload' && (value as { status?: string }).status === 'started') {
+      reloadStarted = true
+    }
+    if (
+      reloadStarted &&
+      label === 'runtime/fiber' &&
+      (value as { to?: string }).to === 'UNLOADING'
+    ) {
+      controller.abort(new Error('cancel during reconciliation'))
+    }
+  }
+
+  const result = await runInteractiveCli({
+    argv: ['--interactive', '--profile', filename],
+    env: {},
+    sessionId: 'atomic-reload',
+    signal: controller.signal,
+    trace,
+    readLine: () => {
+      writeProfile(directory, {
+        ...profile,
+        prompt: { identity: false, workspaceGuidance: false, persona: 'After.' },
+      })
+      return '/reload'
+    },
+    output: (content) => {
+      output.push(content)
+    },
+  })
+
+  assert.equal(controller.signal.aborted, true)
+  assert.deepEqual(result, { sessionId: 'atomic-reload', turns: 0, commands: 1 })
+  assert.match(output.join('\n'), /Reloaded profile "atomic-reload"/)
+  assert.doesNotMatch(output.join('\n'), /command cancelled/)
+})
+
 test('interactive approval maps channel answers and fails closed', async () => {
   const request = {
     sessionId: 'session',

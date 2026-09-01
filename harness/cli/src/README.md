@@ -40,6 +40,12 @@ final content. The process entry point maps `SIGINT` to a runtime-only
 listener. Success, model failure, cancellation, configuration failure after
 mounting, and tool failure therefore share the same cleanup path.
 
+Interactive profile reload preserves the session store, command/tool/prompt
+registries, and token meter. It prepares a detached candidate graph, hashes the
+effective safe configuration into manifest revisions, and reconciles only from
+the idle `/reload` command. The controller commits its new profile identity only
+after AppBoot settles; rejected candidates retain the prior profile and graph.
+
 Tracing wraps public session and model contracts. It records session events,
 normalized requests, stream chunks and responses, OpenRouter diagnostics, and
 fiber state changes. It never receives the provider options, API key, HTTP

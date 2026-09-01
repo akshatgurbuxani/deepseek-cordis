@@ -58,6 +58,15 @@ test('registrations are immutable, discoverable, unique, and reversibly owned', 
       }),
     /empty description/,
   )
+  assert.throws(
+    () =>
+      registry.register({
+        ...echoCommand(),
+        name: 'policy',
+        cancellation: 'invalid' as never,
+      }),
+    /invalid cancellation policy/,
+  )
 
   dispose()
   dispose()
@@ -172,4 +181,37 @@ test('command admission excludes open turns and concurrent session commands', as
   release()
   assert.equal((await first)?.result.kind, 'success')
   assert.equal(session.events.filter((event) => event.type === 'command/done').length, 1)
+})
+
+test('admission-only commands finish an atomic commit after in-flight cancellation', async () => {
+  const registry = new InMemoryCommandRegistry()
+  const cooperative = new AbortController()
+  const atomic = new AbortController()
+  registry.register({
+    name: 'cooperative',
+    description: 'Cooperative cancellation',
+    handler: () => {
+      cooperative.abort(new Error('cancel cooperative'))
+      return { kind: 'success', text: 'not committed' }
+    },
+  })
+  registry.register({
+    name: 'atomic',
+    description: 'Admission-only cancellation',
+    cancellation: 'admission-only',
+    handler: () => {
+      atomic.abort(new Error('cancel after commit starts'))
+      return { kind: 'success', text: 'committed' }
+    },
+  })
+  const session = new InMemorySession('atomic-command')
+
+  assert.deepEqual(
+    (await registry.execute(session, '/cooperative', { signal: cooperative.signal }))?.result,
+    { kind: 'error', text: 'command cancelled' },
+  )
+  assert.deepEqual(
+    (await registry.execute(session, '/atomic', { signal: atomic.signal }))?.result,
+    { kind: 'success', text: 'committed' },
+  )
 })

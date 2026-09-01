@@ -1140,11 +1140,11 @@ records explicit policy rejection. Traces record only the profile name, source
 kind, selected tool IDs, and safe effective launch facts rather than copying the
 document or its paths wholesale.
 
-Profiles are startup-frozen. Invalid JSON, unsupported versions, invalid fields,
-and missing profile files fail before `AppBoot` construction, so no partial
-provider graph exists to clean up. Runtime profile watching and transactional
-policy replacement are deliberately deferred until an explicit safe-point
-contract exists for active turns.
+Profiles are validated and frozen per accepted generation. Invalid JSON,
+unsupported versions, invalid fields, and missing profile files fail before
+initial `AppBoot` construction, so no partial provider graph exists to clean up.
+Feature 20 adds explicit turn-boundary generation replacement; automatic file
+watching remains separate.
 
 #### Upstream motivation and adaptation boundary
 
@@ -1193,13 +1193,13 @@ chains add no prompt. Rendered source names are project-relative, repository
 text cannot close the package-owned frame, and symbolic-link instruction files
 are deliberately ignored rather than followed across the trust boundary.
 
-The provider has no watcher or shared cache. It performs a coherent stat/read/
-stat snapshot for each model step, so successful edits and removals appear on
-the next request while a file changing during its read is omitted. Cancellation
-remains control flow. Each single-session CLI runtime owns one immutable
-provider with normal Cordis disposal semantics; embeddings can use the
-system-prompt registry's exact session scopes. Tests mount distinct providers
-under two session IDs to prove content does not cross scopes.
+The provider has no watcher or shared cache. It performs one no-follow open and
+a coherent descriptor stat/read/stat snapshot for each model step, so edits and
+removals appear on the next request while a file changing during its read is
+omitted. Cancellation remains control flow. Each single-session CLI runtime
+owns one immutable provider with normal Cordis disposal semantics; embeddings
+can use the system-prompt registry's exact session scopes. Tests mount distinct
+providers under two session IDs to prove content does not cross scopes.
 
 Schema V1 gains a separate `instructions` object with explicit enablement,
 portable working directory, project markers, base/local candidate lists, and
@@ -1229,15 +1229,57 @@ and boundary enforcement, dynamic refresh, session-isolation tests, and a real
 two-step OpenRouter request proving an edited instruction reaches the next
 model step without leaking the host path.
 
+### Feature 20 — transactional runtime profile reload
+
+Feature 20 adds an explicit `/reload` operator command to the interactive CLI.
+It rereads the originally selected profile, validates and resolves it with the
+same frozen launch overlays, and prepares every candidate provider before one
+awaited AppBoot reconciliation. The profile's effective safe configuration is
+hashed into opaque revisions while manifest IDs remain stable. Unchanged
+profiles are true no-ops.
+
+Reload admission uses the command registry's existing no-open-turn and
+single-command checks. The new admission-only cancellation policy lets an
+already-started reconciliation reach commit or rollback instead of reporting a
+cancelled operation with indeterminate effects. The CLI commits its current
+profile identity only after AppBoot settles successfully. Parse, schema,
+compatibility, provider-construction, activation, and compensating rollback
+failures are surfaced through the durable command boundary and sanitized trace.
+
+Sessions and their store remain mounted throughout recomposition, as do the
+tool, command, and prompt registries and token meter. Model, approval, sandbox,
+agent loop/context policy, compactor, persona, workspace instructions, compact
+command, and enabled tool registrations can change. The effective persistence
+directory cannot change while a session is mounted; a process restart remains
+the honest migration boundary.
+
+#### Upstream motivation and adaptation boundary
+
+This feature was checked on September 2, 2026 against DeepSeek Harness
+`4e84901`, especially its
+[`config hot-reload resilience decision`](https://github.com/deepseek-ai/DeepSeek-Harness/blob/4e84901e6471b79ec0338099867ebb4606d12bb5/.agents/notes/implemented/bug-fix/2026-07-20-config-hot-reload-resilience.md)
+and
+[`manual reload command decision`](https://github.com/deepseek-ai/DeepSeek-Harness/blob/4e84901e6471b79ec0338099867ebb4606d12bb5/.agents/notes/archived/feature/2026-07-21-tui-reload-command.md).
+The local design adopts detached candidate validation, awaited compensation,
+idle-only operator control, serialized reloads, and last-known-good retention.
+It adapts those rules to this repository's typed JSON profile and existing
+stable-ID AppBoot instead of importing Loader, Include, YAML patches, or a file
+watcher.
+
+#### PR 20 result
+
+Introduced content-revisioned runtime composition, `/reload`, immutable
+persistence compatibility, admission-only command settlement, safe reload
+tracing, and end-to-end tests proving live persona/tool replacement, unchanged
+no-ops, validation rejection, incompatible persistence rejection, provider
+preflight failure, and continued use of the last-known-good model graph.
+
 ### Later milestones
 
-Feature 20 should make configuration replacement safe at runtime: parse a new
-profile off to the side, compile it to stable manifest identities, reconcile
-only between active turns, and retain the last-known-good graph on validation or
-mount failure. Cross-process session writer coordination should follow before
-parallel tools or subagents multiply contention. Parallel tools, subagents,
-attachments, scheduling, and UI remain later product layers rather than hidden
-extensions of workspace instructions.
+Feature 21 should add cross-process session writer coordination before parallel
+tools or subagents multiply contention. Parallel tools, subagents, attachments,
+scheduling, and UI remain later product layers; automatic config watching can
+be added when it owns an exact-path watcher and disposal/drain contract.
 
 ## Promotion rules
 

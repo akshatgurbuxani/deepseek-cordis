@@ -12,6 +12,8 @@ export interface CommandDefinition {
   readonly name: string
   readonly description: string
   readonly inputHint?: string
+  /** Admission-only commands settle an atomic effect even if cancellation arrives in flight. */
+  readonly cancellation?: 'cooperative' | 'admission-only'
   readonly handler: (invocation: CommandInvocation) => CommandResult | Promise<CommandResult>
 }
 
@@ -46,6 +48,7 @@ export interface CommandRegistry {
 
 interface RegisteredCommand {
   readonly descriptor: CommandDescriptor
+  readonly cancellation: NonNullable<CommandDefinition['cancellation']>
   readonly handler: CommandDefinition['handler']
 }
 
@@ -103,12 +106,23 @@ export class InMemoryCommandRegistry implements CommandRegistry {
     if (this.#commands.has(definition.name)) {
       throw new Error(`command ${JSON.stringify(definition.name)} is already registered`)
     }
+    if (
+      definition.cancellation !== undefined &&
+      definition.cancellation !== 'cooperative' &&
+      definition.cancellation !== 'admission-only'
+    ) {
+      throw new Error(`command ${JSON.stringify(definition.name)} has invalid cancellation policy`)
+    }
     const descriptor = snapshot({
       name: definition.name,
       description: definition.description,
       ...(definition.inputHint === undefined ? {} : { inputHint: definition.inputHint }),
     })
-    const registration = { descriptor, handler: definition.handler }
+    const registration = {
+      descriptor,
+      cancellation: definition.cancellation ?? 'cooperative',
+      handler: definition.handler,
+    }
     this.#commands.set(definition.name, registration)
     let disposed = false
     return () => {
@@ -179,7 +193,9 @@ export class InMemoryCommandRegistry implements CommandRegistry {
             session.events[result.sourceSequence - 1]?.type === 'command/done')
         )
           result = { kind: 'error', text: 'command returned an invalid source sequence' }
-        if (options.signal?.aborted) result = { kind: 'error', text: 'command cancelled' }
+        if (options.signal?.aborted && definition.cancellation === 'cooperative') {
+          result = { kind: 'error', text: 'command cancelled' }
+        }
       } catch (error) {
         result = {
           kind: 'error',
