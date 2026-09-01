@@ -207,6 +207,69 @@ test('a profile controls the exact model, tools, and assembled prompt', async (t
   assert.equal(JSON.stringify(records).includes('profile-secret'), false)
 })
 
+test('workspace instructions compose through the CLI and refresh between model steps', async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'deepseek-cordis-cli-instructions-'))
+  t.after(() => {
+    rmSync(directory, { recursive: true, force: true })
+  })
+  writeFileSync(join(directory, 'AGENTS.md'), 'Use instruction version one.')
+  const filename = writeProfile(directory, {
+    schemaVersion: 1,
+    name: 'workspace-instructions',
+    model: { provider: 'openrouter', id: 'profile/model', contextWindow: 64_000 },
+    workspace: { root: '.' },
+    tools: { enabled: ['add'] },
+    prompt: { identity: false, workspaceGuidance: false },
+    instructions: { enabled: true, maxBytes: 4096 },
+  })
+  const bodies: Array<Record<string, unknown>> = []
+  const fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+    bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>)
+    if (bodies.length === 1) {
+      writeFileSync(join(directory, 'AGENTS.md'), 'Use instruction version two.')
+      return sseResponse([
+        {
+          model: 'profile/model',
+          choices: [
+            {
+              delta: {
+                tool_calls: [
+                  {
+                    index: 0,
+                    id: 'instruction-add',
+                    type: 'function',
+                    function: { name: 'add', arguments: '{"a":2,"b":3}' },
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ])
+    }
+    return sseResponse([
+      { model: 'profile/model', choices: [{ delta: { content: 'The answer is 5.' } }] },
+    ])
+  }) as typeof globalThis.fetch
+
+  await runCli({
+    argv: ['--profile', filename, 'add 2 and 3'],
+    env: { OPENROUTER_API_KEY: 'instruction-secret' },
+    fetch,
+    trace: () => undefined,
+    output: () => undefined,
+    sessionId: 'workspace-instructions',
+  })
+
+  assert.equal(bodies.length, 2)
+  assert.match(JSON.stringify(bodies[0]?.messages), /Use instruction version one/)
+  assert.doesNotMatch(JSON.stringify(bodies[0]?.messages), /version two/)
+  assert.match(JSON.stringify(bodies[1]?.messages), /Use instruction version two/)
+  assert.doesNotMatch(JSON.stringify(bodies[1]?.messages), /version one/)
+  assert.equal(JSON.stringify(bodies).includes(directory), false)
+  assert.equal(JSON.stringify(bodies).includes('instruction-secret'), false)
+})
+
 test('profile-relative file persistence works while disabled workspace tools stay unconstructed', async (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'deepseek-cordis-profile-persistence-'))
   t.after(() => {

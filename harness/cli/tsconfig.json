@@ -18,6 +18,7 @@
     { "path": "../session" },
     { "path": "../session-file" },
     { "path": "../system-prompt" },
+    { "path": "../workspace-instructions" },
     { "path": "../compaction" },
     { "path": "../configuration" },
     { "path": "../context-budget" },

@@ -10,7 +10,10 @@ approval, sandbox, or Cordis behavior.
 Schema V1 selects the model provider and optional exact capacity, workspace
 root and file bound, memory or file persistence, exact visible tool IDs,
 identity/persona/workspace prompt sections, ask-or-deny approval default, and
-context-pressure policy. Paths remain unresolved strings; the launcher resolves
+context-pressure policy. Workspace-instruction discovery is configured separately
+from authored persona text: it selects the applicable subdirectory, candidate and
+local-overlay names, project markers, and explicit source/aggregate byte caps.
+Paths remain unresolved strings; the launcher resolves
 relative paths against the profile file rather than the process by accident.
 
 Profiles never contain credentials. Provider secrets remain launch-environment

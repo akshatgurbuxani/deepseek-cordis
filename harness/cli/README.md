@@ -27,7 +27,9 @@ npm run cli -- --profile ./harness-profile.json "inspect the workspace"
 Profiles select the model provider and optional exact capacity, workspace root
 and size bound, memory or file persistence, exact visible tool IDs, prompt
 identity/persona/workspace guidance, ask-or-deny approval default, and context
-pressure settings. Omitted sections receive explicit defaults. Unknown fields,
+pressure settings. The separate `instructions` section controls bounded
+`AGENTS.md`/`CLAUDE.md` discovery without turning persona text into a file path.
+Omitted sections receive explicit defaults. Unknown fields,
 unknown/duplicate tools, invalid bounds, incompatible provider fields, invalid
 JSON, and unsupported schema versions fail before `AppBoot` exists.
 Recognized tool IDs are `add`, `workspace.create`, `workspace.read`,
@@ -101,7 +103,12 @@ use the same exact-argument approval and durable audit path as create.
 
 By default, every request receives a deterministic system prompt: the harness
 identity followed by workspace guidance derived from the exact visible
-filesystem tool set. The guidance contains no absolute host path. Prompt
+filesystem tool set, followed by any applicable workspace instruction chain.
+The chain begins at the nearest configured project marker and ends at
+`instructions.directory`; base files precede local overlays and deeper guidance
+wins. It is reread on each model step, bounded per source and in aggregate, and
+contains relative provenance without an absolute host path. Symbolic-link
+instruction files are ignored at the workspace trust boundary. Prompt
 sections are Cordis effects, so provider replacement drains the loop and
 withdraws registrations before reconnection. Prompt cost participates in
 proactive context pressure and the exact rendered text accompanies successful
@@ -148,5 +155,6 @@ No capacity or token count is guessed from a model name.
 Traces expose successful `model/info` resolution and safe `model/info-error`
 failures without including credentials.
 
-Profile hot reload, cross-process writer locking, parallel tool execution, and
-provider replacement during a running turn remain future work.
+Profile hot reload, touch-driven nested instruction scope after filesystem tool
+calls, cross-process writer locking, parallel tool execution, and provider
+replacement during a running turn remain future work.

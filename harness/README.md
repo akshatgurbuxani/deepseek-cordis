@@ -44,6 +44,7 @@ sandbox             ──> protocol
 sandbox-workspace   ──> sandbox + tools + protocol
 filesystem          ──> (provider-neutral contract and policy)
 system-prompt       ──> protocol
+workspace-instructions──> system-prompt + protocol
 configuration       ──> protocol
 filesystem-workspace──> filesystem + sandbox + system-prompt + tools + protocol
 commands            ──> session + protocol
@@ -128,6 +129,14 @@ Owns provider-neutral ordered prompt registration and per-session shadowing.
 Dynamic sections receive exact request identity, visible tool schemas, and the
 turn signal; assembly returns one immutable prompt without importing a model
 adapter, the agent loop, concrete tools, or Cordis.
+
+### `workspace-instructions`
+
+Owns bounded Node discovery for `AGENTS.md`/`CLAUDE.md` project guidance and
+adapts each fresh snapshot into one dynamic system-prompt section. It discovers
+base and local-overlay candidates from a marked project root to the configured
+working directory, retains relative provenance, and prevents symbolic-link
+instruction files from crossing the explicit workspace boundary.
 
 ### `configuration`
 
@@ -1159,17 +1168,76 @@ pre-boot failure guarantees, backward-compatible launch overlays, and
 end-to-end verification across replay, OpenRouter, persistence, safety, and
 compaction.
 
+### Feature 18 — repository quality baseline
+
+Feature 18 standardized the repository gate around the pinned Node and Biome
+toolchain. Workspace registration is checked against TypeScript references,
+formatting and lint run through one root configuration, CI and CodeQL use the
+same clean-install build/typecheck/test surface, and dependency updates remain
+machine-reviewable. Product behavior was intentionally unchanged.
+
+### Feature 19 — bounded workspace instructions
+
+Feature 19 adds `@deepseek-cordis/workspace-instructions`, a Node-backed dynamic
+prompt contributor for `AGENTS.md`/`CLAUDE.md` project guidance. An explicit
+real workspace boundary contains a configured working directory. Discovery
+walks upward only to find the nearest configured project marker, then reads
+candidate files from that project root down to the working directory in
+broad-to-specific order. Base candidates precede additive local overlays, and
+trimmed sibling duplicates render once.
+
+Reads are bounded before publication. `maxSourceBytes` excludes an oversized
+source and `maxBytes` caps the complete UTF-8 section; aggregate pressure drops
+whole broad files before truncating the most-specific file. Empty or missing
+chains add no prompt. Rendered source names are project-relative, repository
+text cannot close the package-owned frame, and symbolic-link instruction files
+are deliberately ignored rather than followed across the trust boundary.
+
+The provider has no watcher or shared cache. It performs a coherent stat/read/
+stat snapshot for each model step, so successful edits and removals appear on
+the next request while a file changing during its read is omitted. Cancellation
+remains control flow. Each single-session CLI runtime owns one immutable
+provider with normal Cordis disposal semantics; embeddings can use the
+system-prompt registry's exact session scopes. Tests mount distinct providers
+under two session IDs to prove content does not cross scopes.
+
+Schema V1 gains a separate `instructions` object with explicit enablement,
+portable working directory, project markers, base/local candidate lists, and
+source/aggregate bounds. The separation is intentional: authored persona text
+stays text, configuration stays filesystem-free, and only the CLI constructs
+the concrete reader. The stable manifest entry composes it beside existing
+identity, persona, and tool-guidance contributors.
+
+#### Upstream motivation and adaptation boundary
+
+This feature was checked on September 2, 2026 against DeepSeek Harness
+`4e84901`, especially its
+[`agent-instructions package`](https://github.com/deepseek-ai/DeepSeek-Harness/blob/4e84901e6471b79ec0338099867ebb4606d12bb5/packages/context/agent-instructions/README.md).
+The local design adopts its project-chain precedence, base/local candidates,
+per-directory deduplication, explicit budgets, visible provenance, and
+refresh-without-a-watcher model. It adapts delivery to this repository's
+existing dynamic system-prompt seam instead of durable sourced user messages,
+and rejects final-component symlinks instead of allowing off-tree guidance.
+Touch-driven discovery of a newly visited nested scope is deferred until tool
+result observation carries a durable directory-scope contract.
+
+#### PR 19 result
+
+Introduced the new package and profile vocabulary, stable CLI composition,
+hierarchical discovery, byte-exact rendering, stale-file handling, cancellation
+and boundary enforcement, dynamic refresh, session-isolation tests, and a real
+two-step OpenRouter request proving an edited instruction reaches the next
+model step without leaking the host path.
+
 ### Later milestones
 
-Feature 18 can add bounded workspace instruction discovery (`AGENTS.md`-style
-project and local guidance) as a dynamic prompt contributor. It should define
-root discovery, precedence, byte caps, stale-file behavior, provenance, and
-session isolation without turning profile persona text into a filesystem
-loader.
-
-Profile hot reload, cross-process writer coordination, parallel tools,
-subagents, attachments, scheduling, and UI remain outside the first production
-milestone.
+Feature 20 should make configuration replacement safe at runtime: parse a new
+profile off to the side, compile it to stable manifest identities, reconcile
+only between active turns, and retain the last-known-good graph on validation or
+mount failure. Cross-process session writer coordination should follow before
+parallel tools or subagents multiply contention. Parallel tools, subagents,
+attachments, scheduling, and UI remain later product layers rather than hidden
+extensions of workspace instructions.
 
 ## Promotion rules
 

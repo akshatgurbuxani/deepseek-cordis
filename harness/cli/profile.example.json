@@ -29,6 +29,15 @@
     "workspaceGuidance": true,
     "persona": "Act as a careful coding agent. Inspect relevant files before editing."
   },
+  "instructions": {
+    "enabled": true,
+    "directory": ".",
+    "maxBytes": 65536,
+    "maxSourceBytes": 1048576,
+    "projectRootMarkers": [".git"],
+    "instructionFileCandidates": ["AGENTS.md", "CLAUDE.md"],
+    "localInstructionFileCandidates": ["AGENTS.local.md", "CLAUDE.local.md"]
+  },
   "approval": {
     "default": "ask"
   },
