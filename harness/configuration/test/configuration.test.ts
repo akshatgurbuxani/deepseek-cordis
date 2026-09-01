@@ -17,6 +17,15 @@ test('a minimal versioned profile expands to immutable explicit defaults', () =>
   assert.deepEqual(profile.persistence, { kind: 'memory' })
   assert.deepEqual(profile.tools.enabled, HARNESS_TOOL_IDS)
   assert.deepEqual(profile.prompt, { identity: true, workspaceGuidance: true })
+  assert.deepEqual(profile.instructions, {
+    enabled: true,
+    directory: '.',
+    maxBytes: 65_536,
+    maxSourceBytes: 1_048_576,
+    projectRootMarkers: ['.git'],
+    instructionFileCandidates: ['AGENTS.md', 'CLAUDE.md'],
+    localInstructionFileCandidates: ['AGENTS.local.md', 'CLAUDE.local.md'],
+  })
   assert.deepEqual(profile.approval, { default: 'ask' })
   assert.deepEqual(profile.context, {
     thresholdRatio: 0.8,
@@ -36,6 +45,15 @@ test('all profile choices normalize without retaining caller-owned structures', 
     persistence: { kind: 'file', directory: './sessions' },
     tools: { enabled: ['add', 'workspace.read', 'workspace.edit'] },
     prompt: { identity: false, workspaceGuidance: false, persona: '  Be precise.  ' },
+    instructions: {
+      enabled: true,
+      directory: 'packages/app',
+      maxBytes: 8192,
+      maxSourceBytes: 4096,
+      projectRootMarkers: ['.git', '.project'],
+      instructionFileCandidates: ['AGENTS.md'],
+      localInstructionFileCandidates: ['AGENTS.local.md'],
+    },
     approval: { default: 'deny' },
     context: { thresholdRatio: 0.65, retainTurns: 2, maxOverflowRetries: 0 },
   }
@@ -51,6 +69,15 @@ test('all profile choices normalize without retaining caller-owned structures', 
     persistence: { kind: 'file', directory: './sessions' },
     tools: { enabled: ['add', 'workspace.read', 'workspace.edit'] },
     prompt: { identity: false, workspaceGuidance: false, persona: 'Be precise.' },
+    instructions: {
+      enabled: true,
+      directory: 'packages/app',
+      maxBytes: 8192,
+      maxSourceBytes: 4096,
+      projectRootMarkers: ['.git', '.project'],
+      instructionFileCandidates: ['AGENTS.md'],
+      localInstructionFileCandidates: ['AGENTS.local.md'],
+    },
     approval: { default: 'deny' },
     context: { thresholdRatio: 0.65, retainTurns: 2, maxOverflowRetries: 0 },
   })
@@ -102,6 +129,18 @@ test('bounds, booleans, tools, and policy vocabulary are validated', () => {
     [{ tools: { enabled: ['add', 'add'] } }, /must not contain duplicates/],
     [{ prompt: { identity: 'yes' } }, /prompt\.identity must be a boolean/],
     [{ prompt: { persona: ' ' } }, /prompt\.persona must be a non-empty string/],
+    [{ instructions: { enabled: 'yes' } }, /instructions\.enabled must be a boolean/],
+    [{ instructions: { directory: '../outside' } }, /portable relative path/],
+    [{ instructions: { directory: './nested' } }, /portable relative path/],
+    [{ instructions: { directory: '/outside' } }, /portable relative path/],
+    [{ instructions: { maxBytes: -1 } }, /instructions\.maxBytes/],
+    [{ instructions: { maxSourceBytes: 1.5 } }, /instructions\.maxSourceBytes/],
+    [{ instructions: { projectRootMarkers: '.git' } }, /must be an array/],
+    [{ instructions: { instructionFileCandidates: ['a/b'] } }, /one non-empty path component/],
+    [
+      { instructions: { localInstructionFileCandidates: ['AGENTS.md', 'AGENTS.md'] } },
+      /must not contain duplicates/,
+    ],
     [{ approval: { default: 'allow' } }, /approval\.default/],
     [{ context: { thresholdRatio: 1 } }, /context\.thresholdRatio/],
     [{ context: { retainTurns: 0 } }, /context\.retainTurns/],

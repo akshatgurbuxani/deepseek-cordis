@@ -21,8 +21,9 @@ profile-owned enablement. The manifest deliberately lists the agent loop before
 its providers, demonstrating that Cordis keeps it pending until the traced
 session store, tool registry, selected tools, and traced model are available. A
 required prompt registry receives only the profile-selected identity, persona,
-and tool-aware workspace effects; the loop remains pending until the registry
-is active. When selected, the workspace adapter keeps observation/version
+tool-aware workspace effects, and bounded dynamic workspace instructions; the
+loop remains pending until the registry is active. When selected, the workspace
+adapter keeps observation/version
 state for the mounted runtime and executes both the generalized family and the
 compatible Feature 14 create-only schema through provider-owned leases.
 

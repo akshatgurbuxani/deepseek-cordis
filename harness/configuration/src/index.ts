@@ -4,6 +4,17 @@ export const HARNESS_PROFILE_SCHEMA_VERSION = 1
 export const DEFAULT_PROFILE_NAME = 'default'
 export const DEFAULT_OPENROUTER_MODEL = 'openrouter/free'
 export const DEFAULT_WORKSPACE_MAX_FILE_BYTES = 1024 * 1024
+export const DEFAULT_INSTRUCTION_MAX_BYTES = 65_536
+export const DEFAULT_INSTRUCTION_MAX_SOURCE_BYTES = 1024 * 1024
+export const DEFAULT_PROJECT_ROOT_MARKERS = Object.freeze(['.git'] as const)
+export const DEFAULT_INSTRUCTION_FILE_CANDIDATES = Object.freeze([
+  'AGENTS.md',
+  'CLAUDE.md',
+] as const)
+export const DEFAULT_LOCAL_INSTRUCTION_FILE_CANDIDATES = Object.freeze([
+  'AGENTS.local.md',
+  'CLAUDE.local.md',
+] as const)
 
 export const HARNESS_TOOL_IDS = Object.freeze([
   'add',
@@ -50,6 +61,17 @@ export interface PromptProfile {
   readonly persona?: string
 }
 
+export interface WorkspaceInstructionsProfile {
+  readonly enabled: boolean
+  /** Portable path below workspace.root whose instruction scope applies. */
+  readonly directory: string
+  readonly maxBytes: number
+  readonly maxSourceBytes: number
+  readonly projectRootMarkers: readonly string[]
+  readonly instructionFileCandidates: readonly string[]
+  readonly localInstructionFileCandidates: readonly string[]
+}
+
 export interface ApprovalProfile {
   /** Ask through an available interaction channel, otherwise deny. */
   readonly default: 'ask' | 'deny'
@@ -69,6 +91,7 @@ export interface HarnessProfile {
   readonly persistence: PersistenceProfile
   readonly tools: ToolsProfile
   readonly prompt: PromptProfile
+  readonly instructions: WorkspaceInstructionsProfile
   readonly approval: ApprovalProfile
   readonly context: ContextProfile
 }
@@ -108,6 +131,21 @@ function nonEmptyString(value: unknown, source: string, field: string): string {
   return value
 }
 
+function portableRelativePath(value: unknown, source: string, field: string): string {
+  const path = nonEmptyString(value, source, field)
+  const parts = path.split('/')
+  if (
+    path.startsWith('/') ||
+    path.includes('\0') ||
+    path.includes('\\') ||
+    /^[A-Za-z]:/.test(path) ||
+    parts.some((part) => part.length === 0 || part === '..' || (part === '.' && path !== '.'))
+  ) {
+    fail(source, `${field} must be a portable relative path without parent traversal`)
+  }
+  return path
+}
+
 function optionalBoolean(
   value: unknown,
   fallback: boolean,
@@ -131,6 +169,32 @@ function positiveInteger(
     fail(source, `${field} must be ${allowZero ? 'a non-negative' : 'a positive'} integer`)
   }
   return value as number
+}
+
+function pathComponents(
+  value: unknown,
+  fallback: readonly string[],
+  source: string,
+  field: string,
+): readonly string[] {
+  if (value === undefined) return [...fallback]
+  if (!Array.isArray(value)) fail(source, `${field} must be an array`)
+  const values = value.map((entry, index) => {
+    if (
+      typeof entry !== 'string' ||
+      entry.trim().length === 0 ||
+      entry === '.' ||
+      entry === '..' ||
+      entry.includes('\0') ||
+      entry.includes('/') ||
+      entry.includes('\\')
+    ) {
+      fail(source, `${field}[${index}] must be one non-empty path component`)
+    }
+    return entry
+  })
+  if (new Set(values).size !== values.length) fail(source, `${field} must not contain duplicates`)
+  return values
 }
 
 function model(value: unknown, source: string): ProfileModel {
@@ -238,6 +302,74 @@ function prompt(value: unknown, source: string): PromptProfile {
   }
 }
 
+function instructions(value: unknown, source: string): WorkspaceInstructionsProfile {
+  if (value === undefined) {
+    return {
+      enabled: true,
+      directory: '.',
+      maxBytes: DEFAULT_INSTRUCTION_MAX_BYTES,
+      maxSourceBytes: DEFAULT_INSTRUCTION_MAX_SOURCE_BYTES,
+      projectRootMarkers: [...DEFAULT_PROJECT_ROOT_MARKERS],
+      instructionFileCandidates: [...DEFAULT_INSTRUCTION_FILE_CANDIDATES],
+      localInstructionFileCandidates: [...DEFAULT_LOCAL_INSTRUCTION_FILE_CANDIDATES],
+    }
+  }
+  const candidate = object(value, source, 'instructions')
+  exactKeys(
+    candidate,
+    [
+      'enabled',
+      'directory',
+      'maxBytes',
+      'maxSourceBytes',
+      'projectRootMarkers',
+      'instructionFileCandidates',
+      'localInstructionFileCandidates',
+    ],
+    source,
+    'instructions',
+  )
+  return {
+    enabled: optionalBoolean(candidate.enabled, true, source, 'instructions.enabled'),
+    directory:
+      candidate.directory === undefined
+        ? '.'
+        : portableRelativePath(candidate.directory, source, 'instructions.directory'),
+    maxBytes: positiveInteger(
+      candidate.maxBytes,
+      DEFAULT_INSTRUCTION_MAX_BYTES,
+      source,
+      'instructions.maxBytes',
+      true,
+    ),
+    maxSourceBytes: positiveInteger(
+      candidate.maxSourceBytes,
+      DEFAULT_INSTRUCTION_MAX_SOURCE_BYTES,
+      source,
+      'instructions.maxSourceBytes',
+      true,
+    ),
+    projectRootMarkers: pathComponents(
+      candidate.projectRootMarkers,
+      DEFAULT_PROJECT_ROOT_MARKERS,
+      source,
+      'instructions.projectRootMarkers',
+    ),
+    instructionFileCandidates: pathComponents(
+      candidate.instructionFileCandidates,
+      DEFAULT_INSTRUCTION_FILE_CANDIDATES,
+      source,
+      'instructions.instructionFileCandidates',
+    ),
+    localInstructionFileCandidates: pathComponents(
+      candidate.localInstructionFileCandidates,
+      DEFAULT_LOCAL_INSTRUCTION_FILE_CANDIDATES,
+      source,
+      'instructions.localInstructionFileCandidates',
+    ),
+  }
+}
+
 function approval(value: unknown, source: string): ApprovalProfile {
   if (value === undefined) return { default: 'ask' }
   const candidate = object(value, source, 'approval')
@@ -288,6 +420,7 @@ export function validateHarnessProfile(value: unknown, source = 'harness profile
       'persistence',
       'tools',
       'prompt',
+      'instructions',
       'approval',
       'context',
     ],
@@ -308,6 +441,7 @@ export function validateHarnessProfile(value: unknown, source = 'harness profile
     persistence: persistence(candidate.persistence, source),
     tools: tools(candidate.tools, source),
     prompt: prompt(candidate.prompt, source),
+    instructions: instructions(candidate.instructions, source),
     approval: approval(candidate.approval, source),
     context: context(candidate.context, source),
   })

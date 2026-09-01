@@ -39,6 +39,7 @@
     "@deepseek-cordis/session": "0.0.0",
     "@deepseek-cordis/session-file": "0.0.0",
     "@deepseek-cordis/system-prompt": "0.0.0",
-    "@deepseek-cordis/token-meter": "0.0.0"
+    "@deepseek-cordis/token-meter": "0.0.0",
+    "@deepseek-cordis/workspace-instructions": "0.0.0"
   }
 }

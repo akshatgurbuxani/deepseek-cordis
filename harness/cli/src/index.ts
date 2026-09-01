@@ -60,6 +60,10 @@ import { InMemorySessionStore, type SessionStore } from '@deepseek-cordis/sessio
 import { FileSessionStore } from '@deepseek-cordis/session-file'
 import { HARNESS_IDENTITY_SECTION } from '@deepseek-cordis/system-prompt'
 import { TokenMeter } from '@deepseek-cordis/token-meter'
+import {
+  createWorkspaceInstructionsSection,
+  NodeWorkspaceInstructions,
+} from '@deepseek-cordis/workspace-instructions'
 
 import {
   type ApprovalPrompt,
@@ -284,6 +288,7 @@ function manifestFor(
   policy: ContextBudgetPolicy,
   approval: ApprovalService,
   sandbox: ToolSandbox,
+  workspaceInstructions?: NodeWorkspaceInstructions,
 ): readonly ManifestEntry[] {
   const tools = createToolRegistryPlugin()
   const commands = createCommandRegistryPlugin(new InMemoryCommandRegistry())
@@ -357,6 +362,13 @@ function manifestFor(
       revision: 'v1',
       enabled: profile.prompt.workspaceGuidance,
       load: () => createPromptSectionPlugin(WORKSPACE_FILESYSTEM_PROMPT_SECTION),
+    },
+    {
+      id: 'prompt-workspace-instructions',
+      revision: 'v1',
+      enabled: workspaceInstructions !== undefined,
+      load: () =>
+        createPromptSectionPlugin(createWorkspaceInstructionsSection(workspaceInstructions!)),
     },
     { id: 'compaction', revision: 'v1', load: () => compaction.plugin },
     { id: 'token-meter', revision: 'v1', load: () => tokenMeter.plugin },
@@ -451,6 +463,18 @@ async function mountCliRuntime(
     })
     const sessionId = options.sessionId ?? env.HARNESS_SESSION_ID ?? `cli-${Date.now()}`
     const existingSession = tracedSessions.get(sessionId)
+    const instructions = configuration.profile.instructions
+    const workspaceInstructions = instructions.enabled
+      ? new NodeWorkspaceInstructions({
+          workspaceRoot: configuration.workspaceRoot,
+          workingDirectory: resolve(configuration.workspaceRoot, instructions.directory),
+          maxBytes: instructions.maxBytes,
+          maxSourceBytes: instructions.maxSourceBytes,
+          projectRootMarkers: instructions.projectRootMarkers,
+          instructionFileCandidates: instructions.instructionFileCandidates,
+          localInstructionFileCandidates: instructions.localInstructionFileCandidates,
+        })
+      : undefined
 
     trace('cli/start', {
       mode: configuration.mode,
@@ -475,6 +499,7 @@ async function mountCliRuntime(
         policy,
         approval,
         sandbox,
+        workspaceInstructions,
       ),
     )
     const session = existingSession ?? boot.context.sessions.create(sessionId)
