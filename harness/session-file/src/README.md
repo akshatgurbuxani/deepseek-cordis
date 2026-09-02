@@ -19,7 +19,7 @@ message otherwise. It then emits an interrupted `step/end` when needed and an
 interrupted `turn/end`. Already committed events are never rewritten or
 discarded, and closed documents produce no repair.
 
-Migration and repair are combined into one V5 candidate document and one writer
+Migration and repair are combined into one V6 candidate document and one writer
 call. Only after that call succeeds does the store publish the repaired
 `FileSession`; reopening sees a closed turn and performs no second write. This
 is a cold-only boundary: the store owns no live agent loop while its constructor
@@ -27,10 +27,13 @@ scans files, and it does not attempt partial-turn resume. The store publishes no
 session until the full scan succeeds.
 
 `FileSession.append()` snapshots the next sequenced event and builds a candidate
-event list without mutating live memory. Its persistence callback encodes a V5
-document and calls the configured writer. Only a successful return pushes the
-event into memory. Injecting a writer lets deterministic tests prove that a
-failure before commit leaves the session and its previous document unchanged.
+event list without mutating live memory. Its persistence callback encodes a V6
+document, acquires that session's atomic hard-link lock, verifies the observed
+document revision, and calls the configured writer. Only a successful return
+advances both the opaque revision and live memory. A busy writer or changed
+revision fails explicitly; histories are never merged by guesswork. Injecting
+a writer lets deterministic tests prove that a failure before commit leaves the
+session and its previous document unchanged.
 
 The production writer creates a unique temporary file in the destination
 directory, writes with owner-only permissions, fsyncs and closes it, then uses
@@ -38,11 +41,11 @@ rename as the atomic commit point. It removes uncommitted temporary files on
 failure. Directory fsync is best-effort because some platforms reject it; no
 error is reported after a rename has already committed.
 
-Versionless V0 plus schema V1 through V4 documents pass through the same event
-validation and are immediately rewritten as V5. V2 adds
+Versionless V0 plus schema V1 through V5 documents pass through the same event
+validation and are immediately rewritten as V6. V2 adds
 `compaction/summary`, V3 adds `context-budget/decision`, V4 adds provider usage
-anchors to assistant events, and V5 adds approval/sandbox audit events. Surface
-provenance is derived before
+anchors to assistant events, V5 adds approval/sandbox audit events, and V6 adds
+command lifecycle events. Surface provenance is derived before
 publication, and a legacy document cannot contain a newer event variant.
 Future or unknown versions stop startup without modification. New migrations
 must be explicit, deterministic, tested from fixtures, and advance one version

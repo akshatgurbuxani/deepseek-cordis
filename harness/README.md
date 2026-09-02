@@ -1349,14 +1349,58 @@ schema-V1 command policy, transactional CLI wiring, command-specific prompt
 guidance, direct lifecycle/confinement tests, and an end-to-end OpenRouter turn
 proving approval, execution, result delivery, and API-key scrubbing.
 
+## Feature 22 — cross-process session writer coordination
+
+Whole-file atomic replacement prevents torn documents, but it does not prevent
+two processes that opened the same revision from independently publishing the
+same next sequence number. The later rename would silently erase the earlier
+commit. The file provider now coordinates every materialization, append,
+migration, and crash repair with an atomic per-session lock and an opaque
+content revision. Unrelated session IDs remain independent.
+
+A contender fails fast with `SESSION_WRITE_BUSY` while a live local owner holds
+the lock. Once another writer commits, an instance that observed the old
+revision fails with `SESSION_STALE_WRITER` and must reopen. It never guesses how
+to merge independently derived event streams, and neither its in-memory events
+nor expected revision advance before the durable writer returns successfully.
+
+Lock metadata is completely written and fsynced to a same-directory owner file
+before an atomic hard link publishes it as the canonical lock. A dead owner on
+the same host can therefore be identified by its token, hostname, and PID and
+reclaimed without treating a partial file as authority. Live, malformed, and
+foreign-host locks fail closed. This is cooperative coordination for a local
+filesystem, not a distributed lease; non-cooperating file replacement and
+shared network filesystems remain outside the claim.
+
+### Upstream motivation and adaptation boundary
+
+This feature was checked on September 2, 2026 against DeepSeek Harness
+`4e84901`, especially its
+[`session persistence coordinator`](https://github.com/deepseek-ai/DeepSeek-Harness/blob/4e84901e6471b79ec0338099867ebb4606d12bb5/packages/session/session-persistence/src/coordinator.ts),
+[`opaque revision contract`](https://github.com/deepseek-ai/DeepSeek-Harness/blob/4e84901e6471b79ec0338099867ebb4606d12bb5/packages/session/session-persistence/src/revision.ts),
+and
+[`JSON atomic storage`](https://github.com/deepseek-ai/DeepSeek-Harness/blob/4e84901e6471b79ec0338099867ebb4606d12bb5/packages/storage/storage-json/src/atomic.ts).
+The local provider adopts per-identity serialization, revision preconditions,
+contiguous append-only history, and durable replacement. It adapts those ideas
+to a synchronous whole-document store and deliberately does not introduce a
+database, distributed lease service, or event-stream merge policy.
+
+### PR 22 result
+
+Added per-session lock ownership and dead-local recovery, SHA-256 document
+revisions, explicit busy/stale conflict errors, coordinated create/append/
+migration/repair paths, and real child-process tests for contention, stale
+writers, creation races, and crash recovery.
+
 ### Later milestones
 
-The next reliability feature should add cross-process session writer
-coordination before parallel tools or subagents multiply contention. A
-platform-backed command sandbox is the next security milestone. Parallel tools,
-subagents, attachments, scheduling, and UI remain later product layers;
-automatic config watching can be added when it owns an exact-path watcher and
-disposal/drain contract.
+With same-session writes now failing closed across cooperating processes, a
+platform-backed command sandbox is the next security milestone. The next
+product expansion should be chosen from real coding-task evidence: attachments
+can add useful input without changing loop ordering, while parallel tools need
+a durable batch and event-order contract before implementation. Subagents,
+scheduling, and UI remain later layers; automatic config watching can be added
+when it owns an exact-path watcher and disposal/drain contract.
 
 ## Promotion rules
 

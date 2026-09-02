@@ -1,8 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto'
 import {
   closeSync,
-  existsSync,
   fsyncSync,
+  linkSync,
+  lstatSync,
   mkdirSync,
   openSync,
   readdirSync,
@@ -11,6 +12,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs'
+import { hostname } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 
 import {
@@ -46,6 +48,17 @@ export interface FileSessionStoreOptions {
 }
 
 export class SessionPersistenceError extends Error {}
+
+export class SessionWriteConflictError extends SessionPersistenceError {
+  constructor(
+    readonly code: 'SESSION_WRITE_BUSY' | 'SESSION_STALE_WRITER',
+    message: string,
+    options: ErrorOptions = {},
+  ) {
+    super(message, options)
+    this.name = 'SessionWriteConflictError'
+  }
+}
 
 export class UnsupportedSessionSchemaError extends SessionPersistenceError {
   readonly version: unknown
@@ -635,6 +648,161 @@ export function sessionFilePath(directory: string, id: string): string {
   return join(resolve(directory), `session-${digest}.json`)
 }
 
+interface SessionFileLockRecord {
+  readonly version: 1
+  readonly token: string
+  readonly pid: number
+  readonly host: string
+}
+
+function nodeErrorCode(error: unknown): string | undefined {
+  return error !== null && typeof error === 'object' && 'code' in error
+    ? String(error.code)
+    : undefined
+}
+
+function lockPathFor(filePath: string): string {
+  return join(dirname(filePath), `.${basename(filePath)}.lock`)
+}
+
+function lockRecord(value: unknown): SessionFileLockRecord | undefined {
+  if (
+    !isRecord(value) ||
+    value.version !== 1 ||
+    typeof value.token !== 'string' ||
+    !/^[a-f0-9-]{36}$/.test(value.token) ||
+    typeof value.pid !== 'number' ||
+    !Number.isSafeInteger(value.pid) ||
+    value.pid < 1 ||
+    typeof value.host !== 'string' ||
+    value.host.length === 0
+  ) {
+    return undefined
+  }
+  return value as unknown as SessionFileLockRecord
+}
+
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    return nodeErrorCode(error) !== 'ESRCH'
+  }
+}
+
+function reclaimDeadLocalLock(lockPath: string): void {
+  let first: string
+  try {
+    first = readFileSync(lockPath, 'utf8')
+  } catch (error) {
+    if (nodeErrorCode(error) === 'ENOENT') return
+    throw new SessionWriteConflictError(
+      'SESSION_WRITE_BUSY',
+      'session write lock could not be inspected',
+      { cause: error },
+    )
+  }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(first)
+  } catch {
+    return
+  }
+  const record = lockRecord(parsed)
+  if (!record || record.host !== hostname() || processIsAlive(record.pid)) return
+  try {
+    if (readFileSync(lockPath, 'utf8') === first) {
+      unlinkSync(lockPath)
+      try {
+        unlinkSync(`${lockPath}.${record.pid}.${record.token}.owner`)
+      } catch {}
+    }
+  } catch (error) {
+    if (nodeErrorCode(error) !== 'ENOENT') {
+      throw new SessionWriteConflictError(
+        'SESSION_WRITE_BUSY',
+        'stale session write lock could not be reclaimed',
+        { cause: error },
+      )
+    }
+  }
+}
+
+function withSessionFileLock<T>(filePath: string, operation: () => T): T {
+  const lockPath = lockPathFor(filePath)
+  const record: SessionFileLockRecord = {
+    version: 1,
+    token: randomUUID(),
+    pid: process.pid,
+    host: hostname(),
+  }
+  const contents = `${JSON.stringify(record)}\n`
+  const ownerPath = `${lockPath}.${process.pid}.${record.token}.owner`
+  let descriptor: number | undefined
+  let acquired = false
+  try {
+    descriptor = openSync(ownerPath, 'wx', 0o600)
+    writeFileSync(descriptor, contents, { encoding: 'utf8' })
+    fsyncSync(descriptor)
+    closeSync(descriptor)
+    descriptor = undefined
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        linkSync(ownerPath, lockPath)
+        acquired = true
+        break
+      } catch (error) {
+        if (nodeErrorCode(error) !== 'EEXIST') {
+          throw new SessionPersistenceError('failed to acquire session write lock', {
+            cause: error,
+          })
+        }
+        if (attempt === 0) reclaimDeadLocalLock(lockPath)
+      }
+    }
+    if (!acquired) {
+      throw new SessionWriteConflictError(
+        'SESSION_WRITE_BUSY',
+        'another process is writing this session',
+      )
+    }
+    return operation()
+  } finally {
+    if (descriptor !== undefined) {
+      try {
+        closeSync(descriptor)
+      } catch {}
+    }
+    if (acquired) {
+      try {
+        const lock = lstatSync(lockPath, { bigint: true })
+        const owner = lstatSync(ownerPath, { bigint: true })
+        if (lock.dev === owner.dev && lock.ino === owner.ino) unlinkSync(lockPath)
+      } catch {}
+    }
+    try {
+      unlinkSync(ownerPath)
+    } catch {}
+  }
+}
+
+function documentRevision(contents: string): string {
+  return `sha256:${createHash('sha256').update(contents).digest('hex')}`
+}
+
+function optionalFileRevision(filePath: string): string | null {
+  try {
+    return documentRevision(readFileSync(filePath, 'utf8'))
+  } catch (error) {
+    if (nodeErrorCode(error) === 'ENOENT') return null
+    throw new SessionPersistenceError('session file could not be read for revision validation', {
+      cause: error,
+    })
+  }
+}
+
 export function atomicReplaceFile(filePath: string, contents: string): void {
   const temporaryPath = join(
     dirname(filePath),
@@ -748,14 +916,7 @@ export class FileSessionStore implements SessionStore {
       throw new Error(`session ${JSON.stringify(id)} already exists`)
     }
     const filePath = sessionFilePath(this.directory, id)
-    if (existsSync(filePath)) {
-      throw new SessionPersistenceError(
-        `session file ${JSON.stringify(filePath)} appeared after the store was opened`,
-      )
-    }
-    const persist = (events: readonly SessionEvent[]) => {
-      this.#writer(filePath, encodeDocument(id, events))
-    }
+    const persist = this.#persistence(filePath, id, null)
     persist([])
     const session = new FileSession(id, [], persist)
     this.#sessions.set(id, session)
@@ -773,20 +934,41 @@ export class FileSessionStore implements SessionStore {
       .sort()
 
     for (const filePath of files) {
-      const decoded = decodeDocument(readFileSync(filePath, 'utf8'), filePath)
+      const contents = readFileSync(filePath, 'utf8')
+      const decoded = decodeDocument(contents, filePath)
       if (filePath !== sessionFilePath(this.directory, decoded.id)) {
         invalid(filePath, 'filename does not match the stored session id')
       }
       if (this.#sessions.has(decoded.id)) {
         invalid(filePath, `duplicates session id ${JSON.stringify(decoded.id)}`)
       }
-      const persist = (events: readonly SessionEvent[]) => {
-        this.#writer(filePath, encodeDocument(decoded.id, events))
-      }
+      const persist = this.#persistence(filePath, decoded.id, contents)
       const closers = interruptedTurnClosers(decoded.events, filePath)
       const events = [...decoded.events, ...closers]
       if (decoded.migrated || closers.length > 0) persist(events)
       this.#sessions.set(decoded.id, new FileSession(decoded.id, events, persist))
+    }
+  }
+
+  #persistence(
+    filePath: string,
+    id: string,
+    initialContents: string | null,
+  ): (events: readonly SessionEvent[]) => void {
+    let expectedRevision = initialContents === null ? null : documentRevision(initialContents)
+    return (events) => {
+      const nextContents = encodeDocument(id, events)
+      const nextRevision = documentRevision(nextContents)
+      withSessionFileLock(filePath, () => {
+        if (optionalFileRevision(filePath) !== expectedRevision) {
+          throw new SessionWriteConflictError(
+            'SESSION_STALE_WRITER',
+            `session ${JSON.stringify(id)} changed in another process; reopen it before writing`,
+          )
+        }
+        this.#writer(filePath, nextContents)
+        expectedRevision = nextRevision
+      })
     }
   }
 }

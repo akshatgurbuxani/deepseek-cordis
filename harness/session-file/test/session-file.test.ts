@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
+import { spawn, spawnSync } from 'node:child_process'
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -18,6 +20,7 @@ import {
   FileSessionStore,
   SESSION_FILE_SCHEMA_VERSION,
   SessionPersistenceError,
+  SessionWriteConflictError,
   sessionFilePath,
   TOOL_NOT_STARTED,
   TOOL_OUTCOME_UNKNOWN,
@@ -30,6 +33,14 @@ function temporaryDirectory(t: TestContext): string {
     rmSync(directory, { recursive: true, force: true })
   })
   return directory
+}
+
+async function waitForFile(filePath: string): Promise<void> {
+  const deadline = Date.now() + 2_000
+  while (!existsSync(filePath)) {
+    if (Date.now() >= deadline) throw new Error(`timed out waiting for ${filePath}`)
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
 }
 
 test('sessions survive restart with immutable events and projected model history', (t) => {
@@ -156,6 +167,148 @@ test('a failed atomic append leaves memory and the committed file unchanged', (t
   )
   assert.equal(
     readdirSync(directory).some((name) => name.endsWith('.tmp')),
+    false,
+  )
+})
+
+test('independent stores reject stale revisions instead of erasing committed events', (t) => {
+  const directory = temporaryDirectory(t)
+  new FileSessionStore({ directory }).create('shared-revision')
+  const first = new FileSessionStore({ directory }).get('shared-revision')
+  const stale = new FileSessionStore({ directory }).get('shared-revision')
+  assert.ok(first)
+  assert.ok(stale)
+
+  first.append({ type: 'turn/start', turnId: 'shared-revision:turn:1' })
+  assert.throws(
+    () => stale.append({ type: 'turn/start', turnId: 'shared-revision:turn:2' }),
+    (error: unknown) => {
+      assert.ok(error instanceof SessionWriteConflictError)
+      assert.equal(error.code, 'SESSION_STALE_WRITER')
+      assert.match(error.message, /reopen it before writing/)
+      return true
+    },
+  )
+  assert.deepEqual(stale.events, [])
+  const stored = JSON.parse(
+    readFileSync(sessionFilePath(directory, 'shared-revision'), 'utf8'),
+  ) as { events: Array<{ turnId: string }> }
+  assert.deepEqual(
+    stored.events.map(({ turnId }) => turnId),
+    ['shared-revision:turn:1'],
+  )
+})
+
+test('stores opened before creation coordinate the same session identity', (t) => {
+  const directory = temporaryDirectory(t)
+  const winner = new FileSessionStore({ directory })
+  const contender = new FileSessionStore({ directory })
+  winner.create('create-race')
+
+  assert.throws(
+    () => contender.create('create-race'),
+    (error: unknown) => {
+      assert.ok(error instanceof SessionWriteConflictError)
+      assert.equal(error.code, 'SESSION_STALE_WRITER')
+      return true
+    },
+  )
+  assert.equal(contender.get('create-race'), undefined)
+})
+
+test('a live cross-process writer owns the session lock and leaves stale peers unchanged', async (t) => {
+  const directory = temporaryDirectory(t)
+  new FileSessionStore({ directory }).create('cross-process')
+  const peer = new FileSessionStore({ directory }).get('cross-process')
+  assert.ok(peer)
+  const marker = join(directory, 'writer-entered')
+  const release = join(directory, 'release-writer')
+  const script = `
+    import { existsSync, writeFileSync } from 'node:fs'
+    import { atomicReplaceFile, FileSessionStore } from '@deepseek-cordis/session-file'
+    const store = new FileSessionStore({
+      directory: process.env.TEST_SESSION_DIRECTORY,
+      writer(filePath, contents) {
+        writeFileSync(process.env.TEST_SESSION_MARKER, 'locked')
+        const deadline = Date.now() + 10_000
+        while (!existsSync(process.env.TEST_SESSION_RELEASE)) {
+          if (Date.now() >= deadline) throw new Error('timed out waiting for lock release')
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10)
+        }
+        atomicReplaceFile(filePath, contents)
+      },
+    })
+    store.get('cross-process').append({ type: 'turn/start', turnId: 'cross-process:turn:child' })
+  `
+  const child = spawn(process.execPath, ['--input-type=module', '--eval', script], {
+    cwd: resolve('.'),
+    env: {
+      ...process.env,
+      TEST_SESSION_DIRECTORY: directory,
+      TEST_SESSION_MARKER: marker,
+      TEST_SESSION_RELEASE: release,
+    },
+    stdio: ['ignore', 'ignore', 'pipe'],
+  })
+  const stderr: Buffer[] = []
+  child.stderr.on('data', (chunk: Buffer) => stderr.push(chunk))
+  await waitForFile(marker)
+
+  try {
+    assert.throws(
+      () => peer.append({ type: 'turn/start', turnId: 'cross-process:turn:peer' }),
+      (error: unknown) => {
+        assert.ok(error instanceof SessionWriteConflictError)
+        assert.equal(error.code, 'SESSION_WRITE_BUSY')
+        return true
+      },
+    )
+  } finally {
+    writeFileSync(release, 'continue')
+  }
+  assert.deepEqual(peer.events, [])
+  const exitCode = await new Promise<number | null>((resolveExit, reject) => {
+    child.once('error', reject)
+    child.once('exit', resolveExit)
+  })
+  assert.equal(exitCode, 0, Buffer.concat(stderr).toString('utf8'))
+
+  assert.throws(
+    () => peer.append({ type: 'turn/start', turnId: 'cross-process:turn:peer' }),
+    (error: unknown) => {
+      assert.ok(error instanceof SessionWriteConflictError)
+      assert.equal(error.code, 'SESSION_STALE_WRITER')
+      return true
+    },
+  )
+  const reopened = new FileSessionStore({ directory }).get('cross-process')
+  assert.equal(reopened?.events[0]?.turnId, 'cross-process:turn:child')
+})
+
+test('a dead local writer lock is reclaimed without discarding the committed revision', (t) => {
+  const directory = temporaryDirectory(t)
+  new FileSessionStore({ directory }).create('crashed-writer')
+  const survivor = new FileSessionStore({ directory }).get('crashed-writer')
+  assert.ok(survivor)
+  const script = `
+    import { FileSessionStore } from '@deepseek-cordis/session-file'
+    const store = new FileSessionStore({
+      directory: process.env.TEST_SESSION_DIRECTORY,
+      writer() { process.exit(23) },
+    })
+    store.get('crashed-writer').append({ type: 'turn/start', turnId: 'never-committed' })
+  `
+  const child = spawnSync(process.execPath, ['--input-type=module', '--eval', script], {
+    cwd: resolve('.'),
+    env: { ...process.env, TEST_SESSION_DIRECTORY: directory },
+    encoding: 'utf8',
+  })
+  assert.equal(child.status, 23, child.stderr)
+
+  survivor.append({ type: 'turn/start', turnId: 'crashed-writer:turn:1' })
+  assert.equal(survivor.events.length, 1)
+  assert.equal(
+    readdirSync(directory).some((name) => name.includes('.lock')),
     false,
   )
 })
@@ -1054,7 +1207,7 @@ test('canonical files must match their stored IDs while unrelated and temporary 
       events: [],
     }),
   )
-  assert.throws(() => openedStore.create(appearedId), /appeared after the store was opened/)
+  assert.throws(() => openedStore.create(appearedId), /changed in another process/)
 
   const filePath = sessionFilePath(directory, 'expected')
   writeFileSync(filePath, JSON.stringify({ schemaVersion: 1, id: 'different', events: [] }))
