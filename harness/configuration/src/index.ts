@@ -8,6 +8,8 @@ export const DEFAULT_MODEL_INITIAL_RETRY_DELAY_MS = 250
 export const DEFAULT_MODEL_MAX_RETRY_DELAY_MS = 5_000
 export const MAX_MODEL_RETRIES = 5
 export const MAX_MODEL_RETRY_DELAY_MS = 60_000
+export const DEFAULT_AGENT_MAX_STEPS = 8
+export const MAX_AGENT_MAX_STEPS = 64
 export const DEFAULT_WORKSPACE_MAX_FILE_BYTES = 1024 * 1024
 export const DEFAULT_ALLOWED_PROGRAMS = Object.freeze(['git', 'node', 'npm', 'npx', 'rg'] as const)
 export const DEFAULT_PROCESS_TIMEOUT_MS = 120_000
@@ -144,6 +146,10 @@ export interface ContextProfile {
   readonly maxOverflowRetries: number
 }
 
+export interface AgentProfile {
+  readonly maxSteps: number
+}
+
 export interface HarnessProfile {
   readonly schemaVersion: typeof HARNESS_PROFILE_SCHEMA_VERSION
   readonly name: string
@@ -156,6 +162,7 @@ export interface HarnessProfile {
   readonly instructions: WorkspaceInstructionsProfile
   readonly approval: ApprovalProfile
   readonly context: ContextProfile
+  readonly agent: AgentProfile
 }
 
 type ObjectValue = Record<string, unknown>
@@ -345,7 +352,7 @@ function modelRouting(value: unknown, source: string): ModelRoutingProfile {
   if (value === undefined) {
     return {
       allowFallbacks: true,
-      requireParameters: true,
+      requireParameters: false,
       dataCollection: 'allow',
       sort: 'throughput',
     }
@@ -693,6 +700,22 @@ function context(value: unknown, source: string): ContextProfile {
   }
 }
 
+function agent(value: unknown, source: string): AgentProfile {
+  if (value === undefined) return { maxSteps: DEFAULT_AGENT_MAX_STEPS }
+  const candidate = object(value, source, 'agent')
+  exactKeys(candidate, ['maxSteps'], source, 'agent')
+  const maxSteps = positiveInteger(
+    candidate.maxSteps,
+    DEFAULT_AGENT_MAX_STEPS,
+    source,
+    'agent.maxSteps',
+  )
+  if (maxSteps > MAX_AGENT_MAX_STEPS) {
+    fail(source, `agent.maxSteps must not exceed ${MAX_AGENT_MAX_STEPS}`)
+  }
+  return { maxSteps }
+}
+
 /** Validate, default, clone, and recursively freeze one versioned profile document. */
 export function validateHarnessProfile(value: unknown, source = 'harness profile'): HarnessProfile {
   const candidate = object(value, source)
@@ -710,6 +733,7 @@ export function validateHarnessProfile(value: unknown, source = 'harness profile
       'instructions',
       'approval',
       'context',
+      'agent',
     ],
     source,
     'profile',
@@ -732,6 +756,7 @@ export function validateHarnessProfile(value: unknown, source = 'harness profile
     instructions: instructions(candidate.instructions, source),
     approval: approval(candidate.approval, source),
     context: context(candidate.context, source),
+    agent: agent(candidate.agent, source),
   })
 }
 

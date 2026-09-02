@@ -24,7 +24,7 @@ it depends on credentials, provider availability, model changes, and cost.
 | Area | Default v1 limit |
 | --- | --- |
 | Runtime | Node.js 24 or newer |
-| Model loop | 8 model steps per turn |
+| Model loop | 8 model steps per turn by default; profile-selectable up to 64 |
 | Workspace text file | 1 MiB |
 | Directory listing | 200 returned entries |
 | Recursive discovery | 500 returned paths, depth 8 |

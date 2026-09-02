@@ -116,6 +116,7 @@ test('profile initialization is secure, complete, and refuses to overwrite', (t)
   const configuration = resolveCliConfiguration(parseCliArguments(['--profile', filename], {}), {})
   assert.equal(configuration.profile.name, 'coding')
   assert.equal(configuration.profile.persistence.kind, 'file')
+  assert.equal(configuration.profile.agent.maxSteps, 8)
   assert.equal(configuration.profile.tools.enabled.includes('workspace.patch'), true)
   assert.equal(configuration.profile.tools.enabled.includes('add'), false)
   assert.throws(() => initializeCliProfile(filename), /already exists; it was not changed/)
@@ -254,6 +255,7 @@ test('the documented coding profile remains valid and complete', () => {
     'rg',
   ])
   assert.equal(configuration.profile.approval.default, 'ask')
+  assert.equal(configuration.profile.agent.maxSteps, 24)
 })
 
 test('a profile controls the exact model, tools, and assembled prompt', async (t) => {
