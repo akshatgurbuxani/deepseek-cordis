@@ -1508,12 +1508,42 @@ model quality.
 - Every request carries an exact validated provider-routing policy.
 - The real integration path remains explicit, opt-in, and credential-safe.
 
+## Feature 27 — installable operator CLI
+
+Feature 27 turns the workspace composition into a usable distribution. The
+root package bundles the CLI and all internal harness packages into one Node 24
+executable, so installation does not depend on publishing the private
+`@deepseek-cordis/*` workspace graph. A clean-package smoke test installs the
+tarball with scripts disabled and exercises the installed artifact.
+
+`--init` exclusively creates a mode-0600 coding profile, including missing
+parent directories, file persistence, and the complete guarded workspace tool
+family. It never overwrites an existing profile. `--sessions` opens the
+configured file store without constructing a model and reports deterministic
+turn, event, and terminal-status summaries. `--resume` requires an exact
+existing persisted ID; it cannot silently fall through to a new session.
+
+`--quiet` suppresses lifecycle, model, and session diagnostics while preserving
+assistant output and errors. Busy and stale-writer failures now include the
+operator action: wait when another writer is active, or list and reopen the
+persisted session after an older revision is detected.
+
+### PR 27 exit condition
+
+- A packed installation runs without the unpublished workspace packages.
+- Initialization is secure, recursive, validated, and non-overwriting.
+- Discovery is deterministic, credential-free, and restricted to persisted
+  sessions.
+- Explicit resume rejects missing IDs and memory-only configurations.
+- Quiet output is stable enough for shell composition.
+- Persistence conflicts name a concrete recovery command.
+
 ### Later milestones
 
-With the model transport policy explicit, the next milestone is an installable
-CLI with profile initialization, session discovery/resume, quiet output, and
-actionable conflict recovery. Attachments can later add useful input without
-changing loop ordering, while parallel tools
+The next milestone qualifies the packed CLI on representative coding tasks and
+adversarial cases, then records evidence-backed safe defaults and supported
+limits for v1. Attachments can later add useful input without changing loop
+ordering, while parallel tools
 need a durable batch and event-order contract before implementation. Subagents,
 scheduling, and UI remain later layers; automatic config watching can be added
 when it owns an exact-path watcher and disposal/drain contract.

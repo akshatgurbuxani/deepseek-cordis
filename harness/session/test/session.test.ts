@@ -185,3 +185,12 @@ test('provider usage is log-only and must cite the exact pre-response surface', 
   )
   assert.deepEqual(session.events, before)
 })
+
+test('in-memory stores list sessions deterministically without exposing mutable ownership', () => {
+  const store = new InMemorySessionStore()
+  const second = store.create('second')
+  const first = store.create('first')
+
+  assert.deepEqual(store.list(), [first, second])
+  assert.notEqual(store.list(), store.list())
+})

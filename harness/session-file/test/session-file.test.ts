@@ -1308,3 +1308,18 @@ test('canonical files must match their stored IDs while unrelated and temporary 
   writeFileSync(filePath, JSON.stringify({ schemaVersion: 1, id: 'different', events: [] }))
   assert.throws(() => new FileSessionStore({ directory }), /filename does not match/)
 })
+
+test('file stores list loaded and newly created sessions by id', (t) => {
+  const directory = temporaryDirectory(t)
+  const store = new FileSessionStore({ directory })
+  store.create('zeta')
+  store.create('alpha')
+  assert.deepEqual(
+    store.list().map(({ id }) => id),
+    ['alpha', 'zeta'],
+  )
+  assert.deepEqual(
+    new FileSessionStore({ directory }).list().map(({ id }) => id),
+    ['alpha', 'zeta'],
+  )
+})

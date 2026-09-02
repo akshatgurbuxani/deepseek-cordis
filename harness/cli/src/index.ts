@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { readFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { basename, dirname, resolve } from 'node:path'
 import { AgentLoop } from '@deepseek-cordis/agent-loop'
 import { AppBoot, type ManifestEntry } from '@deepseek-cordis/app-boot'
@@ -17,6 +17,7 @@ import {
 } from '@deepseek-cordis/compaction'
 import {
   DEFAULT_HARNESS_PROFILE,
+  HARNESS_TOOL_IDS,
   type HarnessProfile,
   type HarnessToolId,
   parseHarnessProfile,
@@ -79,7 +80,7 @@ import {
   WORKSPACE_WRITE_PROFILE,
 } from '@deepseek-cordis/sandbox-workspace'
 import { InMemorySessionStore, type SessionStore } from '@deepseek-cordis/session'
-import { FileSessionStore } from '@deepseek-cordis/session-file'
+import { FileSessionStore, SessionWriteConflictError } from '@deepseek-cordis/session-file'
 import { HARNESS_IDENTITY_SECTION } from '@deepseek-cordis/system-prompt'
 import { TokenMeter } from '@deepseek-cordis/token-meter'
 import {
@@ -102,6 +103,19 @@ import {
 } from './tracing.js'
 
 const defaultInput = 'Use the add tool to calculate 17 + 25.'
+const cliHelp = `Usage: deepseek-cordis [options] [task]
+
+Run options:
+  --profile <path>    Load a validated harness profile
+  --interactive       Keep one session open for multiple turns
+  --resume <id>       Continue an existing persisted session
+  --quiet             Suppress diagnostic traces
+  --replay            Use the deterministic credential-free model
+
+Administration:
+  --init [path]       Create a non-overwriting coding profile
+  --sessions          List sessions for file persistence
+  --help, -h          Show this help`
 
 export interface CliConfiguration {
   readonly mode: 'replay' | 'openrouter'
@@ -109,6 +123,8 @@ export interface CliConfiguration {
   readonly input: string
   readonly model: string
   readonly profilePath?: string
+  readonly quiet: boolean
+  readonly resumeSessionId?: string
 }
 
 export interface ResolvedCliConfiguration extends CliConfiguration {
@@ -138,6 +154,8 @@ export function parseCliArguments(
   let interactive = false
   let profilePath = env.HARNESS_PROFILE
   let commandLineProfile = false
+  let quiet = false
+  let resumeSessionId: string | undefined
   const inputParts: string[] = []
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index]!
@@ -145,6 +163,23 @@ export function parseCliArguments(
       replay = true
     } else if (argument === '--interactive') {
       interactive = true
+    } else if (argument === '--quiet') {
+      quiet = true
+    } else if (argument === '--resume') {
+      const value = argv[index + 1]
+      if (value === undefined || value.startsWith('--') || value.trim().length === 0) {
+        throw new Error('--resume requires a session id')
+      }
+      if (resumeSessionId !== undefined) throw new Error('--resume may be specified only once')
+      if (Buffer.byteLength(value, 'utf8') > 256) throw new Error('--resume session id is too long')
+      resumeSessionId = value
+      index += 1
+    } else if (argument.startsWith('--resume=')) {
+      const value = argument.slice('--resume='.length)
+      if (value.trim().length === 0) throw new Error('--resume requires a session id')
+      if (resumeSessionId !== undefined) throw new Error('--resume may be specified only once')
+      if (Buffer.byteLength(value, 'utf8') > 256) throw new Error('--resume session id is too long')
+      resumeSessionId = value
     } else if (argument === '--profile') {
       const value = argv[index + 1]
       if (value === undefined || value.startsWith('--') || value.trim().length === 0) {
@@ -172,9 +207,11 @@ export function parseCliArguments(
   return {
     mode: replay ? 'replay' : 'openrouter',
     interactive,
+    quiet,
     input: inputParts.join(' ') || defaultInput,
     model: replay ? 'replay/calculator' : (env.OPENROUTER_MODEL ?? 'openrouter/free'),
     ...(profilePath === undefined ? {} : { profilePath }),
+    ...(resumeSessionId === undefined ? {} : { resumeSessionId }),
   }
 }
 
@@ -233,6 +270,142 @@ export function resolveCliConfiguration(
       ? {}
       : { contextWindow: environmentContextWindow ?? profile.model.contextWindow }),
   }
+}
+
+export interface PersistedSessionSummary {
+  readonly id: string
+  readonly events: number
+  readonly turns: number
+  readonly lastStatus: 'completed' | 'failed' | 'aborted' | 'interrupted' | 'empty'
+}
+
+export function initializeCliProfile(path = 'deepseek-cordis.json'): string {
+  const absolutePath = resolve(path)
+  const profile = {
+    ...DEFAULT_HARNESS_PROFILE,
+    name: 'coding',
+    persistence: { kind: 'file' as const, directory: '.deepseek-cordis/sessions' },
+    tools: {
+      enabled: HARNESS_TOOL_IDS.filter((tool) => tool !== 'add' && tool !== 'workspace.create'),
+    },
+  }
+  try {
+    mkdirSync(dirname(absolutePath), { recursive: true })
+    writeFileSync(absolutePath, `${JSON.stringify(profile, null, 2)}\n`, {
+      encoding: 'utf8',
+      flag: 'wx',
+      mode: 0o600,
+    })
+  } catch (error) {
+    if (error !== null && typeof error === 'object' && 'code' in error && error.code === 'EEXIST') {
+      throw new Error(
+        `profile ${JSON.stringify(absolutePath)} already exists; it was not changed`,
+        {
+          cause: error,
+        },
+      )
+    }
+    throw error
+  }
+  return absolutePath
+}
+
+export function discoverPersistedSessions(
+  configuration: ResolvedCliConfiguration,
+): readonly PersistedSessionSummary[] {
+  if (!configuration.sessionDirectory) {
+    throw new Error('--sessions requires file persistence configured by the profile or environment')
+  }
+  return new FileSessionStore({ directory: configuration.sessionDirectory })
+    .list()
+    .map((session) => {
+      const lastEnd = [...session.events].reverse().find((event) => event.type === 'turn/end')
+      return {
+        id: session.id,
+        events: session.events.length,
+        turns: session.events.filter((event) => event.type === 'turn/start').length,
+        lastStatus: lastEnd?.type === 'turn/end' ? lastEnd.status : 'empty',
+      }
+    })
+}
+
+export interface CliOperatorOptions {
+  readonly argv?: readonly string[]
+  readonly env?: Readonly<Record<string, string | undefined>>
+  readonly output?: (content: string) => void
+}
+
+/** Handle model-free CLI administration. Returns false for an ordinary agent run. */
+export function runCliOperator(options: CliOperatorOptions = {}): boolean {
+  const argv = options.argv ?? process.argv.slice(2)
+  const env = Object.freeze({ ...(options.env ?? process.env) })
+  const output = options.output ?? console.log
+  const initIndex = argv.findIndex(
+    (argument) => argument === '--init' || argument.startsWith('--init='),
+  )
+  const sessionsIndex = argv.indexOf('--sessions')
+  const helpIndex = argv.findIndex((argument) => argument === '--help' || argument === '-h')
+  if (initIndex < 0 && sessionsIndex < 0 && helpIndex < 0) return false
+  if (helpIndex >= 0) {
+    if (argv.length !== 1) throw new Error('--help cannot be combined with other arguments')
+    output(cliHelp)
+    return true
+  }
+  if (initIndex >= 0 && sessionsIndex >= 0)
+    throw new Error('--init and --sessions cannot be combined')
+
+  if (initIndex >= 0) {
+    if (initIndex !== 0) throw new Error('--init must be the first option')
+    const argument = argv[0]!
+    const inline = argument.startsWith('--init=') ? argument.slice('--init='.length) : undefined
+    if (inline !== undefined && inline.trim().length === 0)
+      throw new Error('--init requires a path')
+    const path = inline ?? argv[1] ?? 'deepseek-cordis.json'
+    if (path.startsWith('--')) throw new Error('--init requires a profile path after the option')
+    const consumed = inline === undefined && argv[1] !== undefined ? 2 : 1
+    if (argv.length !== consumed) throw new Error('--init accepts only one optional profile path')
+    output(`Created ${initializeCliProfile(path)}`)
+    return true
+  }
+
+  const remaining = argv.filter((_argument, index) => index !== sessionsIndex)
+  for (let index = 0; index < remaining.length; index += 1) {
+    const argument = remaining[index]!
+    if (argument === '--quiet' || argument.startsWith('--profile=')) continue
+    if (argument === '--profile') {
+      index += 1
+      continue
+    }
+    throw new Error('--sessions accepts only --profile and --quiet')
+  }
+  const parsed = parseCliArguments(remaining, env)
+  if (
+    parsed.interactive ||
+    parsed.mode === 'replay' ||
+    parsed.resumeSessionId !== undefined ||
+    parsed.input !== defaultInput
+  ) {
+    throw new Error('--sessions accepts only --profile and --quiet')
+  }
+  const configuration = resolveCliConfiguration(parsed, env)
+  const sessions = discoverPersistedSessions(configuration)
+  if (sessions.length === 0) output('No persisted sessions.')
+  for (const session of sessions) {
+    output(
+      `${session.id}\tturns=${session.turns}\tevents=${session.events}\tlast=${session.lastStatus}`,
+    )
+  }
+  return true
+}
+
+/** Add a concrete recovery path to persistence conflicts shown by the executable. */
+export function formatCliError(error: unknown): unknown {
+  if (!(error instanceof SessionWriteConflictError)) return error
+  const recovery =
+    error.code === 'SESSION_WRITE_BUSY'
+      ? 'Wait for the other writer to finish, then retry with --resume <session-id>.'
+      : 'Use --sessions to inspect persisted sessions, then restart with --resume <session-id>.'
+  return `${error.message}\n${recovery}`
 }
 
 function replayModel(input: string, contextWindow?: number): ReplayModelAdapter {
@@ -640,8 +813,24 @@ async function mountCliRuntime(
     const tracedSessions = new TracingSessionStore(trace, sessionStore)
     const sessions = createSessionStorePlugin(tracedSessions)
     const meter = new TokenMeter()
-    const sessionId = options.sessionId ?? env.HARNESS_SESSION_ID ?? `cli-${Date.now()}`
+    const sessionId =
+      options.sessionId ??
+      configuration.resumeSessionId ??
+      env.HARNESS_SESSION_ID ??
+      `cli-${Date.now()}`
     const existingSession = tracedSessions.get(sessionId)
+    if (configuration.resumeSessionId !== undefined && options.sessionId === undefined) {
+      if (!configuration.sessionDirectory) {
+        throw new Error(
+          '--resume requires file persistence configured by the profile or environment',
+        )
+      }
+      if (!existingSession) {
+        throw new Error(
+          `session ${JSON.stringify(sessionId)} was not found; use --sessions to list persisted sessions`,
+        )
+      }
+    }
     let currentConfiguration = configuration
     let currentFingerprint = profileFingerprint(configuration)
     const reload: CommandDefinition['handler'] | undefined = reloadOptions
@@ -753,10 +942,10 @@ async function mountCliRuntime(
 export async function runCli(options: RunCliOptions = {}): Promise<RunResult> {
   const argv = options.argv ?? process.argv.slice(2)
   const env = Object.freeze({ ...(options.env ?? process.env) })
-  const invocationOptions = { ...options, env }
-  const trace = options.trace ?? consoleTrace
   const output = options.output ?? console.log
   const parsed = parseCliArguments(argv, env)
+  const trace = options.trace ?? (parsed.quiet ? () => undefined : consoleTrace)
+  const invocationOptions = { ...options, env, trace }
   if (parsed.interactive) {
     throw new Error('--interactive must be run through the interactive CLI adapter')
   }
@@ -815,10 +1004,10 @@ export async function runInteractiveCli(
 ): Promise<InteractiveCliResult> {
   const argv = options.argv ?? process.argv.slice(2)
   const env = Object.freeze({ ...(options.env ?? process.env) })
-  const invocationOptions = { ...options, env }
-  const trace = options.trace ?? consoleTrace
   const output = options.output ?? console.log
   const parsed = parseCliArguments(argv, env)
+  const trace = options.trace ?? (parsed.quiet ? () => undefined : consoleTrace)
+  const invocationOptions = { ...options, env, trace }
   const configuration = resolveCliConfiguration({ ...parsed, interactive: true }, env)
   const promptApproval: ApprovalPrompt =
     options.approve ??

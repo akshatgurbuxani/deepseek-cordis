@@ -2,7 +2,7 @@
 
 import { createInterface } from 'node:readline/promises'
 
-import { runCli, runInteractiveCli } from './index.js'
+import { formatCliError, runCli, runCliOperator, runInteractiveCli } from './index.js'
 
 const abort = new AbortController()
 let streamed = false
@@ -31,7 +31,9 @@ try {
       } else console.log(content)
     },
   }
-  if (reader) {
+  if (runCliOperator({ output: common.output })) {
+    // Model-free administration completed without mounting a runtime.
+  } else if (reader) {
     await runInteractiveCli({
       ...common,
       readLine: async (prompt) => {
@@ -59,7 +61,7 @@ try {
     process.exitCode = 130
   } else {
     console.error('\n[cli/error]')
-    console.error(error instanceof Error ? error.message : error)
+    console.error(formatCliError(error))
     process.exitCode = 1
   }
 } finally {

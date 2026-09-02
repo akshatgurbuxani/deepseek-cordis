@@ -1011,6 +1011,10 @@ export class FileSessionStore implements SessionStore {
     return this.#sessions.get(id)
   }
 
+  list(): readonly FileSession[] {
+    return [...this.#sessions.values()].sort((left, right) => left.id.localeCompare(right.id))
+  }
+
   #load(): void {
     const files = readdirSync(this.directory, { withFileTypes: true })
       .filter((entry) => entry.isFile() && /^session-[a-f0-9]{64}\.json$/.test(entry.name))

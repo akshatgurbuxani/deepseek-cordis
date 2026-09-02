@@ -43,3 +43,6 @@ jobs:
 
       - name: Test
         run: npm test
+
+      - name: Test installable package
+        run: npm run test:package

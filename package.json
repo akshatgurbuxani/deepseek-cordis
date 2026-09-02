@@ -1,7 +1,18 @@
 {
   "name": "deepseek-cordis",
+  "version": "0.1.0",
   "private": true,
+  "description": "A resilient, auditable coding-agent harness",
   "type": "module",
+  "bin": {
+    "deepseek-cordis": "./dist/deepseek-cordis.js"
+  },
+  "files": [
+    "dist/deepseek-cordis.js"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
   "workspaces": [
     "harness/protocol",
     "harness/session",
@@ -30,14 +41,17 @@
     "harness/context-budget"
   ],
   "scripts": {
-    "build": "tsc -b",
+    "build": "tsc -b && npm run bundle",
+    "bundle": "esbuild harness/cli/src/main.ts --bundle --platform=node --format=esm --target=node24 --outfile=dist/deepseek-cordis.js",
     "benchmark:session-file": "npm run build --silent && node scripts/benchmark-session-file.mjs",
     "check": "biome ci harness spike scripts biome.json package.json tsconfig.json tsconfig.base.json tsconfig.tests.json",
     "check:workspaces": "node scripts/check-workspaces.mjs",
     "clean": "tsc -b --clean",
     "format": "biome format --write harness spike scripts biome.json package.json tsconfig.json tsconfig.base.json tsconfig.tests.json",
     "lint": "biome lint harness spike scripts",
+    "prepack": "npm run build",
     "test": "npm run build --silent && node --test harness/*/test/*.test.ts",
+    "test:package": "node scripts/test-package.mjs",
     "cli": "npm run build --silent && node --env-file-if-exists=.env harness/cli/dist/main.js",
     "cli:replay": "npm run build --silent && node --env-file-if-exists=.env harness/cli/dist/main.js --replay",
     "typecheck": "npm run build --silent && tsc -p tsconfig.tests.json --noEmit && tsc -p harness/runtime-cordis/tsconfig.test.json --noEmit && tsc -p harness/app-boot/tsconfig.test.json --noEmit && tsc -p harness/cli/tsconfig.test.json --noEmit"
@@ -45,6 +59,7 @@
   "devDependencies": {
     "@biomejs/biome": "2.5.11",
     "@types/node": "26.4.0",
+    "esbuild": "0.28.2",
     "typescript": "7.0.2"
   }
 }

@@ -20,6 +20,7 @@ export type AppendedSessionEvent<Input extends SessionEventInput> = Extract<
 export interface SessionStore {
   create(id: string): Session
   get(id: string): Session | undefined
+  list(): readonly Session[]
 }
 
 export interface SessionSurfaceNode {
@@ -199,5 +200,9 @@ export class InMemorySessionStore implements SessionStore {
 
   get(id: string): Session | undefined {
     return this.#sessions.get(id)
+  }
+
+  list(): readonly Session[] {
+    return [...this.#sessions.values()].sort((left, right) => left.id.localeCompare(right.id))
   }
 }

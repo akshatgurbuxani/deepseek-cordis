@@ -74,6 +74,10 @@ export class TracingSessionStore implements SessionStore {
     return session === undefined ? undefined : this.#wrap(session)
   }
 
+  list(): readonly Session[] {
+    return this.#inner.list().map((session) => this.#wrap(session))
+  }
+
   #wrap(inner: Session): Session {
     const cached = this.#sessions.get(inner.id)
     if (cached?.inner === inner) return cached.traced
