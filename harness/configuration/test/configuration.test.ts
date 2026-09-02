@@ -19,7 +19,7 @@ test('a minimal versioned profile expands to immutable explicit defaults', () =>
     retry: { maxRetries: 2, initialDelayMs: 250, maxDelayMs: 5_000 },
     routing: {
       allowFallbacks: true,
-      requireParameters: true,
+      requireParameters: false,
       dataCollection: 'allow',
       sort: 'throughput',
     },
@@ -50,6 +50,7 @@ test('a minimal versioned profile expands to immutable explicit defaults', () =>
     retainTurns: 1,
     maxOverflowRetries: 1,
   })
+  assert.deepEqual(profile.agent, { maxSteps: 8 })
   assert.equal(Object.isFrozen(profile), true)
   assert.equal(Object.isFrozen(profile.tools.enabled), true)
 })
@@ -82,6 +83,7 @@ test('all profile choices normalize without retaining caller-owned structures', 
     },
     approval: { default: 'deny' },
     context: { thresholdRatio: 0.65, retainTurns: 2, maxOverflowRetries: 0 },
+    agent: { maxSteps: 24 },
   }
   const profile = validateHarnessProfile(source)
   source.name = 'mutated'
@@ -114,6 +116,7 @@ test('all profile choices normalize without retaining caller-owned structures', 
     },
     approval: { default: 'deny' },
     context: { thresholdRatio: 0.65, retainTurns: 2, maxOverflowRetries: 0 },
+    agent: { maxSteps: 24 },
   })
 })
 
@@ -246,6 +249,8 @@ test('bounds, booleans, tools, and policy vocabulary are validated', () => {
     [{ context: { thresholdRatio: 1 } }, /context\.thresholdRatio/],
     [{ context: { retainTurns: 0 } }, /context\.retainTurns/],
     [{ context: { maxOverflowRetries: -1 } }, /context\.maxOverflowRetries/],
+    [{ agent: { maxSteps: 0 } }, /agent\.maxSteps/],
+    [{ agent: { maxSteps: 65 } }, /must not exceed 64/],
   ]
   for (const [partial, expected] of invalid) {
     assert.throws(

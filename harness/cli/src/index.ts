@@ -975,6 +975,7 @@ export async function runCli(options: RunCliOptions = {}): Promise<RunResult> {
         : new UnavailableApprovalService(),
     )
     const result = await runtime.boot.context.agentLoop.run(runtime.session, configuration.input, {
+      maxSteps: configuration.profile.agent.maxSteps,
       ...(options.signal ? { signal: options.signal } : {}),
       ...(options.onTextDelta ? { onTextDelta: options.onTextDelta } : {}),
     })
@@ -1072,6 +1073,7 @@ export async function runInteractiveCli(
         continue
       }
       const result = await runtime.boot.context.agentLoop.run(runtime.session, line, {
+        maxSteps: configuration.profile.agent.maxSteps,
         ...(options.signal ? { signal: options.signal } : {}),
         ...(options.onTextDelta ? { onTextDelta: options.onTextDelta } : {}),
       })

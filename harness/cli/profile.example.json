@@ -12,7 +12,7 @@
     },
     "routing": {
       "allowFallbacks": true,
-      "requireParameters": true,
+      "requireParameters": false,
       "dataCollection": "allow",
       "sort": "throughput"
     }
@@ -70,5 +70,8 @@
     "thresholdRatio": 0.8,
     "retainTurns": 1,
     "maxOverflowRetries": 1
+  },
+  "agent": {
+    "maxSteps": 24
   }
 }

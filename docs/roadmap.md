@@ -41,3 +41,23 @@ Attachments, parallel tool execution, subagents, scheduling, automatic profile
 watching, UI, and autonomous commits or publication are not required for v1.
 They remain deferred until coding-task evidence identifies the next constraint
 and the relevant durable ordering and authority contracts are defined.
+
+## Post-v1 candidate sequence
+
+1. Feature 29: expose a bounded per-turn model-step budget and use compatible
+   provider routing by default. This addresses observed coding-task failures
+   without weakening tool authority.
+2. Feature 30: add an unmistakable launch-only
+   `--dangerously-skip-approvals` mode. It must never be selectable by a model,
+   profile, or environment variable; startup must print a warning, every grant
+   must remain durably audited, and ordinary `ask`/`deny` behavior must remain
+   unchanged.
+3. Feature 31: execute explicitly safe, independent tool calls concurrently
+   with a bounded worker count. Results must be committed in original call
+   order; mutations and commands remain sequential until observation leases,
+   conflicts, cancellation, and partial batch failure have deterministic
+   contracts.
+
+This sequence removes interaction friction before adding concurrency. It does
+not treat dangerous mode as a sandbox: local commands retain host authority,
+while Docker remains the recommended boundary for untrusted workloads.

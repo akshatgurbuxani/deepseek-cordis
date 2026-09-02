@@ -1485,6 +1485,8 @@ V1 OpenRouter profiles now expand retry count, initial/max delay, router
 fallbacks, required parameter support, provider data collection, and provider
 sorting into immutable values. The CLI passes those exact choices into every
 completion request rather than inheriting mutable routing defaults.
+Compatibility routing does not require every endpoint to advertise every
+optional parameter; deployments can opt into that stricter filter explicitly.
 
 The adapter retries network failures and transient 408, 429, 500, 502, 503,
 and 504 responses only before accepting a response stream. Backoff is
