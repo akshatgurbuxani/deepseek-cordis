@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import test from 'node:test'
@@ -8,6 +8,7 @@ import type { ProcessRunner } from '@deepseek-cordis/process'
 import {
   commandEnvironment,
   createWorkspaceCommandTool,
+  DockerWorkspaceProcessRunner,
   NodeWorkspaceProcessRunner,
   WORKSPACE_COMMAND_PROFILE,
   WORKSPACE_COMMAND_PROMPT_SECTION,
@@ -133,6 +134,184 @@ test('the Node runner terminates on cancellation and normalizes spawn failures',
   )
 })
 
+test('the Docker runner preflights and constructs a fully confined exact invocation', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'deepseek-cordis-process-docker-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  mkdirSync(join(root, 'nested'))
+  const calls: Array<Parameters<ProcessRunner['run']>[0]> = []
+  const probes: unknown[] = []
+  const hostRunner: ProcessRunner = {
+    async run(candidate) {
+      calls.push(candidate)
+      return {
+        program: candidate.program,
+        args: candidate.args,
+        cwd: candidate.cwd,
+        exitCode: 0,
+        signal: null,
+        timedOut: false,
+        stdout: { text: 'isolated\n', truncated: false },
+        stderr: { text: '', truncated: false },
+      }
+    },
+  }
+  const runner = new DockerWorkspaceProcessRunner({
+    root,
+    image: 'node@sha256:abc',
+    allowedPrograms: ['npm'],
+    hostEnvironment: { PATH: '/usr/bin' },
+    memoryBytes: 512 * 1024 * 1024,
+    pidsLimit: 64,
+    tmpfsBytes: 32 * 1024 * 1024,
+    probe: (program, image, environment) => probes.push({ program, image, environment }),
+    hostRunner,
+  })
+
+  const result = await runner.run({
+    program: 'npm',
+    args: ['test', '--privileged'],
+    cwd: 'nested',
+    timeoutMs: 5_000,
+  })
+  assert.deepEqual(probes, [
+    { program: 'docker', image: 'node@sha256:abc', environment: { PATH: '/usr/bin' } },
+  ])
+  assert.deepEqual(result, {
+    program: 'npm',
+    args: ['test', '--privileged'],
+    cwd: 'nested',
+    exitCode: 0,
+    signal: null,
+    timedOut: false,
+    stdout: { text: 'isolated\n', truncated: false },
+    stderr: { text: '', truncated: false },
+  })
+  assert.equal(calls.length, 2)
+  const invocation = calls[0]
+  assert.ok(invocation)
+  assert.equal(invocation.program, 'docker')
+  assert.equal(invocation.cwd, '.')
+  const argv = invocation.args
+  const requiredOptions: readonly (readonly [string, string])[] = [
+    ['--network', 'none'],
+    ['--cap-drop', 'ALL'],
+    ['--security-opt', 'no-new-privileges=true'],
+    ['--pids-limit', '64'],
+    ['--memory', String(512 * 1024 * 1024)],
+    ['--memory-swap', String(512 * 1024 * 1024)],
+    ['--workdir', '/workspace/nested'],
+    ['--entrypoint', 'npm'],
+  ]
+  for (const pair of requiredOptions) {
+    const index = argv.indexOf(pair[0])
+    assert.notEqual(index, -1, `missing ${pair[0]}`)
+    assert.equal(argv[index + 1], pair[1])
+  }
+  assert.equal(argv.includes('--read-only'), true)
+  assert.equal(argv.includes('--rm'), true)
+  assert.equal(argv.includes('--init'), true)
+  assert.equal(argv.includes('node@sha256:abc'), true)
+  assert.equal(argv.indexOf('--privileged') > argv.indexOf('node@sha256:abc'), true)
+  assert.equal(argv.includes('OPENROUTER_API_KEY'), false)
+  const mount = argv[argv.indexOf('--mount') + 1]
+  assert.ok(mount)
+  assert.match(mount, /^type=bind,src=.*dst=\/workspace$/)
+  const cleanup = calls[1]
+  assert.ok(cleanup)
+  assert.deepEqual(cleanup.args.slice(0, 2), ['rm', '--force'])
+})
+
+test('optional Docker integration confines host access and publishes workspace output', {
+  skip: process.env.HARNESS_DOCKER_TEST_IMAGE === undefined,
+}, async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'deepseek-cordis-process-docker-live-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const runner = new DockerWorkspaceProcessRunner({
+    root,
+    image: process.env.HARNESS_DOCKER_TEST_IMAGE!,
+    allowedPrograms: ['node'],
+    hostEnvironment: commandEnvironment(process.env),
+    memoryBytes: 512 * 1024 * 1024,
+    pidsLimit: 64,
+    tmpfsBytes: 32 * 1024 * 1024,
+  })
+  const script = `
+      import { writeFileSync } from 'node:fs'
+      let rootReadOnly = false
+      let networkDenied = false
+      try { writeFileSync('/outside-workspace', 'no') } catch { rootReadOnly = true }
+      try { await fetch('https://example.com') } catch { networkDenied = true }
+      writeFileSync('/workspace/result.json', JSON.stringify({ rootReadOnly, networkDenied, secret: process.env.OPENROUTER_API_KEY }))
+      console.log(JSON.stringify({ rootReadOnly, networkDenied }))
+    `
+  const result = await runner.run({
+    program: 'node',
+    args: ['--input-type=module', '--eval', script],
+    cwd: '.',
+    timeoutMs: 15_000,
+  })
+  assert.equal(result.exitCode, 0, result.stderr.text)
+  assert.deepEqual(JSON.parse(result.stdout.text.trim()), {
+    rootReadOnly: true,
+    networkDenied: true,
+  })
+  const published = JSON.parse(readFileSync(join(root, 'result.json'), 'utf8')) as Record<
+    string,
+    unknown
+  >
+  assert.deepEqual(published, { rootReadOnly: true, networkDenied: true })
+})
+
+test('the Docker runner fails preflight and always attempts named-container cleanup', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'deepseek-cordis-process-docker-cleanup-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  assert.throws(
+    () =>
+      new DockerWorkspaceProcessRunner({
+        root,
+        image: 'node:local',
+        allowedPrograms: ['npm'],
+        probe: () => {
+          throw new Error('daemon unavailable')
+        },
+      }),
+    /daemon unavailable/,
+  )
+
+  const calls: Array<Parameters<ProcessRunner['run']>[0]> = []
+  const failure = new Error('container interrupted')
+  const runner = new DockerWorkspaceProcessRunner({
+    root,
+    image: 'node:local',
+    allowedPrograms: ['npm'],
+    probe: () => {},
+    hostRunner: {
+      async run(candidate) {
+        calls.push(candidate)
+        if (calls.length === 1) throw failure
+        return {
+          program: candidate.program,
+          args: candidate.args,
+          cwd: candidate.cwd,
+          exitCode: 0,
+          signal: null,
+          timedOut: false,
+          stdout: { text: '', truncated: false },
+          stderr: { text: '', truncated: false },
+        }
+      },
+    },
+  })
+  await assert.rejects(
+    runner.run({ program: 'npm', args: ['test'], cwd: '.', timeoutMs: 1_000 }),
+    failure,
+  )
+  assert.equal(calls.length, 2)
+  const cleanup = calls[1]
+  assert.ok(cleanup)
+  assert.deepEqual(cleanup.args.slice(0, 2), ['rm', '--force'])
+})
+
 test('sandbox preparation validates, caps timeouts, and issues a single-use exact lease', async () => {
   const seen: unknown[] = []
   const runner: ProcessRunner = {
@@ -175,6 +354,34 @@ test('sandbox preparation validates, caps timeouts, and issues a single-use exac
     ok: false,
     reason: 'command arguments contain unknown field "unknown"',
   })
+})
+
+test('full command leases and tool schemas agree on required enforcement', async () => {
+  const runner: ProcessRunner = {
+    async run(candidate) {
+      return {
+        program: candidate.program,
+        args: candidate.args,
+        cwd: candidate.cwd,
+        exitCode: 0,
+        signal: null,
+        timedOut: false,
+        stdout: { text: '', truncated: false },
+        stderr: { text: '', truncated: false },
+      }
+    },
+  }
+  const sandbox = new WorkspaceCommandSandbox({
+    runner,
+    provider: 'workspace-process/docker-v1',
+    enforcement: 'full',
+  })
+  const prepared = await sandbox.prepare(request({ program: 'npm' }))
+  assert.equal(prepared.ok, true)
+  if (!prepared.ok) return
+  assert.equal(prepared.lease.provider, 'workspace-process/docker-v1')
+  assert.equal(prepared.lease.enforcement, 'full')
+  assert.equal(createWorkspaceCommandTool('full').safety.sandbox.requiredEnforcement, 'full')
 })
 
 test('tool and prompt expose structured command behavior only when selected', async () => {

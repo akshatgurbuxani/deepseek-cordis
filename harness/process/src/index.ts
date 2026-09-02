@@ -34,7 +34,8 @@ export class ProcessError extends Error {
       | 'PROCESS_INVALID_REQUEST'
       | 'PROCESS_NOT_ALLOWED'
       | 'PROCESS_WORKSPACE_DENIED'
-      | 'PROCESS_SPAWN_FAILED',
+      | 'PROCESS_SPAWN_FAILED'
+      | 'PROCESS_SANDBOX_UNAVAILABLE',
     message: string,
     options: ErrorOptions = {},
   ) {

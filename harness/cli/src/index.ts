@@ -40,6 +40,7 @@ import { OpenRouterModelAdapter } from '@deepseek-cordis/model-openrouter'
 import {
   commandEnvironment,
   createWorkspaceCommandTool,
+  DockerWorkspaceProcessRunner,
   NodeWorkspaceProcessRunner,
   WORKSPACE_COMMAND_PROFILE,
   WORKSPACE_COMMAND_PROMPT_SECTION,
@@ -317,7 +318,9 @@ function manifestFor(
   const tokenMeter = createTokenMeterPlugin(meter)
   const systemPrompt = createSystemPromptPlugin()
   const filesystemTools = createWorkspaceFilesystemTools()
-  const commandTool = createWorkspaceCommandTool()
+  const commandTool = createWorkspaceCommandTool(
+    profile.process.backend === 'docker' ? 'full' : 'partial',
+  )
   const enabledTools = new Set(profile.tools.enabled)
   const personaSection = Object.freeze({
     name: 'profile:persona',
@@ -361,7 +364,7 @@ function manifestFor(
     })),
     {
       id: WORKSPACE_COMMAND_TOOL,
-      revision: 'v1',
+      revision: profileRevision,
       enabled: enabledTools.has('workspace.command'),
       load: () => createToolRegistrationPlugin(commandTool),
     },
@@ -532,18 +535,36 @@ function runtimeManifest(
   }
   if (configuration.profile.tools.enabled.includes('workspace.command')) {
     const processProfile = configuration.profile.process
+    const hostEnvironment = commandEnvironment(env)
+    const runner =
+      processProfile.backend === 'docker'
+        ? new DockerWorkspaceProcessRunner({
+            root: configuration.workspaceRoot,
+            image: processProfile.image,
+            allowedPrograms: processProfile.allowedPrograms,
+            hostEnvironment,
+            maxOutputBytes: processProfile.maxOutputBytes,
+            killGraceMs: processProfile.killGraceMs,
+            memoryBytes: processProfile.memoryBytes,
+            pidsLimit: processProfile.pidsLimit,
+            tmpfsBytes: processProfile.tmpfsBytes,
+          })
+        : new NodeWorkspaceProcessRunner({
+            root: configuration.workspaceRoot,
+            allowedPrograms: processProfile.allowedPrograms,
+            environment: hostEnvironment,
+            maxOutputBytes: processProfile.maxOutputBytes,
+            killGraceMs: processProfile.killGraceMs,
+          })
     routes.set(
       WORKSPACE_COMMAND_PROFILE,
       new WorkspaceCommandSandbox({
-        runner: new NodeWorkspaceProcessRunner({
-          root: configuration.workspaceRoot,
-          allowedPrograms: processProfile.allowedPrograms,
-          environment: commandEnvironment(env),
-          maxOutputBytes: processProfile.maxOutputBytes,
-          killGraceMs: processProfile.killGraceMs,
-        }),
+        runner,
         timeoutMs: processProfile.timeoutMs,
         maxTimeoutMs: processProfile.maxTimeoutMs,
+        ...(processProfile.backend === 'docker'
+          ? { provider: 'workspace-process/docker-v1', enforcement: 'full' as const }
+          : {}),
       }),
     )
   }
@@ -681,6 +702,7 @@ async function mountCliRuntime(
       profileSource: configuration.profilePath === undefined ? 'default' : 'file',
       tools: configuration.profile.tools.enabled,
       approvalDefault: configuration.profile.approval.default,
+      processBackend: configuration.profile.process.backend,
       sessionId,
       sessionStore: configuration.sessionDirectory ? 'file' : 'memory',
       resumed: existingSession !== undefined,
