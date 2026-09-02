@@ -1,15 +1,19 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import test from 'node:test'
 import {
+  cliConflictRecovery,
+  discoverPersistedSessions,
   InteractiveApprovalService,
   InteractiveReplayModelAdapter,
+  initializeCliProfile,
   parseCliArguments,
   resolveCliConfiguration,
   runCli,
+  runCliOperator,
   runInteractiveCli,
 } from '@deepseek-cordis/cli'
 import { consoleTrace, type TraceSink, TracingSessionStore } from '@deepseek-cordis/cli/tracing'
@@ -17,6 +21,7 @@ import { completeModel, ModelStreamError } from '@deepseek-cordis/model'
 import {
   FileSessionStore,
   SESSION_FILE_SCHEMA_VERSION,
+  SessionWriteConflictError,
   sessionFilePath,
   TOOL_OUTCOME_UNKNOWN,
 } from '@deepseek-cordis/session-file'
@@ -54,16 +59,21 @@ test('argument parsing selects replay or OpenRouter without exposing environment
   assert.deepEqual(parseCliArguments(['--replay', 'add', '2', 'and', '3'], {}), {
     mode: 'replay',
     interactive: false,
+    quiet: false,
     input: 'add 2 and 3',
     model: 'replay/calculator',
   })
   assert.deepEqual(parseCliArguments([], { OPENROUTER_MODEL: 'provider/model' }), {
     mode: 'openrouter',
     interactive: false,
+    quiet: false,
     input: 'Use the add tool to calculate 17 + 25.',
     model: 'provider/model',
   })
   assert.equal(parseCliArguments(['--interactive', '--replay'], {}).interactive, true)
+  assert.equal(parseCliArguments(['--quiet'], {}).quiet, true)
+  assert.equal(parseCliArguments(['--resume', 'session-1'], {}).resumeSessionId, 'session-1')
+  assert.equal(parseCliArguments(['--resume=session-2'], {}).resumeSessionId, 'session-2')
   assert.equal(parseCliArguments(['--profile', 'coding.json'], {}).profilePath, 'coding.json')
   assert.equal(parseCliArguments(['--profile=coding.json'], {}).profilePath, 'coding.json')
   assert.equal(
@@ -78,6 +88,10 @@ test('argument parsing selects replay or OpenRouter without exposing environment
   )
   assert.throws(() => parseCliArguments(['--profile'], {}), /requires a path/)
   assert.throws(() => parseCliArguments(['--profile='], {}), /requires a path/)
+  assert.throws(() => parseCliArguments(['--resume'], {}), /requires a session id/)
+  assert.throws(() => parseCliArguments(['--resume='], {}), /requires a session id/)
+  assert.throws(() => parseCliArguments(['--resume', 'first', '--resume=second'], {}), /only once/)
+  assert.throws(() => parseCliArguments([`--resume=${'x'.repeat(257)}`], {}), /too long/)
   assert.throws(() => parseCliArguments([], { HARNESS_PROFILE: ' ' }), /non-empty path/)
   assert.equal(
     parseCliArguments(['--profile=valid.json'], {
@@ -90,6 +104,90 @@ test('argument parsing selects replay or OpenRouter without exposing environment
     /only once/,
   )
   assert.throws(() => parseCliArguments(['--unknown'], {}), /unknown option "--unknown"/)
+})
+
+test('profile initialization is secure, complete, and refuses to overwrite', (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'deepseek-cordis-init-'))
+  t.after(() => rmSync(directory, { recursive: true, force: true }))
+  const filename = join(directory, 'nested', 'coding.json')
+
+  assert.equal(initializeCliProfile(filename), filename)
+  assert.equal(statSync(filename).mode & 0o777, 0o600)
+  const configuration = resolveCliConfiguration(parseCliArguments(['--profile', filename], {}), {})
+  assert.equal(configuration.profile.name, 'coding')
+  assert.equal(configuration.profile.persistence.kind, 'file')
+  assert.equal(configuration.profile.tools.enabled.includes('workspace.patch'), true)
+  assert.equal(configuration.profile.tools.enabled.includes('add'), false)
+  assert.throws(() => initializeCliProfile(filename), /already exists; it was not changed/)
+})
+
+test('session discovery and model-free operators expose deterministic resumable state', (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'deepseek-cordis-sessions-'))
+  t.after(() => rmSync(directory, { recursive: true, force: true }))
+  const profile = initializeCliProfile(join(directory, 'profile.json'))
+  const configuration = resolveCliConfiguration(parseCliArguments(['--profile', profile], {}), {})
+  const store = new FileSessionStore({ directory: configuration.sessionDirectory! })
+  const second = store.create('second')
+  second.append({ type: 'turn/start', turnId: 'second:turn:1' })
+  second.append({ type: 'turn/end', turnId: 'second:turn:1', status: 'completed' })
+  store.create('first')
+
+  assert.deepEqual(discoverPersistedSessions(configuration), [
+    { id: 'first', events: 0, turns: 0, lastStatus: 'empty' },
+    { id: 'second', events: 2, turns: 1, lastStatus: 'completed' },
+  ])
+  const output: string[] = []
+  assert.equal(
+    runCliOperator({
+      argv: ['--sessions', '--profile', profile, '--quiet'],
+      env: {},
+      output: (line) => output.push(line),
+    }),
+    true,
+  )
+  assert.deepEqual(output, [
+    'first\tturns=0\tevents=0\tlast=empty',
+    'second\tturns=1\tevents=2\tlast=completed',
+  ])
+  assert.throws(
+    () => runCliOperator({ argv: ['--sessions', '--profile', profile, 'unexpected'], env: {} }),
+    /accepts only --profile and --quiet/,
+  )
+})
+
+test('help is model-free and documents every operator mode', () => {
+  const output: string[] = []
+  assert.equal(
+    runCliOperator({ argv: ['--help'], env: {}, output: (line) => output.push(line) }),
+    true,
+  )
+  assert.match(output[0]!, /Usage: deepseek-cordis/)
+  for (const option of [
+    '--profile',
+    '--interactive',
+    '--resume',
+    '--quiet',
+    '--init',
+    '--sessions',
+  ]) {
+    assert.match(output[0]!, new RegExp(option))
+  }
+  assert.throws(
+    () => runCliOperator({ argv: ['--help', '--quiet'], env: {} }),
+    /cannot be combined/,
+  )
+})
+
+test('CLI conflict errors include an actionable recovery path', () => {
+  assert.equal(cliConflictRecovery(new Error('ordinary failure')), undefined)
+  assert.match(
+    String(cliConflictRecovery(new SessionWriteConflictError('SESSION_WRITE_BUSY', 'busy'))),
+    /retry with --resume <session-id>/,
+  )
+  assert.match(
+    String(cliConflictRecovery(new SessionWriteConflictError('SESSION_STALE_WRITER', 'stale'))),
+    /Use --sessions.*--resume <session-id>/s,
+  )
 })
 
 test('profile paths resolve at their owning layer and launch overlays win explicitly', (t) => {
@@ -781,6 +879,45 @@ test('file-backed CLI resumes the same session across fresh application boots', 
       { role: 'user', content: 'add 2 and 3' },
       { role: 'user', content: 'add 4 and 5' },
     ],
+  )
+})
+
+test('explicit resume selects an existing persisted session and rejects unsafe ambiguity', async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'deepseek-cordis-cli-explicit-resume-'))
+  t.after(() => rmSync(directory, { recursive: true, force: true }))
+  const env = { HARNESS_SESSION_DIR: directory }
+
+  await runCli({
+    argv: ['--replay', 'add 1 and 2'],
+    env,
+    trace: () => undefined,
+    output: () => undefined,
+    sessionId: 'chosen',
+  })
+  const resumed = await runCli({
+    argv: ['--quiet', '--resume=chosen', '--replay', 'add 3 and 4'],
+    env,
+    output: () => undefined,
+  })
+  assert.equal(resumed.turnId, 'chosen:turn:2')
+
+  await assert.rejects(
+    runCli({
+      argv: ['--resume', 'missing', '--replay', 'add 1 and 2'],
+      env,
+      trace: () => undefined,
+      output: () => undefined,
+    }),
+    /was not found; use --sessions/,
+  )
+  await assert.rejects(
+    runCli({
+      argv: ['--resume', 'chosen', '--replay', 'add 1 and 2'],
+      env: {},
+      trace: () => undefined,
+      output: () => undefined,
+    }),
+    /requires file persistence/,
   )
 })
 
@@ -1566,6 +1703,14 @@ test('process entry point prints replay output and exits non-zero for invalid ar
   assert.match(success.stdout, /The answer is 7\./)
   assert.match(success.stdout, /to: 'DISPOSED'/)
 
+  const quiet = spawnSync(
+    process.execPath,
+    ['harness/cli/dist/main.js', '--quiet', '--replay', 'add 8 and 9'],
+    { cwd: process.cwd(), encoding: 'utf8', env: {} },
+  )
+  assert.equal(quiet.status, 0, quiet.stderr)
+  assert.equal(quiet.stdout, 'The answer is 17.\n')
+
   const interactive = spawnSync(
     process.execPath,
     ['harness/cli/dist/main.js', '--interactive', '--replay'],
@@ -1588,4 +1733,26 @@ test('process entry point prints replay output and exits non-zero for invalid ar
   assert.equal(failure.status, 1)
   assert.match(failure.stderr, /\[cli\/error\]/)
   assert.match(failure.stderr, /unknown option "--unknown"/)
+})
+
+test('process entry point initializes a profile without model credentials', (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'deepseek-cordis-cli-main-init-'))
+  t.after(() => rmSync(directory, { recursive: true, force: true }))
+  const filename = join(directory, 'configuration', 'profile.json')
+  const result = spawnSync(process.execPath, ['harness/cli/dist/main.js', '--init', filename], {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+    env: {},
+  })
+  assert.equal(result.status, 0, result.stderr)
+  assert.match(result.stdout, /^Created /)
+  assert.equal(existsSync(filename), true)
+
+  const help = spawnSync(process.execPath, ['harness/cli/dist/main.js', '--help'], {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+    env: {},
+  })
+  assert.equal(help.status, 0, help.stderr)
+  assert.match(help.stdout, /Usage: deepseek-cordis/)
 })

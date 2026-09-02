@@ -2,6 +2,33 @@
 
 First runnable production composition for the harness.
 
+## Install and initialize
+
+The repository builds one dependency-free executable package at the root. Node
+24 or newer is required. Build a tarball, install it, and create a coding
+profile without copying or editing the example by hand:
+
+```sh
+npm install
+npm pack
+npm install --global ./deepseek-cordis-0.1.0.tgz
+deepseek-cordis --init
+```
+
+`--init [path]` creates missing parent directories, writes a mode-0600 profile
+with file persistence and the coding workspace tools enabled, and never
+overwrites an existing file. Add `OPENROUTER_API_KEY` to the environment, then
+run a one-shot task or enter the multi-turn channel:
+
+```sh
+deepseek-cordis --profile ./deepseek-cordis.json "inspect this repository"
+deepseek-cordis --interactive --profile ./deepseek-cordis.json
+```
+
+Use `--quiet` when stdout must contain only the final response. Lifecycle and
+provider tracing remains the default for diagnosis. `deepseek-cordis --help`
+summarizes run and administration options without requiring credentials.
+
 The CLI builds a complete `AppBoot` manifest containing a traced session store,
 tool registry, harmless calculator, consequential workspace filesystem family,
 channel/headless approval, concrete workspace provider, replay or OpenRouter
@@ -179,8 +206,19 @@ work, waits for the durable aborted boundary and Cordis cleanup, then exits with
 status 130. Programmatic callers can inject the same signal and a text-delta
 observer through `runCli()`.
 
-Sessions remain ephemeral by default. Set `HARNESS_SESSION_DIR` to select the
-file provider and `HARNESS_SESSION_ID` to give the history a stable identity:
+Sessions remain ephemeral by default. A generated profile selects file
+persistence. List its histories and explicitly continue one by ID:
+
+```sh
+deepseek-cordis --sessions --profile ./deepseek-cordis.json
+deepseek-cordis --resume <session-id> --profile ./deepseek-cordis.json \
+  "continue from the persisted work"
+```
+
+`--sessions` is model-free and needs no API credential. Resume fails if the ID
+does not already exist or file persistence is unavailable; it never silently
+starts a different history. For launch-managed identities, set
+`HARNESS_SESSION_DIR` and `HARNESS_SESSION_ID` directly:
 
 ```sh
 HARNESS_SESSION_DIR=.sessions HARNESS_SESSION_ID=demo \
@@ -198,7 +236,9 @@ Two live processes should not use one session ID as collaborative editing.
 Per-session locking and revision checks prevent either process from silently
 erasing the other's history: a contender receives a busy conflict while a
 write is active, and an instance holding an older revision must reopen after
-the winner commits. Different session IDs can proceed independently.
+the winner commits. CLI errors direct operators to wait or inspect
+`--sessions`, then reopen with `--resume`. Different session IDs can proceed
+independently.
 
 Set exact provider capacity to enable proactive pressure compaction:
 

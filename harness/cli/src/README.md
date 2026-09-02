@@ -7,7 +7,9 @@ values, streams text to stdout, and converts failure or cancellation into the
 appropriate non-zero exit code.
 
 Argument parsing selects an optional schema-V1 JSON profile, deterministic
-replay override with `--replay`, and interactive mode. Profile validation and
+replay override with `--replay`, quiet diagnostics, explicit persisted-session
+resume, and interactive mode. Model-free operators can exclusively initialize
+a coding profile or discover its sessions before runtime construction. Profile validation and
 path resolution complete before runtime construction; explicit launch
 environment values overlay the immutable profile. Replay extracts two numeric
 operands and scripts one tool call followed by a final answer. Live mode
@@ -33,8 +35,10 @@ and durably closes any unambiguous interrupted tail before the store becomes a
 Cordis capability. Its tracing store decorates that provider and caches
 wrappers, preserving the identity rule required by the agent loop. After
 reconciliation, it creates the configured session or resumes an existing
-`HARNESS_SESSION_ID` with a new turn, runs it, traces the result, and prints its
-final content. The process entry point maps `SIGINT` to a runtime-only
+`HARNESS_SESSION_ID` with a new turn. `--resume` strengthens that behavior by
+requiring file persistence and an existing exact ID. The command runs it,
+traces the result unless `--quiet` selected a no-op sink, and prints its final
+content. The process entry point maps `SIGINT` to a runtime-only
 `{ kind: 'user' }` abort cause and exits 130 after durable turn closure.
 `finally` always reconciles an empty manifest before removing the lifecycle
 listener. Success, model failure, cancellation, configuration failure after

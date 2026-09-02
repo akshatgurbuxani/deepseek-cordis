@@ -3,7 +3,7 @@
 This is the maintained forward-looking plan. Accepted feature history and its
 architecture evidence remain in [`../harness/README.md`](../harness/README.md).
 
-## Completed foundation: Features 23–26
+## Completed foundation: Features 23–27
 
 Session persistence is bounded and recovers completed local locks. Command
 execution now has explicit local/partial and Docker/full backends with
@@ -13,11 +13,15 @@ reviewable versioned patches, atomic multi-hunk publication, and guarded
 non-overwriting move/delete.
 OpenRouter calls now use explicit provider-routing preferences and bounded,
 cancellable pre-stream retries with opt-in live qualification.
+The CLI now ships as one installable executable with secure profile
+initialization, deterministic session discovery, explicit resume, quiet output,
+and actionable persistence-conflict recovery.
 
-## Current milestone: Feature 27
+## Current milestone: Feature 28
 
-Package an installable CLI with profile initialization, session discovery and
-resume, quiet output, and actionable conflict recovery.
+Run representative repository tasks and adversarial cases against the packed
+CLI, then publish the supported operational limits and evidence-backed safe
+defaults for coding-harness v1.
 
 ## Coding-harness v1 sequence
 
