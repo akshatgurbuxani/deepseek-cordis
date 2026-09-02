@@ -27,9 +27,14 @@
       "add",
       "workspace.read",
       "workspace.list",
+      "workspace.find",
       "workspace.stat",
       "workspace.write",
       "workspace.edit",
+      "workspace.preview_patch",
+      "workspace.patch",
+      "workspace.move",
+      "workspace.delete",
       "workspace.command"
     ]
   },

@@ -34,8 +34,9 @@ Omitted sections receive explicit defaults. Unknown fields,
 unknown/duplicate tools, invalid bounds, incompatible provider fields, invalid
 JSON, and unsupported schema versions fail before `AppBoot` exists.
 Recognized tool IDs are `add`, `workspace.create`, `workspace.read`,
-`workspace.list`, `workspace.stat`, `workspace.write`, `workspace.edit`, and
-`workspace.command`.
+`workspace.list`, `workspace.find`, `workspace.stat`, `workspace.write`,
+`workspace.edit`, `workspace.preview_patch`, `workspace.patch`,
+`workspace.move`, `workspace.delete`, and `workspace.command`.
 Selections normalize to that stable presentation order.
 
 Relative workspace and persistence paths are resolved against the profile

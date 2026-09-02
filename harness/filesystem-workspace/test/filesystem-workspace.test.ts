@@ -18,10 +18,15 @@ import { FileSystemError, type FileTarget } from '@deepseek-cordis/filesystem'
 import {
   createWorkspaceFilesystemTools,
   NodeWorkspaceFileSystem,
+  WORKSPACE_DELETE_FILE_TOOL,
   WORKSPACE_EDIT_FILE_TOOL,
   WORKSPACE_FILESYSTEM_PROFILE,
   WORKSPACE_FILESYSTEM_PROMPT_SECTION,
+  WORKSPACE_FIND_PATHS_TOOL,
   WORKSPACE_LIST_DIRECTORY_TOOL,
+  WORKSPACE_MOVE_FILE_TOOL,
+  WORKSPACE_PATCH_FILE_TOOL,
+  WORKSPACE_PREVIEW_PATCH_TOOL,
   WORKSPACE_READ_FILE_TOOL,
   WORKSPACE_STAT_PATH_TOOL,
   WORKSPACE_WRITE_FILE_TOOL,
@@ -209,6 +214,129 @@ test('version guards prevent stale writes and edit is exact and atomic', async (
   )
 })
 
+test('provider discovery is deterministic, bounded, and never follows links', async (t) => {
+  const root = temporaryDirectory(t)
+  mkdirSync(join(root, 'a'))
+  mkdirSync(join(root, 'a', 'nested'))
+  writeFileSync(join(root, 'a', 'nested', 'deep.txt'), 'deep')
+  writeFileSync(join(root, 'a', 'top.txt'), 'top')
+  writeFileSync(join(root, 'z.txt'), 'z')
+  symlinkSync(join(root, 'a'), join(root, 'linked'))
+  const filesystem = new NodeWorkspaceFileSystem({ root })
+
+  assert.deepEqual(
+    await filesystem.find(filesystem.resolve('.'), { maxEntries: 20, maxDepth: 2 }),
+    {
+      path: '.',
+      entries: [
+        { path: 'a', name: 'a', kind: 'directory' },
+        { path: 'a/nested', name: 'nested', kind: 'directory' },
+        { path: 'a/top.txt', name: 'top.txt', kind: 'file' },
+        { path: 'linked', name: 'linked', kind: 'symlink' },
+        { path: 'z.txt', name: 'z.txt', kind: 'file' },
+      ],
+      truncated: false,
+    },
+  )
+  const bounded = await filesystem.find(filesystem.resolve('.'), {
+    maxEntries: 2,
+    maxDepth: 8,
+  })
+  assert.equal(bounded.entries.length, 2)
+  assert.equal(bounded.truncated, true)
+  assert.equal(
+    bounded.entries.some((entry) => entry.path.includes('linked/')),
+    false,
+  )
+})
+
+test('multi-hunk preview is non-mutating and patch publication is all-or-nothing', async (t) => {
+  const root = temporaryDirectory(t)
+  const path = join(root, 'code.ts')
+  writeFileSync(path, 'const first = 1\nconst second = 2\n')
+  const filesystem = new NodeWorkspaceFileSystem({ root })
+  const target = filesystem.resolve('code.ts')
+  const replacements = [
+    { oldText: 'first = 1', newText: 'first = 10' },
+    { oldText: 'second = 2', newText: 'second = 20' },
+  ]
+  const preview = await filesystem.previewPatch(target, replacements, {
+    maxBytes: 1_000,
+    maxDiffBytes: 1_000,
+  })
+  assert.equal(readFileSync(path, 'utf8'), 'const first = 1\nconst second = 2\n')
+  assert.match(preview.diff, /-first = 1/)
+  assert.match(preview.diff, /\+second = 20/)
+  assert.equal(preview.truncated, false)
+
+  const patched = await filesystem.patchText(target, replacements, {
+    expectedVersion: preview.version,
+    maxDiffBytes: 1_000,
+  })
+  assert.equal(readFileSync(path, 'utf8'), 'const first = 10\nconst second = 20\n')
+  assert.notEqual(patched.version, preview.version)
+
+  const after = await filesystem.readText(target, { maxBytes: 1_000 })
+  for (const invalid of [
+    [{ oldText: 'missing', newText: 'x' }],
+    [
+      { oldText: 'first = 10', newText: 'x' },
+      { oldText: 'first = 10\nconst second', newText: 'y' },
+    ],
+  ]) {
+    await assert.rejects(
+      filesystem.patchText(target, invalid, {
+        expectedVersion: after.version,
+        maxDiffBytes: 1_000,
+      }),
+      /FS_EDIT_NOT_FOUND|FS_AMBIGUOUS_EDIT/,
+    )
+    assert.equal(readFileSync(path, 'utf8'), 'const first = 10\nconst second = 20\n')
+  }
+  const tiny = await filesystem.previewPatch(target, [{ oldText: 'first', newText: 'FIRST' }], {
+    maxBytes: 1_000,
+    maxDiffBytes: 10,
+  })
+  assert.equal(tiny.truncated, true)
+  assert.ok(Buffer.byteLength(tiny.diff, 'utf8') <= 10)
+})
+
+test('move and delete require exact versions and never overwrite', async (t) => {
+  const root = temporaryDirectory(t)
+  writeFileSync(join(root, 'source.txt'), 'source')
+  writeFileSync(join(root, 'occupied.txt'), 'occupied')
+  const filesystem = new NodeWorkspaceFileSystem({ root })
+  const source = filesystem.resolve('source.txt')
+  const observed = await filesystem.readText(source, { maxBytes: 100 })
+
+  await assert.rejects(
+    filesystem.moveFile(source, filesystem.resolve('occupied.txt'), {
+      expectedSourceVersion: observed.version,
+      expectedDestinationVersion: null,
+    }),
+    /FS_STALE_VERSION/,
+  )
+  assert.equal(readFileSync(join(root, 'occupied.txt'), 'utf8'), 'occupied')
+  const moved = await filesystem.moveFile(source, filesystem.resolve('moved.txt'), {
+    expectedSourceVersion: observed.version,
+    expectedDestinationVersion: null,
+  })
+  assert.equal(readdirSync(root).includes('source.txt'), false)
+  assert.equal(readFileSync(join(root, 'moved.txt'), 'utf8'), 'source')
+
+  writeFileSync(join(root, 'moved.txt'), 'changed')
+  await assert.rejects(
+    filesystem.deleteFile(filesystem.resolve('moved.txt'), { expectedVersion: moved.version }),
+    /FS_STALE_VERSION/,
+  )
+  const latest = await filesystem.readText(filesystem.resolve('moved.txt'), { maxBytes: 100 })
+  const deleted = await filesystem.deleteFile(filesystem.resolve('moved.txt'), {
+    expectedVersion: latest.version,
+  })
+  assert.equal(deleted.deletedVersion, latest.version)
+  assert.equal(readdirSync(root).includes('moved.txt'), false)
+})
+
 function request(
   toolName: string,
   argumentsValue: JsonValue,
@@ -302,6 +430,76 @@ test('sandbox enforces session observation before guarded write and edit', async
   assert.match(otherSession.ok ? '' : otherSession.reason, /FS_NOT_OBSERVED/)
 })
 
+test('sandbox composes previewed patch, guarded move, discovery, and guarded delete', async (t) => {
+  const root = temporaryDirectory(t)
+  mkdirSync(join(root, 'src'))
+  writeFileSync(join(root, 'src', 'code.ts'), 'let one = 1\nlet two = 2\n')
+  const sandbox = new WorkspaceFilesystemSandbox({
+    filesystem: new NodeWorkspaceFileSystem({ root }),
+    maxDiscoveryEntries: 2,
+    maxDiscoveryDepth: 4,
+    maxPatchReplacements: 2,
+    maxPatchDiffBytes: 1_000,
+  })
+
+  const discovery = await sandbox.prepare(request(WORKSPACE_FIND_PATHS_TOOL, { path: '.' }))
+  assert.equal(discovery.ok, true)
+  if (!discovery.ok) return
+  assert.deepEqual(await discovery.lease.execute(), {
+    path: '.',
+    entries: [
+      { path: 'src', name: 'src', kind: 'directory' },
+      { path: 'src/code.ts', name: 'code.ts', kind: 'file' },
+    ],
+    truncated: false,
+  })
+
+  const replacements = [
+    { oldText: 'one = 1', newText: 'one = 10' },
+    { oldText: 'two = 2', newText: 'two = 20' },
+  ]
+  const preview = await sandbox.prepare(
+    request(WORKSPACE_PREVIEW_PATCH_TOOL, { path: 'src/code.ts', replacements }),
+  )
+  assert.equal(preview.ok, true)
+  if (!preview.ok) return
+  assert.match(((await preview.lease.execute()) as { diff: string }).diff, /replacement 2/)
+  const patch = await sandbox.prepare(
+    request(WORKSPACE_PATCH_FILE_TOOL, { path: 'src/code.ts', replacements }),
+  )
+  assert.equal(patch.ok, true)
+  if (!patch.ok) return
+  await patch.lease.execute()
+  assert.equal(readFileSync(join(root, 'src', 'code.ts'), 'utf8'), 'let one = 10\nlet two = 20\n')
+
+  const absent = await sandbox.prepare(
+    request(WORKSPACE_STAT_PATH_TOOL, { path: 'src/renamed.ts' }),
+  )
+  assert.equal(absent.ok, true)
+  if (!absent.ok) return
+  await absent.lease.execute()
+  const move = await sandbox.prepare(
+    request(WORKSPACE_MOVE_FILE_TOOL, { fromPath: 'src/code.ts', toPath: 'src/renamed.ts' }),
+  )
+  assert.equal(move.ok, true)
+  if (!move.ok) return
+  await move.lease.execute()
+
+  const remove = await sandbox.prepare(
+    request(WORKSPACE_DELETE_FILE_TOOL, { path: 'src/renamed.ts' }),
+  )
+  assert.equal(remove.ok, true)
+  if (!remove.ok) return
+  await remove.lease.execute()
+  assert.equal(readdirSync(join(root, 'src')).length, 0)
+
+  const secondDelete = await sandbox.prepare(
+    request(WORKSPACE_DELETE_FILE_TOOL, { path: 'src/renamed.ts' }),
+  )
+  assert.equal(secondDelete.ok, false)
+  assert.match(secondDelete.ok ? '' : secondDelete.reason, /FS_NOT_OBSERVED/)
+})
+
 test('registered tool family composes approval and retains create-tool compatibility', async (t) => {
   const root = temporaryDirectory(t)
   writeFileSync(join(root, 'b'), 'b')
@@ -317,9 +515,14 @@ test('registered tool family composes approval and retains create-tool compatibi
     [
       WORKSPACE_READ_FILE_TOOL,
       WORKSPACE_LIST_DIRECTORY_TOOL,
+      WORKSPACE_FIND_PATHS_TOOL,
       WORKSPACE_STAT_PATH_TOOL,
       WORKSPACE_WRITE_FILE_TOOL,
       WORKSPACE_EDIT_FILE_TOOL,
+      WORKSPACE_PREVIEW_PATCH_TOOL,
+      WORKSPACE_PATCH_FILE_TOOL,
+      WORKSPACE_MOVE_FILE_TOOL,
+      WORKSPACE_DELETE_FILE_TOOL,
     ],
   )
   const execution = await tools.execute(
@@ -353,6 +556,10 @@ test('sandbox validates profiles, arguments, limits, and lease disposal', async 
   const sandbox = new WorkspaceFilesystemSandbox({ filesystem })
   assert.equal(sandbox.maxReadBytes, 1024 * 1024)
   assert.equal(sandbox.maxDirectoryEntries, 200)
+  assert.equal(sandbox.maxDiscoveryEntries, 500)
+  assert.equal(sandbox.maxDiscoveryDepth, 8)
+  assert.equal(sandbox.maxPatchReplacements, 32)
+  assert.equal(sandbox.maxPatchDiffBytes, 64 * 1024)
   assert.throws(
     () => new WorkspaceFilesystemSandbox({ filesystem, maxReadBytes: 0 }),
     /positive integer/,
@@ -361,6 +568,17 @@ test('sandbox validates profiles, arguments, limits, and lease disposal', async 
     () => new WorkspaceFilesystemSandbox({ filesystem, maxDirectoryEntries: 0 }),
     /positive integer/,
   )
+  for (const options of [
+    { maxDiscoveryEntries: 0 },
+    { maxDiscoveryDepth: 0 },
+    { maxPatchReplacements: 0 },
+    { maxPatchDiffBytes: 0 },
+  ]) {
+    assert.throws(
+      () => new WorkspaceFilesystemSandbox({ filesystem, ...options }),
+      /positive integer/,
+    )
+  }
 
   assert.deepEqual(
     await sandbox.prepare({

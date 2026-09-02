@@ -1452,12 +1452,38 @@ does not claim resistance to vulnerabilities below that boundary.
 - Full leases and tool requirements agree in durable safety audit events.
 - Timeout and cancellation always attempt named-container cleanup.
 
+## Feature 25 — coding workspace operations
+
+Feature 25 completes the core filesystem ergonomics needed for coding tasks.
+Recursive discovery is deterministic, depth/entry bounded, and never follows
+symbolic links. Patch preview reads and versions one bounded UTF-8 file and
+returns a byte-capped replacement-oriented diff. Publication revalidates that
+version, requires every non-empty old text to occur exactly once, rejects
+overlapping ranges, and atomically replaces the whole file only after every
+hunk validates.
+
+Move and delete have distinct consequential tool definitions and approval
+reasons. Both require a prior content observation; move also requires a prior
+confirmed-absent destination and never overwrites it. Its exclusive hard-link
+then unlink sequence rolls back the new name on ordinary failure, while
+retaining an honest two-name crash window. Delete revalidates the exact content
+version immediately before unlink. These operations therefore preserve the
+provider's `partial` claim rather than implying a kernel capability.
+
+### PR 25 exit condition
+
+- Recursive discovery is deterministic, bounded, cancellable, and link-safe.
+- Preview is non-mutating and its diff is UTF-8 byte bounded.
+- Multi-hunk validation is all-or-nothing and publication is atomic.
+- Stale move/delete observations fail without overwriting unrelated content.
+- Every new operation travels through approval, sandbox, and durable audit.
+
 ### Later milestones
 
-With platform-backed command execution available, the next milestone is coding
-tool ergonomics: atomic multi-hunk edits, bounded recursive discovery,
-reviewable diffs, and separately approved rename/delete operations. Attachments
-can later add useful input without changing loop ordering, while parallel tools
+With safe coding workspace operations available, the next milestone is bounded
+provider retries, rate-limit handling, routing policy, and live integration
+qualification. Attachments can later add useful input without changing loop
+ordering, while parallel tools
 need a durable batch and event-order contract before implementation. Subagents,
 scheduling, and UI remain later layers; automatic config watching can be added
 when it owns an exact-path watcher and disposal/drain contract.

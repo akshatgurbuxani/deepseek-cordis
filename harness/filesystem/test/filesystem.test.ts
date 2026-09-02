@@ -45,3 +45,28 @@ test('observation policy separates sessions and requires content before edit', (
   assert.throws(() => policy.writeGuard('a', first), /FS_NOT_OBSERVED/)
   assert.equal(policy.writeGuard('ab', first), null)
 })
+
+test('destructive guards require content source and confirmed-absent destination', () => {
+  const policy = new FileObservationPolicy()
+  const source = target('source.txt')
+  const destination = target('destination.txt')
+
+  policy.observeMetadata('session', source, 'v1')
+  policy.observeAbsent('session', destination)
+  assert.throws(() => policy.deleteGuard('session', source), /must be read before deletion/)
+  assert.throws(
+    () => policy.moveGuards('session', source, destination),
+    /must be read before deletion/,
+  )
+
+  policy.observeContent('session', source, 'v2')
+  assert.deepEqual(policy.moveGuards('session', source, destination), {
+    sourceVersion: 'v2',
+    destinationVersion: null,
+  })
+  assert.equal(policy.deleteGuard('session', source), 'v2')
+
+  policy.observeMetadata('session', destination, 'v3')
+  assert.throws(() => policy.moveGuards('session', source, destination), /confirmed absent/)
+  assert.throws(() => policy.deleteGuard('other', source), /FS_NOT_OBSERVED/)
+})
