@@ -1392,6 +1392,35 @@ revisions, explicit busy/stale conflict errors, coordinated create/append/
 migration/repair paths, and real child-process tests for contention, stale
 writers, creation races, and crash recovery.
 
+## Feature 23 — persistence stabilization and operational bounds
+
+Feature 23 hardens the local file provider without changing its append-only
+session contract or prematurely selecting a new storage engine. A successful
+document commit remains the only event publication point. If later canonical
+lock removal fails, the completed process-local token becomes reclaimable on
+the next write while active, foreign, malformed, and unrelated live locks still
+fail closed.
+
+File stores now enforce a 64 MiB default document bound before decoding startup
+input or publishing an append. Callers may select a different positive safe
+integer explicitly. The bound prevents accidental unbounded reads and writes;
+it does not claim that synchronous whole-document replacement is suitably fast
+at the maximum size.
+
+A non-gating repository benchmark creates realistic closed turns, records every
+append latency, reports final document size and throughput, and cleans up its
+temporary directory. This makes the storage decision measurable on deployment
+filesystems without introducing timing-sensitive CI assertions.
+
+### PR 23 exit condition
+
+- A committed writer cannot strand the same process behind its completed lock.
+- Oversized startup documents and appends fail before live state advances.
+- Lock cleanup failure and document bounds have deterministic tests.
+- Long-session append cost can be reproduced with
+  `npm run benchmark:session-file -- <turns>`.
+- Storage replacement remains evidence-driven and outside this feature.
+
 ### Later milestones
 
 With same-session writes now failing closed across cooperating processes, a

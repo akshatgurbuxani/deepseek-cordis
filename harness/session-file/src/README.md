@@ -35,11 +35,23 @@ revision fails explicitly; histories are never merged by guesswork. Injecting
 a writer lets deterministic tests prove that a failure before commit leaves the
 session and its previous document unchanged.
 
+Both startup documents and append candidates are byte-bounded before they can
+become live. The default is 64 MiB and callers may lower it explicitly. The
+limit prevents an unbounded whole-file read or replacement; it is not a latency
+target, because encoding, revision validation, and replacement still scale with
+the complete retained event history.
+
 The production writer creates a unique temporary file in the destination
 directory, writes with owner-only permissions, fsyncs and closes it, then uses
 rename as the atomic commit point. It removes uncommitted temporary files on
 failure. Directory fsync is best-effort because some platforms reject it; no
 error is reported after a rename has already committed.
+
+Lock release follows the same commit rule. A cleanup error after the critical
+section ends cannot turn an already committed document into a reported failure.
+Instead, the process remembers that exact completed token and may reclaim it on
+its next acquisition. Tokens belonging to active operations, other processes,
+or foreign hosts remain unavailable.
 
 Versionless V0 plus schema V1 through V5 documents pass through the same event
 validation and are immediately rewritten as V6. V2 adds

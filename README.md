@@ -215,12 +215,18 @@ Decided:
 - Pin upstream `cordis@4.0.0-rc.8` behind a dedicated adapter rather than promoting the educational runtime or initially vendoring Cordis.
 - Use a domain-neutral text/tool loop as the first production agent scenario.
 - Keep immutable session events as the only source of model-visible history.
+- Use validated immutable profiles and explicit transactional reload rather
+  than importing DeepSeek Harness's complete bundle/configuration layer.
 - Treat plugin code as trusted composition code. Consequential model actions
   cross the `sandbox` provider boundary; the host has no local handler for
   those definitions and claims no isolation when a real provider is absent.
 
 Still open:
 
-- How much of DeepSeek's profile/bundle/configuration layer belongs in scope.
 - Which operating-system sandbox backend should upgrade workspace command
   execution from its documented partial enforcement to full confinement.
+- Whether measured long-session behavior justifies replacing bounded
+  whole-document JSON persistence with an incremental store.
+
+The maintained near-term sequence lives in [`docs/roadmap.md`](docs/roadmap.md).
+Historical feature outcomes remain in [`harness/README.md`](harness/README.md).

@@ -1,6 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto'
 import {
   closeSync,
+  constants,
+  fstatSync,
   fsyncSync,
   linkSync,
   lstatSync,
@@ -8,6 +10,7 @@ import {
   openSync,
   readdirSync,
   readFileSync,
+  readSync,
   renameSync,
   unlinkSync,
   writeFileSync,
@@ -33,6 +36,7 @@ import {
 } from '@deepseek-cordis/session'
 
 export const SESSION_FILE_SCHEMA_VERSION = 6
+export const DEFAULT_MAX_SESSION_DOCUMENT_BYTES = 64 * 1024 * 1024
 
 export interface SessionFileDocument {
   readonly schemaVersion: typeof SESSION_FILE_SCHEMA_VERSION
@@ -45,6 +49,7 @@ export type SessionFileWriter = (filePath: string, contents: string) => void
 export interface FileSessionStoreOptions {
   readonly directory: string
   readonly writer?: SessionFileWriter
+  readonly maxDocumentBytes?: number
 }
 
 export class SessionPersistenceError extends Error {}
@@ -655,6 +660,12 @@ interface SessionFileLockRecord {
   readonly host: string
 }
 
+// A successful document commit must not be reported as failed merely because
+// best-effort lock cleanup encountered a later filesystem error. Remember that
+// the operation has nevertheless ended so the same process can safely reclaim
+// its own canonical lock on the next write. Active locks are never entered here.
+const releasedLocalLocks = new Map<string, string>()
+
 function nodeErrorCode(error: unknown): string | undefined {
   return error !== null && typeof error === 'object' && 'code' in error
     ? String(error.code)
@@ -710,10 +721,14 @@ function reclaimDeadLocalLock(lockPath: string): void {
     return
   }
   const record = lockRecord(parsed)
-  if (!record || record.host !== hostname() || processIsAlive(record.pid)) return
+  if (!record || record.host !== hostname()) return
+  const releasedByThisProcess =
+    record.pid === process.pid && releasedLocalLocks.get(lockPath) === record.token
+  if (!releasedByThisProcess && processIsAlive(record.pid)) return
   try {
     if (readFileSync(lockPath, 'utf8') === first) {
       unlinkSync(lockPath)
+      if (releasedByThisProcess) releasedLocalLocks.delete(lockPath)
       try {
         unlinkSync(`${lockPath}.${record.pid}.${record.token}.owner`)
       } catch {}
@@ -752,6 +767,7 @@ function withSessionFileLock<T>(filePath: string, operation: () => T): T {
       try {
         linkSync(ownerPath, lockPath)
         acquired = true
+        releasedLocalLocks.delete(lockPath)
         break
       } catch (error) {
         if (nodeErrorCode(error) !== 'EEXIST') {
@@ -779,8 +795,13 @@ function withSessionFileLock<T>(filePath: string, operation: () => T): T {
       try {
         const lock = lstatSync(lockPath, { bigint: true })
         const owner = lstatSync(ownerPath, { bigint: true })
-        if (lock.dev === owner.dev && lock.ino === owner.ino) unlinkSync(lockPath)
-      } catch {}
+        if (lock.dev === owner.dev && lock.ino === owner.ino) {
+          unlinkSync(lockPath)
+          releasedLocalLocks.delete(lockPath)
+        }
+      } catch {
+        releasedLocalLocks.set(lockPath, record.token)
+      }
     }
     try {
       unlinkSync(ownerPath)
@@ -792,11 +813,69 @@ function documentRevision(contents: string): string {
   return `sha256:${createHash('sha256').update(contents).digest('hex')}`
 }
 
-function optionalFileRevision(filePath: string): string | null {
+function readBoundedSessionFile(filePath: string, maxDocumentBytes: number): string {
+  let descriptor: number | undefined
   try {
-    return documentRevision(readFileSync(filePath, 'utf8'))
+    descriptor = openSync(filePath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0))
+    const before = fstatSync(descriptor)
+    if (!before.isFile()) {
+      throw new SessionPersistenceError(
+        `session file ${JSON.stringify(filePath)} is not a regular file`,
+      )
+    }
+    if (before.size > maxDocumentBytes) {
+      throw new SessionPersistenceError(
+        `session file ${JSON.stringify(filePath)} exceeds ${maxDocumentBytes} bytes`,
+      )
+    }
+
+    const chunks: Buffer[] = []
+    let total = 0
+    const buffer = Buffer.allocUnsafe(64 * 1024)
+    while (true) {
+      const remaining = maxDocumentBytes - total
+      const bytesRead = readSync(
+        descriptor,
+        buffer,
+        0,
+        Math.min(buffer.length, remaining + 1),
+        null,
+      )
+      if (bytesRead === 0) break
+      total += bytesRead
+      if (total > maxDocumentBytes) {
+        throw new SessionPersistenceError(
+          `session file ${JSON.stringify(filePath)} exceeds ${maxDocumentBytes} bytes`,
+        )
+      }
+      chunks.push(Buffer.from(buffer.subarray(0, bytesRead)))
+    }
+
+    const after = fstatSync(descriptor)
+    if (
+      before.dev !== after.dev ||
+      before.ino !== after.ino ||
+      before.size !== after.size ||
+      before.mtimeMs !== after.mtimeMs ||
+      before.ctimeMs !== after.ctimeMs ||
+      after.size !== total
+    ) {
+      throw new SessionPersistenceError(
+        `session file ${JSON.stringify(filePath)} changed during bounded read`,
+      )
+    }
+    return Buffer.concat(chunks, total).toString('utf8')
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor)
+  }
+}
+
+function optionalFileRevision(filePath: string, maxDocumentBytes: number): string | null {
+  try {
+    return documentRevision(readBoundedSessionFile(filePath, maxDocumentBytes))
   } catch (error) {
     if (nodeErrorCode(error) === 'ENOENT') return null
+    if (error instanceof SessionPersistenceError) throw error
     throw new SessionPersistenceError('session file could not be read for revision validation', {
       cause: error,
     })
@@ -901,11 +980,16 @@ export class FileSession implements Session {
 
 export class FileSessionStore implements SessionStore {
   readonly directory: string
+  readonly maxDocumentBytes: number
   readonly #sessions = new Map<string, FileSession>()
   readonly #writer: SessionFileWriter
 
   constructor(options: FileSessionStoreOptions) {
     this.directory = resolve(options.directory)
+    this.maxDocumentBytes = options.maxDocumentBytes ?? DEFAULT_MAX_SESSION_DOCUMENT_BYTES
+    if (!Number.isSafeInteger(this.maxDocumentBytes) || this.maxDocumentBytes < 1) {
+      throw new RangeError('maxDocumentBytes must be a positive safe integer')
+    }
     this.#writer = options.writer ?? atomicReplaceFile
     mkdirSync(this.directory, { recursive: true })
     this.#load()
@@ -934,7 +1018,7 @@ export class FileSessionStore implements SessionStore {
       .sort()
 
     for (const filePath of files) {
-      const contents = readFileSync(filePath, 'utf8')
+      const contents = readBoundedSessionFile(filePath, this.maxDocumentBytes)
       const decoded = decodeDocument(contents, filePath)
       if (filePath !== sessionFilePath(this.directory, decoded.id)) {
         invalid(filePath, 'filename does not match the stored session id')
@@ -958,9 +1042,14 @@ export class FileSessionStore implements SessionStore {
     let expectedRevision = initialContents === null ? null : documentRevision(initialContents)
     return (events) => {
       const nextContents = encodeDocument(id, events)
+      if (Buffer.byteLength(nextContents, 'utf8') > this.maxDocumentBytes) {
+        throw new SessionPersistenceError(
+          `session ${JSON.stringify(id)} exceeds ${this.maxDocumentBytes} persisted bytes`,
+        )
+      }
       const nextRevision = documentRevision(nextContents)
       withSessionFileLock(filePath, () => {
-        if (optionalFileRevision(filePath) !== expectedRevision) {
+        if (optionalFileRevision(filePath, this.maxDocumentBytes) !== expectedRevision) {
           throw new SessionWriteConflictError(
             'SESSION_STALE_WRITER',
             `session ${JSON.stringify(id)} changed in another process; reopen it before writing`,
