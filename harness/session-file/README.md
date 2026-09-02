@@ -48,7 +48,19 @@ Approval outcomes use a closed vocabulary, sandbox preparation records provider
 identity and enforcement strength, and neither event family enters model
 projection. Legacy documents cannot smuggle these V5 events into older schemas.
 
-The current provider assumes one active writer per directory. Atomic replacement
-protects against torn process writes; cross-process locking and merge semantics
-are deliberately not claimed. Temporary files left by process death are ignored
-on restart.
+Every materialization, append, migration, and repair acquires an atomic
+per-session write lock and compares the current document revision with the
+revision that store instance observed. Unrelated session IDs remain independent.
+A concurrent live writer fails fast with `SESSION_WRITE_BUSY`; after the winner
+commits, the stale peer fails with `SESSION_STALE_WRITER` and must reopen rather
+than silently replacing or guessing how to merge independently derived event
+histories. Memory advances only after the coordinated durable commit.
+
+Lock publication uses a fully written same-directory owner file plus an atomic
+hard link, so contenders never interpret a partially initialized lock. A dead
+local owner is detected by hostname and process liveness and reclaimed; cleanup
+removes both links. Malformed locks, live local owners, and locks from another
+host fail closed. This is cooperative local-filesystem coordination, not a
+distributed lease: operators must investigate foreign or malformed locks, and
+non-cooperating programs can still replace files out of band. Temporary files
+and orphan owner files left before lock publication remain ignored on restart.

@@ -170,6 +170,12 @@ disappeared during a turn, file-store construction first durably repairs that
 turn as interrupted and balances any unanswered tool calls. The command then
 starts a new turn; it never resumes partial model or tool execution.
 
+Two live processes should not use one session ID as collaborative editing.
+Per-session locking and revision checks prevent either process from silently
+erasing the other's history: a contender receives a busy conflict while a
+write is active, and an instance holding an older revision must reopen after
+the winner commits. Different session IDs can proceed independently.
+
 Set exact provider capacity to enable proactive pressure compaction:
 
 ```sh
@@ -191,5 +197,5 @@ Traces expose successful `model/info` resolution and safe `model/info-error`
 failures without including credentials.
 
 Automatic profile watching, touch-driven nested instruction scope after
-filesystem tool calls, cross-process writer locking, parallel tool execution,
-and provider replacement during a running turn remain future work.
+filesystem tool calls, parallel tool execution, and provider replacement during
+a running turn remain future work.
