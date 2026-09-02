@@ -11,6 +11,7 @@
     "maxFileBytes": 1048576
   },
   "process": {
+    "backend": "local",
     "allowedPrograms": ["git", "node", "npm", "npx", "rg"],
     "timeoutMs": 120000,
     "maxTimeoutMs": 600000,

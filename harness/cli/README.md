@@ -136,6 +136,29 @@ particular, package managers and package scripts may execute further code. Use
 this provider only for trusted workspaces and inspect the exact approval
 arguments; full isolation remains a separate backend.
 
+Set `process.backend` to `docker` and provide an image that is already present
+locally to require the full command provider:
+
+```json
+{
+  "process": {
+    "backend": "docker",
+    "image": "your-coding-image@sha256:<digest>",
+    "allowedPrograms": ["git", "node", "npm", "npx", "rg"],
+    "memoryBytes": 1073741824,
+    "pidsLimit": 256,
+    "tmpfsBytes": 268435456
+  }
+}
+```
+
+Startup and reload fail before graph mutation when Docker is unavailable or the
+image is absent. The harness never pulls an image implicitly. Docker commands
+run without network access, with a read-only root and only the configured
+workspace mounted writable. The sandbox still permits changes anywhere inside
+that workspace and relies on the trusted configured image plus Docker's daemon,
+runtime, and kernel boundary.
+
 By default, every request receives a deterministic system prompt: the harness
 identity followed by workspace guidance derived from the exact visible
 filesystem tool set, followed by any applicable workspace instruction chain.

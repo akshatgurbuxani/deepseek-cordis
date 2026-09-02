@@ -9,6 +9,12 @@ export const DEFAULT_PROCESS_TIMEOUT_MS = 120_000
 export const DEFAULT_PROCESS_MAX_TIMEOUT_MS = 600_000
 export const DEFAULT_PROCESS_MAX_OUTPUT_BYTES = 64_000
 export const DEFAULT_PROCESS_KILL_GRACE_MS = 3_000
+export const DEFAULT_DOCKER_MEMORY_BYTES = 1024 * 1024 * 1024
+export const DEFAULT_DOCKER_PIDS_LIMIT = 256
+export const DEFAULT_DOCKER_TMPFS_BYTES = 256 * 1024 * 1024
+export const MAX_DOCKER_MEMORY_BYTES = 64 * 1024 * 1024 * 1024
+export const MAX_DOCKER_PIDS_LIMIT = 4096
+export const MAX_DOCKER_TMPFS_BYTES = 4 * 1024 * 1024 * 1024
 export const MAX_PROCESS_TIMER_MS = 2_147_483_647
 export const MAX_PROCESS_OUTPUT_BYTES = 16 * 1024 * 1024
 export const DEFAULT_INSTRUCTION_MAX_BYTES = 65_536
@@ -55,13 +61,27 @@ export interface WorkspaceProfile {
   readonly maxFileBytes: number
 }
 
-export interface ProcessProfile {
+export interface ProcessProfileBase {
   readonly allowedPrograms: readonly string[]
   readonly timeoutMs: number
   readonly maxTimeoutMs: number
   readonly maxOutputBytes: number
   readonly killGraceMs: number
 }
+
+export interface LocalProcessProfile extends ProcessProfileBase {
+  readonly backend: 'local'
+}
+
+export interface DockerProcessProfile extends ProcessProfileBase {
+  readonly backend: 'docker'
+  readonly image: string
+  readonly memoryBytes: number
+  readonly pidsLimit: number
+  readonly tmpfsBytes: number
+}
+
+export type ProcessProfile = LocalProcessProfile | DockerProcessProfile
 
 export type PersistenceProfile =
   | { readonly kind: 'memory' }
@@ -265,6 +285,7 @@ function workspace(value: unknown, source: string): WorkspaceProfile {
 function processProfile(value: unknown, source: string): ProcessProfile {
   if (value === undefined) {
     return {
+      backend: 'local',
       allowedPrograms: [...DEFAULT_ALLOWED_PROGRAMS],
       timeoutMs: DEFAULT_PROCESS_TIMEOUT_MS,
       maxTimeoutMs: DEFAULT_PROCESS_MAX_TIMEOUT_MS,
@@ -275,7 +296,18 @@ function processProfile(value: unknown, source: string): ProcessProfile {
   const candidate = object(value, source, 'process')
   exactKeys(
     candidate,
-    ['allowedPrograms', 'timeoutMs', 'maxTimeoutMs', 'maxOutputBytes', 'killGraceMs'],
+    [
+      'backend',
+      'image',
+      'allowedPrograms',
+      'timeoutMs',
+      'maxTimeoutMs',
+      'maxOutputBytes',
+      'killGraceMs',
+      'memoryBytes',
+      'pidsLimit',
+      'tmpfsBytes',
+    ],
     source,
     'process',
   )
@@ -321,12 +353,62 @@ function processProfile(value: unknown, source: string): ProcessProfile {
   if (killGraceMs > MAX_PROCESS_TIMER_MS) {
     fail(source, `process.killGraceMs must not exceed ${MAX_PROCESS_TIMER_MS}`)
   }
-  return {
+  const common: ProcessProfileBase = {
     allowedPrograms,
     timeoutMs,
     maxTimeoutMs,
     maxOutputBytes,
     killGraceMs,
+  }
+  const backend = candidate.backend ?? 'local'
+  if (backend === 'local') {
+    for (const field of ['image', 'memoryBytes', 'pidsLimit', 'tmpfsBytes'] as const) {
+      if (candidate[field] !== undefined) {
+        fail(source, `process.${field} is only allowed for the docker backend`)
+      }
+    }
+    return { backend, ...common }
+  }
+  if (backend !== 'docker') {
+    fail(source, 'process.backend must be "local" or "docker"')
+  }
+  const memoryBytes = positiveInteger(
+    candidate.memoryBytes,
+    DEFAULT_DOCKER_MEMORY_BYTES,
+    source,
+    'process.memoryBytes',
+  )
+  const pidsLimit = positiveInteger(
+    candidate.pidsLimit,
+    DEFAULT_DOCKER_PIDS_LIMIT,
+    source,
+    'process.pidsLimit',
+  )
+  const tmpfsBytes = positiveInteger(
+    candidate.tmpfsBytes,
+    DEFAULT_DOCKER_TMPFS_BYTES,
+    source,
+    'process.tmpfsBytes',
+  )
+  if (memoryBytes > MAX_DOCKER_MEMORY_BYTES) {
+    fail(source, `process.memoryBytes must not exceed ${MAX_DOCKER_MEMORY_BYTES}`)
+  }
+  if (pidsLimit > MAX_DOCKER_PIDS_LIMIT) {
+    fail(source, `process.pidsLimit must not exceed ${MAX_DOCKER_PIDS_LIMIT}`)
+  }
+  if (tmpfsBytes > MAX_DOCKER_TMPFS_BYTES) {
+    fail(source, `process.tmpfsBytes must not exceed ${MAX_DOCKER_TMPFS_BYTES}`)
+  }
+  if (tmpfsBytes > memoryBytes) {
+    fail(source, 'process.tmpfsBytes must not exceed process.memoryBytes')
+  }
+  return {
+    backend,
+    ...common,
+    image: nonEmptyString(candidate.image, source, 'process.image').trim(),
+    memoryBytes,
+    pidsLimit,
+    tmpfsBytes,
   }
 }
 

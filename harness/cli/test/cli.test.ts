@@ -207,6 +207,7 @@ test('a profile controls the exact model, tools, and assembled prompt', async (t
     profileSource: 'file',
     tools: [],
     approvalDefault: 'ask',
+    processBackend: 'local',
     sessionId: 'profile-composition',
     sessionStore: 'memory',
     resumed: false,
@@ -435,7 +436,7 @@ test('invalid, incompatible, and unmountable reloads retain the last-known-good 
   }
   const filename = writeProfile(directory, stable)
   const missingWorkspace = join(directory, 'missing-workspace')
-  const lines = ['/reload', '/reload', '/reload', 'add 8 and 9', '/exit']
+  const lines = ['/reload', '/reload', '/reload', '/reload', 'add 8 and 9', '/exit']
   let prompt = 0
   const output: string[] = []
   const { records, trace } = recorder()
@@ -461,6 +462,16 @@ test('invalid, incompatible, and unmountable reloads retain the last-known-good 
           tools: { enabled: ['add', 'workspace.read'] },
         })
       }
+      if (prompt === 4) {
+        writeProfile(directory, {
+          ...stable,
+          process: {
+            backend: 'docker',
+            image: 'deepseek-cordis/definitely-missing:image',
+          },
+          tools: { enabled: ['add', 'workspace.command'] },
+        })
+      }
       return lines.shift()
     },
     output: (content) => {
@@ -472,6 +483,7 @@ test('invalid, incompatible, and unmountable reloads retain the last-known-good 
   assert.match(text, /profile reload rejected: profile\.json: invalid JSON/)
   assert.match(text, /persistence cannot change while a session is mounted/)
   assert.match(text, /workspace root does not exist or is inaccessible/)
+  assert.match(text, /Docker sandbox is unavailable or not ready/)
   assert.equal(text.includes(directory), false)
   assert.equal(text.includes(missingWorkspace), false)
   const requests = records.filter(({ label }) => label === 'model/request')
@@ -481,7 +493,7 @@ test('invalid, incompatible, and unmountable reloads retain the last-known-good 
     records
       .filter(({ label }) => label === 'cli/reload')
       .map(({ value }) => (value as { status: string }).status),
-    ['started', 'rejected', 'started', 'rejected', 'started', 'rejected'],
+    ['started', 'rejected', 'started', 'rejected', 'started', 'rejected', 'started', 'rejected'],
   )
 })
 
@@ -1435,6 +1447,25 @@ test('configuration and provider failures reject while still draining mounted fi
     /not a recognized tool id/,
   )
   assert.deepEqual(invalidTrace.records, [])
+
+  const unavailableDockerProfile = writeProfile(directory, {
+    schemaVersion: 1,
+    model: { provider: 'replay' },
+    process: {
+      backend: 'docker',
+      image: 'deepseek-cordis/definitely-missing:image',
+    },
+    tools: { enabled: ['workspace.command'] },
+  })
+  await assert.rejects(
+    runCli({
+      argv: ['--profile', unavailableDockerProfile, 'add 1 and 2'],
+      env: { PATH: process.env.PATH, HOME: process.env.HOME },
+      trace: () => undefined,
+      output: () => undefined,
+    }),
+    /Docker sandbox is unavailable or not ready/,
+  )
 
   const missingKeyTrace = recorder()
   await assert.rejects(

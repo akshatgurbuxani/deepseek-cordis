@@ -3,20 +3,17 @@
 This is the maintained forward-looking plan. Accepted feature history and its
 architecture evidence remain in [`../harness/README.md`](../harness/README.md).
 
-## Current milestone: Feature 23
+## Completed foundation: Features 23–24
 
-Stabilize bounded whole-document session persistence, recover safely from
-post-commit lock cleanup failure, and establish a reproducible performance
-baseline. Do not select a new database or event-log format without measurements
-from representative coding sessions.
+Session persistence is bounded and recovers completed local locks. Command
+execution now has explicit local/partial and Docker/full backends with
+fail-closed daemon/image preflight and a documented Docker trust boundary.
 
-## Next milestone: Feature 24
+## Current milestone: Feature 25
 
-Add a platform-backed command sandbox. Define `full` enforcement through
-adversarial acceptance tests covering host filesystem access, network access,
-credentials, descendant processes, cancellation, timeout, and cleanup. Support
-one platform honestly before claiming weak portability, and fail closed when
-the selected backend is unavailable.
+Add atomic multi-hunk edits, bounded recursive discovery, reviewable diffs, and
+separately approved rename/delete operations. Preserve observation-before-write,
+opaque versions, workspace confinement, cancellation, and exact durable audit.
 
 ## Coding-harness v1 sequence
 

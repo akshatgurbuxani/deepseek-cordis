@@ -128,13 +128,13 @@ enforcement honestly.
 ### `process` and `process-workspace`
 
 `process` owns the provider-neutral request, result, output, and error contracts
-for foreground executable-plus-argv work. `process-workspace` supplies the Node
-provider, exact consequential-tool lease, and tool-specific prompt guidance. It
-allows only configured executable names, confines the selected working
-directory to non-symlink workspace paths, scrubs the child environment, bounds
-time and output, and terminates process groups. It reports partial enforcement
-because allowed programs retain the harness process's host and network
-authority.
+for foreground executable-plus-argv work. `process-workspace` supplies local
+Node and Docker providers, exact consequential-tool leases, and tool-specific
+prompt guidance. The local provider confines argv/cwd/environment/lifecycle and
+reports partial enforcement. The Docker provider adds fail-closed preflight, a
+read-only root, no network, dropped capabilities, resource bounds, and one
+writable workspace mount before reporting full enforcement within its explicit
+Docker trust boundary.
 
 ### `system-prompt`
 
@@ -1421,13 +1421,44 @@ filesystems without introducing timing-sensitive CI assertions.
   `npm run benchmark:session-file -- <turns>`.
 - Storage replacement remains evidence-driven and outside this feature.
 
+## Feature 24 — platform-backed command sandbox
+
+Feature 24 keeps the existing Node runner as an explicit local/partial backend
+and adds an opt-in Docker/full backend. Schema-V1 process profiles discriminate
+the backend. Docker selection requires an already-local image and explicit
+memory, PID, and tmpfs budgets; missing daemons and images reject initial boot
+or reload before runtime reconciliation.
+
+The Docker runner fixes every isolation option before model-controlled input:
+no registry pull, no network, read-only root, all Linux capabilities dropped,
+`no-new-privileges`, bounded memory/swap/PIDs/tmpfs, one writable workspace bind
+mount, exact container cwd, and the allowed program as entrypoint. A unique
+container name plus `--rm` and unconditional forced cleanup cover normal exit,
+failure, timeout, and cancellation. Provider audit events report
+`workspace-process/docker-v1` and `full`; the visible tool requires that same
+enforcement, so a partial lease cannot silently satisfy a Docker profile.
+
+The full claim is intentionally scoped. Commands may change any approved
+workspace file and trust the operator-selected image plus Docker's daemon,
+runtime, and kernel isolation. The harness does not pull or attest images and
+does not claim resistance to vulnerabilities below that boundary.
+
+### PR 24 exit condition
+
+- Local profiles retain their existing partial enforcement and behavior.
+- Docker profiles fail closed when the daemon or configured image is absent.
+- Model values cannot become Docker options, mounts, environment entries, or
+  image references.
+- Full leases and tool requirements agree in durable safety audit events.
+- Timeout and cancellation always attempt named-container cleanup.
+
 ### Later milestones
 
-With same-session writes now failing closed across cooperating processes, a
-platform-backed command sandbox is the next security milestone. The next
-product expansion should be chosen from real coding-task evidence: attachments
-can add useful input without changing loop ordering, while parallel tools need
-a durable batch and event-order contract before implementation. Subagents,
+With platform-backed command execution available, the next milestone is coding
+tool ergonomics: atomic multi-hunk edits, bounded recursive discovery,
+reviewable diffs, and separately approved rename/delete operations. Attachments
+can later add useful input without changing loop ordering, while parallel tools
+need a durable batch and event-order contract before implementation. Subagents,
 scheduling, and UI remain later layers; automatic config watching can be added
 when it owns an exact-path watcher and disposal/drain contract.
 

@@ -1,5 +1,14 @@
-import { spawn } from 'node:child_process'
-import { lstatSync, realpathSync, type Stats, statSync } from 'node:fs'
+import { spawn, spawnSync } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
+import {
+  closeSync,
+  constants,
+  fstatSync,
+  lstatSync,
+  openSync,
+  realpathSync,
+  type Stats,
+} from 'node:fs'
 import { delimiter, isAbsolute, join, relative } from 'node:path'
 
 import {
@@ -25,6 +34,12 @@ export const DEFAULT_COMMAND_TIMEOUT_MS = 120_000
 export const DEFAULT_MAX_COMMAND_TIMEOUT_MS = 600_000
 export const DEFAULT_MAX_COMMAND_OUTPUT_BYTES = 64_000
 export const DEFAULT_COMMAND_KILL_GRACE_MS = 3_000
+export const DEFAULT_DOCKER_MEMORY_BYTES = 1024 * 1024 * 1024
+export const DEFAULT_DOCKER_PIDS_LIMIT = 256
+export const DEFAULT_DOCKER_TMPFS_BYTES = 256 * 1024 * 1024
+export const MAX_DOCKER_MEMORY_BYTES = 64 * 1024 * 1024 * 1024
+export const MAX_DOCKER_PIDS_LIMIT = 4096
+export const MAX_DOCKER_TMPFS_BYTES = 4 * 1024 * 1024 * 1024
 const maxPathBytes = 4096
 const maxArguments = 256
 const maxArgumentBytes = 16_384
@@ -55,8 +70,27 @@ export interface NodeWorkspaceProcessRunnerOptions {
   readonly killGraceMs?: number
 }
 
+export interface DockerWorkspaceProcessRunnerOptions {
+  readonly root: string
+  readonly image: string
+  readonly allowedPrograms: readonly string[]
+  readonly dockerProgram?: string
+  readonly hostEnvironment?: Readonly<Record<string, string>>
+  readonly maxOutputBytes?: number
+  readonly killGraceMs?: number
+  readonly memoryBytes?: number
+  readonly pidsLimit?: number
+  readonly tmpfsBytes?: number
+  readonly probe?: (
+    program: string,
+    image: string,
+    environment: Readonly<Record<string, string>>,
+  ) => void
+  readonly hostRunner?: ProcessRunner
+}
+
 function positiveInteger(value: number, name: string): void {
-  if (!Number.isInteger(value) || value < 1)
+  if (!Number.isSafeInteger(value) || value < 1)
     throw new RangeError(`${name} must be a positive integer`)
 }
 
@@ -68,6 +102,7 @@ function isWithin(root: string, target: string): boolean {
 function oneComponent(value: string): boolean {
   return (
     value.trim().length > 0 &&
+    value === value.trim() &&
     !value.includes('\0') &&
     !value.includes('/') &&
     !value.includes('\\') &&
@@ -118,6 +153,94 @@ function validateArguments(args: readonly string[]): void {
   }
   if (total > maxTotalArgumentBytes) {
     throw new ProcessError('PROCESS_INVALID_REQUEST', `args exceeds ${maxTotalArgumentBytes} bytes`)
+  }
+}
+
+function workspaceRoot(path: string): string {
+  let descriptor: number | undefined
+  try {
+    const root = realpathSync(path)
+    descriptor = openSync(
+      root,
+      constants.O_RDONLY | (constants.O_DIRECTORY ?? 0) | (constants.O_NOFOLLOW ?? 0),
+    )
+    if (!fstatSync(descriptor).isDirectory()) throw new Error('not a directory')
+    return root
+  } catch (error) {
+    throw new ProcessError(
+      'PROCESS_WORKSPACE_DENIED',
+      'workspace root does not exist or is inaccessible',
+      {
+        cause: error,
+      },
+    )
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor)
+  }
+}
+
+function workingDirectory(root: string, path: string): string {
+  const segments = portableSegments(path)
+  let current = root
+  for (const segment of segments) {
+    current = join(current, segment)
+    let status: Stats
+    try {
+      status = lstatSync(current)
+    } catch (error) {
+      throw new ProcessError(
+        'PROCESS_WORKSPACE_DENIED',
+        `cwd ${JSON.stringify(path)} does not exist or is inaccessible`,
+        { cause: error },
+      )
+    }
+    if (status.isSymbolicLink()) {
+      throw new ProcessError(
+        'PROCESS_WORKSPACE_DENIED',
+        `cwd ${JSON.stringify(path)} traverses a symbolic link`,
+      )
+    }
+    if (!status.isDirectory()) {
+      throw new ProcessError(
+        'PROCESS_WORKSPACE_DENIED',
+        `cwd ${JSON.stringify(path)} is not a directory`,
+      )
+    }
+  }
+  let canonical: string
+  try {
+    canonical = realpathSync(current)
+  } catch (error) {
+    throw new ProcessError(
+      'PROCESS_WORKSPACE_DENIED',
+      `cwd ${JSON.stringify(path)} changed during validation`,
+      { cause: error },
+    )
+  }
+  if (!isWithin(root, canonical)) {
+    throw new ProcessError('PROCESS_WORKSPACE_DENIED', 'cwd escapes the workspace root')
+  }
+  return canonical
+}
+
+function validateProgram(program: string, allowedPrograms: ReadonlySet<string>): void {
+  if (!oneComponent(program)) {
+    throw new ProcessError('PROCESS_INVALID_REQUEST', 'program must be one executable name')
+  }
+  if (!allowedPrograms.has(program)) {
+    throw new ProcessError(
+      'PROCESS_NOT_ALLOWED',
+      `program ${JSON.stringify(program)} is not allowed`,
+    )
+  }
+}
+
+function validateTimeout(timeoutMs: number): void {
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > maxTimerMs) {
+    throw new ProcessError(
+      'PROCESS_INVALID_REQUEST',
+      `timeoutMs must be a positive integer no greater than ${maxTimerMs}`,
+    )
   }
 }
 
@@ -177,43 +300,17 @@ export class NodeWorkspaceProcessRunner implements ProcessRunner {
     if (this.killGraceMs > maxTimerMs) {
       throw new RangeError(`killGraceMs must not exceed ${maxTimerMs}`)
     }
-    try {
-      this.root = realpathSync(options.root)
-      if (!statSync(this.root).isDirectory()) throw new Error('not a directory')
-    } catch (error) {
-      throw new ProcessError(
-        'PROCESS_WORKSPACE_DENIED',
-        'workspace root does not exist or is inaccessible',
-        { cause: error },
-      )
-    }
+    this.root = workspaceRoot(options.root)
     this.allowedPrograms = new Set(options.allowedPrograms)
     this.environment = Object.freeze({ ...(options.environment ?? {}) })
   }
 
   async run(request: ProcessRequest): Promise<ProcessResult> {
     request.signal?.throwIfAborted()
-    if (!oneComponent(request.program)) {
-      throw new ProcessError('PROCESS_INVALID_REQUEST', 'program must be one executable name')
-    }
-    if (!this.allowedPrograms.has(request.program)) {
-      throw new ProcessError(
-        'PROCESS_NOT_ALLOWED',
-        `program ${JSON.stringify(request.program)} is not allowed`,
-      )
-    }
-    if (
-      !Number.isInteger(request.timeoutMs) ||
-      request.timeoutMs < 1 ||
-      request.timeoutMs > maxTimerMs
-    ) {
-      throw new ProcessError(
-        'PROCESS_INVALID_REQUEST',
-        `timeoutMs must be a positive integer no greater than ${maxTimerMs}`,
-      )
-    }
+    validateProgram(request.program, this.allowedPrograms)
+    validateTimeout(request.timeoutMs)
     validateArguments(request.args)
-    const cwd = this.#workingDirectory(request.cwd)
+    const cwd = workingDirectory(this.root, request.cwd)
     request.signal?.throwIfAborted()
 
     const stdout = new BoundedTail(this.maxOutputBytes)
@@ -292,49 +389,205 @@ export class NodeWorkspaceProcessRunner implements ProcessRunner {
       request.signal?.removeEventListener('abort', cancel)
     }
   }
+}
 
-  #workingDirectory(path: string): string {
-    const segments = portableSegments(path)
-    let current = this.root
-    for (const segment of segments) {
-      current = join(current, segment)
-      let status: Stats
-      try {
-        status = lstatSync(current)
-      } catch (error) {
-        throw new ProcessError(
-          'PROCESS_WORKSPACE_DENIED',
-          `cwd ${JSON.stringify(path)} does not exist or is inaccessible`,
-          { cause: error },
-        )
-      }
-      if (status.isSymbolicLink()) {
-        throw new ProcessError(
-          'PROCESS_WORKSPACE_DENIED',
-          `cwd ${JSON.stringify(path)} traverses a symbolic link`,
-        )
-      }
-      if (!status.isDirectory()) {
-        throw new ProcessError(
-          'PROCESS_WORKSPACE_DENIED',
-          `cwd ${JSON.stringify(path)} is not a directory`,
-        )
-      }
-    }
-    let canonical: string
-    try {
-      canonical = realpathSync(current)
-    } catch (error) {
+function probeDocker(
+  program: string,
+  image: string,
+  environment: Readonly<Record<string, string>>,
+): void {
+  const invoke = (args: readonly string[]): void => {
+    const result = spawnSync(program, [...args], {
+      env: { ...environment },
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 10_000,
+      windowsHide: true,
+    })
+    if (result.error || result.status !== 0 || result.stdout.trim().length === 0) {
       throw new ProcessError(
-        'PROCESS_WORKSPACE_DENIED',
-        `cwd ${JSON.stringify(path)} changed during validation`,
-        { cause: error },
+        'PROCESS_SANDBOX_UNAVAILABLE',
+        'Docker sandbox is unavailable or not ready',
+        result.error ? { cause: result.error } : {},
       )
     }
-    if (!isWithin(this.root, canonical)) {
-      throw new ProcessError('PROCESS_WORKSPACE_DENIED', 'cwd escapes the workspace root')
+  }
+  invoke(['version', '--format', '{{.Server.Version}}'])
+  invoke(['image', 'inspect', '--format', '{{.Id}}', image])
+}
+
+/** Docker-backed runner that confines one foreground command to the workspace mount. */
+export class DockerWorkspaceProcessRunner implements ProcessRunner {
+  readonly root: string
+  readonly image: string
+  readonly allowedPrograms: ReadonlySet<string>
+  readonly dockerProgram: string
+  readonly hostEnvironment: Readonly<Record<string, string>>
+  readonly memoryBytes: number
+  readonly pidsLimit: number
+  readonly tmpfsBytes: number
+  readonly killGraceMs: number
+  readonly #hostRunner: ProcessRunner
+
+  constructor(options: DockerWorkspaceProcessRunnerOptions) {
+    this.root = workspaceRoot(options.root)
+    if (this.root.includes(',')) {
+      throw new ProcessError(
+        'PROCESS_WORKSPACE_DENIED',
+        'Docker workspace roots containing commas are not supported',
+      )
     }
-    return canonical
+    if (
+      typeof options.image !== 'string' ||
+      options.image.trim().length === 0 ||
+      options.image.includes('\0') ||
+      Buffer.byteLength(options.image, 'utf8') > 512
+    ) {
+      throw new RangeError('image must be a non-empty Docker image reference up to 512 bytes')
+    }
+    if (options.allowedPrograms.length === 0) {
+      throw new RangeError('allowedPrograms must not be empty')
+    }
+    if (options.allowedPrograms.some((program) => !oneComponent(program))) {
+      throw new RangeError(
+        'allowedPrograms entries must be executable names without path separators',
+      )
+    }
+    if (new Set(options.allowedPrograms).size !== options.allowedPrograms.length) {
+      throw new RangeError('allowedPrograms must not contain duplicates')
+    }
+
+    this.image = options.image.trim()
+    this.allowedPrograms = new Set(options.allowedPrograms)
+    this.dockerProgram = options.dockerProgram ?? 'docker'
+    if (!oneComponent(this.dockerProgram)) {
+      throw new RangeError('dockerProgram must be one executable name')
+    }
+    this.hostEnvironment = Object.freeze({ ...(options.hostEnvironment ?? {}) })
+    this.memoryBytes = options.memoryBytes ?? DEFAULT_DOCKER_MEMORY_BYTES
+    this.pidsLimit = options.pidsLimit ?? DEFAULT_DOCKER_PIDS_LIMIT
+    this.tmpfsBytes = options.tmpfsBytes ?? DEFAULT_DOCKER_TMPFS_BYTES
+    this.killGraceMs = options.killGraceMs ?? DEFAULT_COMMAND_KILL_GRACE_MS
+    positiveInteger(this.memoryBytes, 'memoryBytes')
+    positiveInteger(this.pidsLimit, 'pidsLimit')
+    positiveInteger(this.tmpfsBytes, 'tmpfsBytes')
+    positiveInteger(this.killGraceMs, 'killGraceMs')
+    if (this.killGraceMs > maxTimerMs) {
+      throw new RangeError(`killGraceMs must not exceed ${maxTimerMs}`)
+    }
+    if (this.memoryBytes > MAX_DOCKER_MEMORY_BYTES) {
+      throw new RangeError(`memoryBytes must not exceed ${MAX_DOCKER_MEMORY_BYTES}`)
+    }
+    if (this.pidsLimit > MAX_DOCKER_PIDS_LIMIT) {
+      throw new RangeError(`pidsLimit must not exceed ${MAX_DOCKER_PIDS_LIMIT}`)
+    }
+    if (this.tmpfsBytes > MAX_DOCKER_TMPFS_BYTES) {
+      throw new RangeError(`tmpfsBytes must not exceed ${MAX_DOCKER_TMPFS_BYTES}`)
+    }
+    if (this.tmpfsBytes > this.memoryBytes) {
+      throw new RangeError('tmpfsBytes must not exceed memoryBytes')
+    }
+
+    ;(options.probe ?? probeDocker)(this.dockerProgram, this.image, this.hostEnvironment)
+    this.#hostRunner =
+      options.hostRunner ??
+      new NodeWorkspaceProcessRunner({
+        root: this.root,
+        allowedPrograms: [this.dockerProgram],
+        environment: this.hostEnvironment,
+        ...(options.maxOutputBytes === undefined ? {} : { maxOutputBytes: options.maxOutputBytes }),
+        killGraceMs: this.killGraceMs,
+      })
+  }
+
+  async run(request: ProcessRequest): Promise<ProcessResult> {
+    request.signal?.throwIfAborted()
+    validateProgram(request.program, this.allowedPrograms)
+    validateTimeout(request.timeoutMs)
+    validateArguments(request.args)
+    workingDirectory(this.root, request.cwd)
+    request.signal?.throwIfAborted()
+
+    const name = `deepseek-cordis-${randomUUID()}`
+    const containerCwd = request.cwd === '.' ? '/workspace' : `/workspace/${request.cwd}`
+    const dockerArgs = [
+      'run',
+      '--rm',
+      '--init',
+      '--name',
+      name,
+      '--pull',
+      'never',
+      '--network',
+      'none',
+      '--read-only',
+      '--cap-drop',
+      'ALL',
+      '--security-opt',
+      'no-new-privileges=true',
+      '--pids-limit',
+      String(this.pidsLimit),
+      '--memory',
+      String(this.memoryBytes),
+      '--memory-swap',
+      String(this.memoryBytes),
+      '--tmpfs',
+      `/tmp:rw,nosuid,nodev,size=${this.tmpfsBytes}`,
+      '--mount',
+      `type=bind,src=${this.root},dst=/workspace`,
+      '--workdir',
+      containerCwd,
+      '--env',
+      'HOME=/tmp/home',
+      '--env',
+      'TMPDIR=/tmp',
+      '--env',
+      'NO_COLOR=1',
+      '--env',
+      'TERM=dumb',
+      '--env',
+      'PAGER=cat',
+      '--env',
+      'GIT_PAGER=cat',
+      '--env',
+      'CI=1',
+      '--entrypoint',
+      request.program,
+      this.image,
+      ...request.args,
+    ]
+    if (process.getuid && process.getgid) {
+      dockerArgs.splice(5, 0, '--user', `${process.getuid()}:${process.getgid()}`)
+    }
+
+    try {
+      const result = await this.#hostRunner.run({
+        program: this.dockerProgram,
+        args: dockerArgs,
+        cwd: '.',
+        timeoutMs: request.timeoutMs,
+        ...(request.signal ? { signal: request.signal } : {}),
+      })
+      return Object.freeze({
+        program: request.program,
+        args: Object.freeze([...request.args]),
+        cwd: request.cwd,
+        exitCode: result.exitCode,
+        signal: result.signal,
+        timedOut: result.timedOut,
+        stdout: result.stdout,
+        stderr: result.stderr,
+      })
+    } finally {
+      try {
+        await this.#hostRunner.run({
+          program: this.dockerProgram,
+          args: ['rm', '--force', name],
+          cwd: '.',
+          timeoutMs: Math.max(10_000, this.killGraceMs),
+        })
+      } catch {}
+    }
   }
 }
 
@@ -342,6 +595,8 @@ export interface WorkspaceCommandSandboxOptions {
   readonly runner: ProcessRunner
   readonly timeoutMs?: number
   readonly maxTimeoutMs?: number
+  readonly provider?: string
+  readonly enforcement?: 'full' | 'partial'
 }
 
 function argumentsObject(value: JsonValue): Record<string, JsonValue | undefined> {
@@ -360,12 +615,14 @@ function argumentsObject(value: JsonValue): Record<string, JsonValue | undefined
 }
 
 class ProcessLease implements SandboxLease {
-  readonly provider = 'workspace-process/node-argv-v1'
-  readonly enforcement = 'partial' as const
   #used = false
   #disposed = false
 
-  constructor(readonly operation: () => Promise<JsonValue>) {}
+  constructor(
+    readonly provider: string,
+    readonly enforcement: 'full' | 'partial',
+    readonly operation: () => Promise<JsonValue>,
+  ) {}
 
   async execute(): Promise<JsonValue> {
     if (this.#disposed) throw new Error('command lease is disposed')
@@ -384,11 +641,18 @@ export class WorkspaceCommandSandbox implements ToolSandbox {
   readonly runner: ProcessRunner
   readonly timeoutMs: number
   readonly maxTimeoutMs: number
+  readonly provider: string
+  readonly enforcement: 'full' | 'partial'
 
   constructor(options: WorkspaceCommandSandboxOptions) {
     this.runner = options.runner
     this.timeoutMs = options.timeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS
     this.maxTimeoutMs = options.maxTimeoutMs ?? DEFAULT_MAX_COMMAND_TIMEOUT_MS
+    this.provider = options.provider ?? 'workspace-process/node-argv-v1'
+    this.enforcement = options.enforcement ?? 'partial'
+    if (this.provider.trim().length === 0 || this.provider !== this.provider.trim()) {
+      throw new RangeError('provider must be a non-empty trimmed string')
+    }
     positiveInteger(this.timeoutMs, 'timeoutMs')
     positiveInteger(this.maxTimeoutMs, 'maxTimeoutMs')
     if (this.maxTimeoutMs > maxTimerMs)
@@ -430,7 +694,7 @@ export class WorkspaceCommandSandbox implements ToolSandbox {
       const timeoutMs = Math.min(requestedTimeout, this.maxTimeoutMs)
       return {
         ok: true,
-        lease: new ProcessLease(async () => {
+        lease: new ProcessLease(this.provider, this.enforcement, async () => {
           const result = await this.runner.run({
             program: args.program as string,
             args: argv as string[],
@@ -457,7 +721,9 @@ export class WorkspaceCommandSandbox implements ToolSandbox {
   }
 }
 
-export function createWorkspaceCommandTool(): ConsequentialToolDefinition {
+export function createWorkspaceCommandTool(
+  requiredEnforcement: 'full' | 'partial' = 'partial',
+): ConsequentialToolDefinition {
   const definition: ConsequentialToolDefinition = {
     name: WORKSPACE_COMMAND_TOOL,
     description:
@@ -480,7 +746,7 @@ export function createWorkspaceCommandTool(): ConsequentialToolDefinition {
     safety: {
       risk: 'shell',
       approvalReason: 'Run the requested command in the workspace',
-      sandbox: { profile: WORKSPACE_COMMAND_PROFILE, requiredEnforcement: 'partial' },
+      sandbox: { profile: WORKSPACE_COMMAND_PROFILE, requiredEnforcement },
     },
   }
   return Object.freeze(definition)

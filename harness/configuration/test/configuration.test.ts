@@ -16,6 +16,7 @@ test('a minimal versioned profile expands to immutable explicit defaults', () =>
   assert.deepEqual(profile.model, { provider: 'openrouter', id: 'openrouter/free' })
   assert.deepEqual(profile.persistence, { kind: 'memory' })
   assert.deepEqual(profile.process, {
+    backend: 'local',
     allowedPrograms: ['git', 'node', 'npm', 'npx', 'rg'],
     timeoutMs: 120_000,
     maxTimeoutMs: 600_000,
@@ -50,6 +51,7 @@ test('all profile choices normalize without retaining caller-owned structures', 
     model: { provider: 'replay', contextWindow: 4096 },
     workspace: { root: './project', maxFileBytes: 2048 },
     process: {
+      backend: 'local',
       allowedPrograms: ['node', 'npm'],
       timeoutMs: 5_000,
       maxTimeoutMs: 10_000,
@@ -81,6 +83,7 @@ test('all profile choices normalize without retaining caller-owned structures', 
     model: { provider: 'replay', contextWindow: 4096 },
     workspace: { root: './project', maxFileBytes: 2048 },
     process: {
+      backend: 'local',
       allowedPrograms: ['node', 'npm'],
       timeoutMs: 5_000,
       maxTimeoutMs: 10_000,
@@ -151,6 +154,22 @@ test('bounds, booleans, tools, and policy vocabulary are validated', () => {
     [{ process: { maxOutputBytes: 16_777_217 } }, /must not exceed/],
     [{ process: { maxTimeoutMs: 2_147_483_648 } }, /must not exceed/],
     [{ process: { killGraceMs: 2_147_483_648 } }, /must not exceed/],
+    [{ process: { backend: 'unknown' } }, /process\.backend/],
+    [{ process: { backend: 'docker' } }, /process\.image/],
+    [{ process: { backend: 'local', image: 'node:latest' } }, /only allowed for the docker/],
+    [{ process: { backend: 'docker', image: 'node:latest', pidsLimit: 0 } }, /pidsLimit/],
+    [{ process: { backend: 'docker', image: 'node:latest', pidsLimit: 4097 } }, /must not exceed/],
+    [
+      {
+        process: {
+          backend: 'docker',
+          image: 'node:latest',
+          memoryBytes: 1024,
+          tmpfsBytes: 2048,
+        },
+      },
+      /tmpfsBytes must not exceed process\.memoryBytes/,
+    ],
     [{ model: { provider: 'openrouter', contextWindow: 1.5 } }, /model\.contextWindow/],
     [{ tools: { enabled: 'add' } }, /tools\.enabled must be an array/],
     [{ tools: { enabled: ['unknown'] } }, /not a recognized tool id/],
@@ -180,6 +199,32 @@ test('bounds, booleans, tools, and policy vocabulary are validated', () => {
       expected,
     )
   }
+})
+
+test('Docker process profiles normalize explicit confinement budgets', () => {
+  const profile = validateHarnessProfile({
+    schemaVersion: 1,
+    process: {
+      backend: 'docker',
+      image: ' node@sha256:abc ',
+      allowedPrograms: ['node', 'npm'],
+      memoryBytes: 536_870_912,
+      pidsLimit: 64,
+      tmpfsBytes: 67_108_864,
+    },
+  })
+  assert.deepEqual(profile.process, {
+    backend: 'docker',
+    image: 'node@sha256:abc',
+    allowedPrograms: ['node', 'npm'],
+    timeoutMs: 120_000,
+    maxTimeoutMs: 600_000,
+    maxOutputBytes: 64_000,
+    killGraceMs: 3_000,
+    memoryBytes: 536_870_912,
+    pidsLimit: 64,
+    tmpfsBytes: 67_108_864,
+  })
 })
 
 test('tool selections normalize to canonical presentation order', () => {
