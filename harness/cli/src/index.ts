@@ -398,15 +398,12 @@ export function runCliOperator(options: CliOperatorOptions = {}): boolean {
   return true
 }
 
-/** Add a concrete recovery path to persistence conflicts shown by the executable. */
-export function formatCliError(error: unknown): string {
-  if (!(error instanceof Error)) return 'unexpected non-error CLI failure'
-  if (!(error instanceof SessionWriteConflictError)) return error.message
-  const recovery =
-    error.code === 'SESSION_WRITE_BUSY'
-      ? 'Wait for the other writer to finish, then retry with --resume <session-id>.'
-      : 'Use --sessions to inspect persisted sessions, then restart with --resume <session-id>.'
-  return `${error.message}\n${recovery}`
+/** Return the concrete recovery action for a persistence conflict. */
+export function cliConflictRecovery(error: unknown): string | undefined {
+  if (!(error instanceof SessionWriteConflictError)) return undefined
+  return error.code === 'SESSION_WRITE_BUSY'
+    ? 'Wait for the other writer to finish, then retry with --resume <session-id>.'
+    : 'Use --sessions to inspect persisted sessions, then restart with --resume <session-id>.'
 }
 
 function replayModel(input: string, contextWindow?: number): ReplayModelAdapter {

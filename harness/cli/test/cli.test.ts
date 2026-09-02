@@ -5,8 +5,8 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import test from 'node:test'
 import {
+  cliConflictRecovery,
   discoverPersistedSessions,
-  formatCliError,
   InteractiveApprovalService,
   InteractiveReplayModelAdapter,
   initializeCliProfile,
@@ -179,14 +179,13 @@ test('help is model-free and documents every operator mode', () => {
 })
 
 test('CLI conflict errors include an actionable recovery path', () => {
-  assert.equal(formatCliError({ secret: 'must-not-print' }), 'unexpected non-error CLI failure')
-  assert.equal(formatCliError(new Error('safe public message')), 'safe public message')
+  assert.equal(cliConflictRecovery(new Error('ordinary failure')), undefined)
   assert.match(
-    String(formatCliError(new SessionWriteConflictError('SESSION_WRITE_BUSY', 'busy'))),
+    String(cliConflictRecovery(new SessionWriteConflictError('SESSION_WRITE_BUSY', 'busy'))),
     /retry with --resume <session-id>/,
   )
   assert.match(
-    String(formatCliError(new SessionWriteConflictError('SESSION_STALE_WRITER', 'stale'))),
+    String(cliConflictRecovery(new SessionWriteConflictError('SESSION_STALE_WRITER', 'stale'))),
     /Use --sessions.*--resume <session-id>/s,
   )
 })

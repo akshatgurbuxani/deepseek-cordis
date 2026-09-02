@@ -2,7 +2,7 @@
 
 import { createInterface } from 'node:readline/promises'
 
-import { formatCliError, runCli, runCliOperator, runInteractiveCli } from './index.js'
+import { cliConflictRecovery, runCli, runCliOperator, runInteractiveCli } from './index.js'
 
 const abort = new AbortController()
 let streamed = false
@@ -61,7 +61,9 @@ try {
     process.exitCode = 130
   } else {
     console.error('\n[cli/error]')
-    console.error(formatCliError(error))
+    console.error(error instanceof Error ? error.message : error)
+    const recovery = cliConflictRecovery(error)
+    if (recovery !== undefined) console.error(recovery)
     process.exitCode = 1
   }
 } finally {
