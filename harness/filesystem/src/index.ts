@@ -52,6 +52,12 @@ export interface DirectoryListing {
   readonly truncated: boolean
 }
 
+export interface PathDiscovery {
+  readonly path: string
+  readonly entries: readonly (DirectoryEntry & { readonly path: string })[]
+  readonly truncated: boolean
+}
+
 export interface TextRead {
   readonly path: string
   readonly content: string
@@ -66,6 +72,30 @@ export interface FileWrite {
   readonly version: string
 }
 
+export interface TextReplacement {
+  readonly oldText: string
+  readonly newText: string
+}
+
+export interface PatchPreview {
+  readonly path: string
+  readonly version: string
+  readonly replacements: number
+  readonly diff: string
+  readonly truncated: boolean
+}
+
+export interface FileMove {
+  readonly fromPath: string
+  readonly toPath: string
+  readonly version: string
+}
+
+export interface FileDelete {
+  readonly path: string
+  readonly deletedVersion: string
+}
+
 export interface FileOperationOptions {
   readonly signal?: AbortSignal
 }
@@ -78,6 +108,10 @@ export interface ListOptions extends FileOperationOptions {
   readonly maxEntries: number
 }
 
+export interface FindOptions extends ListOptions {
+  readonly maxDepth: number
+}
+
 export interface WriteTextOptions extends FileOperationOptions {
   /** null means the target must remain absent. */
   readonly expectedVersion: string | null
@@ -87,11 +121,30 @@ export interface EditTextOptions extends FileOperationOptions {
   readonly expectedVersion: string
 }
 
+export interface PreviewPatchOptions extends FileOperationOptions {
+  readonly maxBytes: number
+  readonly maxDiffBytes: number
+}
+
+export interface PatchTextOptions extends EditTextOptions {
+  readonly maxDiffBytes: number
+}
+
+export interface MoveFileOptions extends FileOperationOptions {
+  readonly expectedSourceVersion: string
+  readonly expectedDestinationVersion: null
+}
+
+export interface DeleteFileOptions extends FileOperationOptions {
+  readonly expectedVersion: string
+}
+
 /** Provider-neutral filesystem capability. Targets can only originate at resolve(). */
 export interface FileSystem {
   resolve(path: string): FileTarget
   stat(target: FileTarget, options?: FileOperationOptions): Promise<FileStat>
   list(target: FileTarget, options: ListOptions): Promise<DirectoryListing>
+  find(target: FileTarget, options: FindOptions): Promise<PathDiscovery>
   readText(target: FileTarget, options: ReadTextOptions): Promise<TextRead>
   writeText(target: FileTarget, content: string, options: WriteTextOptions): Promise<FileWrite>
   editText(
@@ -100,6 +153,18 @@ export interface FileSystem {
     newText: string,
     options: EditTextOptions,
   ): Promise<FileWrite>
+  previewPatch(
+    target: FileTarget,
+    replacements: readonly TextReplacement[],
+    options: PreviewPatchOptions,
+  ): Promise<PatchPreview>
+  patchText(
+    target: FileTarget,
+    replacements: readonly TextReplacement[],
+    options: PatchTextOptions,
+  ): Promise<FileWrite>
+  moveFile(source: FileTarget, destination: FileTarget, options: MoveFileOptions): Promise<FileMove>
+  deleteFile(target: FileTarget, options: DeleteFileOptions): Promise<FileDelete>
 }
 
 export type FileObservation =
@@ -150,6 +215,33 @@ export class FileObservationPolicy {
       )
     }
     return observation.version
+  }
+
+  deleteGuard(sessionId: string, target: FileTarget): string {
+    const observation = this.#observations.get(observationKey(sessionId, target))
+    if (observation?.state !== 'content') {
+      throw new FileSystemError(
+        'FS_NOT_OBSERVED',
+        `${target.displayPath} must be read before deletion`,
+      )
+    }
+    return observation.version
+  }
+
+  moveGuards(
+    sessionId: string,
+    source: FileTarget,
+    destination: FileTarget,
+  ): { readonly sourceVersion: string; readonly destinationVersion: null } {
+    const sourceVersion = this.deleteGuard(sessionId, source)
+    const destinationVersion = this.writeGuard(sessionId, destination)
+    if (destinationVersion !== null) {
+      throw new FileSystemError(
+        'FS_STALE_VERSION',
+        `${destination.displayPath} must be confirmed absent before a move`,
+      )
+    }
+    return { sourceVersion, destinationVersion }
   }
 
   forget(sessionId: string, target: FileTarget): void {

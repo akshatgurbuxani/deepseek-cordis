@@ -34,9 +34,14 @@ export const HARNESS_TOOL_IDS = Object.freeze([
   'workspace.create',
   'workspace.read',
   'workspace.list',
+  'workspace.find',
   'workspace.stat',
   'workspace.write',
   'workspace.edit',
+  'workspace.preview_patch',
+  'workspace.patch',
+  'workspace.move',
+  'workspace.delete',
   'workspace.command',
 ] as const)
 
