@@ -17,11 +17,12 @@ The CLI now ships as one installable executable with secure profile
 initialization, deterministic session discovery, explicit resume, quiet output,
 and actionable persistence-conflict recovery.
 
-## Current milestone: Feature 28
+## Coding-harness v1 complete
 
-Run representative repository tasks and adversarial cases against the packed
-CLI, then publish the supported operational limits and evidence-backed safe
-defaults for coding-harness v1.
+Feature 28 consolidated required packaged, representative-composition, and
+adversarial evidence into the supported limits and safe operating profile in
+[`coding-harness-v1.md`](coding-harness-v1.md). Further capability work is
+evidence-driven rather than part of the v1 checklist.
 
 ## Coding-harness v1 sequence
 
