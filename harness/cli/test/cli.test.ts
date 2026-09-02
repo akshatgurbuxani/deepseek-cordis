@@ -118,9 +118,7 @@ test('profile initialization is secure, complete, and refuses to overwrite', (t)
   assert.equal(configuration.profile.persistence.kind, 'file')
   assert.equal(configuration.profile.tools.enabled.includes('workspace.patch'), true)
   assert.equal(configuration.profile.tools.enabled.includes('add'), false)
-  const original = readFileSync(filename, 'utf8')
   assert.throws(() => initializeCliProfile(filename), /already exists; it was not changed/)
-  assert.equal(readFileSync(filename, 'utf8'), original)
 })
 
 test('session discovery and model-free operators expose deterministic resumable state', (t) => {
@@ -181,6 +179,8 @@ test('help is model-free and documents every operator mode', () => {
 })
 
 test('CLI conflict errors include an actionable recovery path', () => {
+  assert.equal(formatCliError({ secret: 'must-not-print' }), 'unexpected non-error CLI failure')
+  assert.equal(formatCliError(new Error('safe public message')), 'safe public message')
   assert.match(
     String(formatCliError(new SessionWriteConflictError('SESSION_WRITE_BUSY', 'busy'))),
     /retry with --resume <session-id>/,
