@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -17,6 +18,7 @@ import test, { type TestContext } from 'node:test'
 import {
   atomicReplaceFile,
   COMMAND_INTERRUPTED,
+  DEFAULT_MAX_SESSION_DOCUMENT_BYTES,
   FileSessionStore,
   SESSION_FILE_SCHEMA_VERSION,
   SessionPersistenceError,
@@ -171,6 +173,56 @@ test('a failed atomic append leaves memory and the committed file unchanged', (t
   )
 })
 
+test('document bounds reject oversized appends and startup input before publication', (t) => {
+  const directory = temporaryDirectory(t)
+  const store = new FileSessionStore({ directory, maxDocumentBytes: 256 })
+  const session = store.create('bounded')
+  const committed = readFileSync(sessionFilePath(directory, session.id), 'utf8')
+
+  assert.throws(
+    () =>
+      session.append({
+        type: 'user/message',
+        turnId: 'bounded:turn:1',
+        content: 'x'.repeat(256),
+      }),
+    /exceeds 256 persisted bytes/,
+  )
+  assert.deepEqual(session.events, [])
+  assert.equal(readFileSync(sessionFilePath(directory, session.id), 'utf8'), committed)
+
+  writeFileSync(sessionFilePath(directory, session.id), 'x'.repeat(512))
+  assert.throws(
+    () =>
+      session.append({
+        type: 'turn/start',
+        turnId: 'bounded:turn:1',
+      }),
+    /exceeds 256 bytes/,
+  )
+  assert.deepEqual(session.events, [])
+
+  const oversizedId = 'oversized-on-startup'
+  writeFileSync(
+    sessionFilePath(directory, oversizedId),
+    JSON.stringify({
+      schemaVersion: SESSION_FILE_SCHEMA_VERSION,
+      id: oversizedId,
+      events: [],
+      padding: 'x'.repeat(256),
+    }),
+  )
+  assert.throws(
+    () => new FileSessionStore({ directory, maxDocumentBytes: 128 }),
+    /exceeds 128 bytes/,
+  )
+  assert.throws(
+    () => new FileSessionStore({ directory, maxDocumentBytes: 0 }),
+    /positive safe integer/,
+  )
+  assert.equal(DEFAULT_MAX_SESSION_DOCUMENT_BYTES, 64 * 1024 * 1024)
+})
+
 test('independent stores reject stale revisions instead of erasing committed events', (t) => {
   const directory = temporaryDirectory(t)
   new FileSessionStore({ directory }).create('shared-revision')
@@ -307,6 +359,49 @@ test('a dead local writer lock is reclaimed without discarding the committed rev
 
   survivor.append({ type: 'turn/start', turnId: 'crashed-writer:turn:1' })
   assert.equal(survivor.events.length, 1)
+  assert.equal(
+    readdirSync(directory).some((name) => name.includes('.lock')),
+    false,
+  )
+})
+
+test('a committed writer recovers its own lock after release cleanup fails', (t) => {
+  if (process.platform === 'win32' || process.getuid?.() === 0) {
+    t.skip('requires POSIX directory permissions from an unprivileged process')
+    return
+  }
+
+  const directory = temporaryDirectory(t)
+  new FileSessionStore({ directory }).create('release-failure')
+  let failRelease = true
+  const session = new FileSessionStore({
+    directory,
+    writer(filePath, contents) {
+      atomicReplaceFile(filePath, contents)
+      if (failRelease) {
+        failRelease = false
+        chmodSync(directory, 0o500)
+      }
+    },
+  }).get('release-failure')
+  assert.ok(session)
+
+  try {
+    session.append({ type: 'turn/start', turnId: 'release-failure:turn:1' })
+    assert.equal(
+      readdirSync(directory).some((name) => name.includes('.lock')),
+      true,
+    )
+  } finally {
+    chmodSync(directory, 0o700)
+  }
+
+  session.append({
+    type: 'turn/end',
+    turnId: 'release-failure:turn:1',
+    status: 'completed',
+  })
+  assert.equal(session.events.length, 2)
   assert.equal(
     readdirSync(directory).some((name) => name.includes('.lock')),
     false,

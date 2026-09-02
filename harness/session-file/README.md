@@ -7,6 +7,11 @@ ID. Every append writes the complete candidate document to an exclusive
 same-directory temporary file, fsyncs it, and atomically renames it over the
 committed file. The in-memory event list advances only after that commit point,
 so a failed write leaves both memory and the previous file unchanged.
+Documents are bounded to 64 MiB by default, with an explicit store-level
+override. Oversized startup input is rejected before decoding or publication,
+and an oversized append leaves both the committed document and in-memory event
+list unchanged. This is a safety bound, not a claim that whole-document storage
+will remain responsive up to the limit.
 
 Schema V6 stores `schemaVersion`, `id`, and the complete immutable event list,
 including provenance-bearing compaction checkpoints and context-budget
@@ -64,3 +69,13 @@ host fail closed. This is cooperative local-filesystem coordination, not a
 distributed lease: operators must investigate foreign or malformed locks, and
 non-cooperating programs can still replace files out of band. Temporary files
 and orphan owner files left before lock publication remain ignored on restart.
+If a document commits but removal of its canonical lock encounters a later
+filesystem failure, the commit still returns successfully. The process records
+that the critical section ended and may reclaim that exact token on its next
+write; it never reclaims another live or active token.
+
+Run `npm run benchmark:session-file -- 250` from the repository root to measure
+1,000 representative durable appends on the current host. The benchmark reports
+document size, throughput, and append latency percentiles and deletes its
+temporary session afterward. Results are operational evidence for storage
+decisions, not a gating test.

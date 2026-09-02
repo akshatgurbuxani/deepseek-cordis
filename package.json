@@ -31,6 +31,7 @@
   ],
   "scripts": {
     "build": "tsc -b",
+    "benchmark:session-file": "npm run build --silent && node scripts/benchmark-session-file.mjs",
     "check": "biome ci harness spike scripts biome.json package.json tsconfig.json tsconfig.base.json tsconfig.tests.json",
     "check:workspaces": "node scripts/check-workspaces.mjs",
     "clean": "tsc -b --clean",
