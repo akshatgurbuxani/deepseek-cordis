@@ -36,9 +36,16 @@ The request signal is passed directly to `fetch`. An abort becomes the stream's
 terminal `aborted` finish; network, HTTP, framing, and response failures become
 terminal error finishes. This follows the model contract's data boundary while
 the compatibility `complete()` method still throws its typed provider errors.
+Before a response body is accepted, network failures and transient
+408/429/500/502/503/504 responses may be retried under the configured attempt
+and delay ceilings. Exponential delay is capped, an acceptable `Retry-After`
+wins, and cancellation interrupts waiting. Once streaming begins, framing,
+provider, or protocol failure terminates that attempt without replay.
 
-The adapter opts into router metadata and reports selected model, token counts,
-and the metadata object without interpreting its additive fields. Valid
+The adapter sends the immutable routing policy's fallback, parameter support,
+data collection, and sort choices with each request. It opts into router
+metadata and reports selected model, attempt count, token counts, and the
+metadata object without interpreting its additive fields. Valid
 prompt/completion counts also enter the completed stream finish. The API key
 is retained in a private field and placed only in the Authorization header.
 Neither request bodies nor diagnostic values contain it.

@@ -14,6 +14,10 @@ context-pressure policy. Its `process` section selects a local or Docker
 backend, executable names, default and maximum timeouts, per-stream output
 bytes, and termination grace. Docker profiles additionally require a local
 image and select memory, process-count, and temporary-filesystem bounds.
+OpenRouter model profiles expand to an explicit bounded retry policy and
+provider-routing policy. Retry count and delays have hard schema ceilings;
+routing fixes fallback, parameter-support, data-collection, and sort behavior
+instead of inheriting mutable remote defaults.
 Workspace-instruction discovery is configured separately
 from authored persona text: it selects the applicable subdirectory, candidate and
 local-overlay names, project markers, and explicit source/aggregate byte caps.

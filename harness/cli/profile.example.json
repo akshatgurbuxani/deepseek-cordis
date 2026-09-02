@@ -4,7 +4,18 @@
   "model": {
     "provider": "openrouter",
     "id": "openrouter/free",
-    "contextWindow": 128000
+    "contextWindow": 128000,
+    "retry": {
+      "maxRetries": 2,
+      "initialDelayMs": 250,
+      "maxDelayMs": 5000
+    },
+    "routing": {
+      "allowFallbacks": true,
+      "requireParameters": true,
+      "dataCollection": "allow",
+      "sort": "throughput"
+    }
   },
   "workspace": {
     "root": ".",

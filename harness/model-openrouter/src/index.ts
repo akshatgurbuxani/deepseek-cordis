@@ -1,3 +1,4 @@
+import { setTimeout as delay } from 'node:timers/promises'
 import {
   completeModel,
   type ModelAdapter,
@@ -17,6 +18,19 @@ import {
   type ToolCall,
 } from '@deepseek-cordis/protocol'
 
+export interface OpenRouterRoutingPolicy {
+  readonly allowFallbacks: boolean
+  readonly requireParameters: boolean
+  readonly dataCollection: 'allow' | 'deny'
+  readonly sort: 'price' | 'throughput' | 'latency'
+}
+
+export interface OpenRouterRetryPolicy {
+  readonly maxRetries: number
+  readonly initialDelayMs: number
+  readonly maxDelayMs: number
+}
+
 export interface OpenRouterDiagnostics {
   readonly requestedModel: string
   readonly selectedModel?: string
@@ -24,6 +38,7 @@ export interface OpenRouterDiagnostics {
   readonly completionTokens?: number
   readonly totalTokens?: number
   readonly routerMetadata?: JsonValue
+  readonly attempts: number
 }
 
 export interface OpenRouterAdapterOptions {
@@ -36,6 +51,9 @@ export interface OpenRouterAdapterOptions {
   readonly fetch?: typeof globalThis.fetch
   readonly onDiagnostics?: (diagnostics: OpenRouterDiagnostics) => void
   readonly contextWindow?: number
+  readonly routing?: OpenRouterRoutingPolicy
+  readonly retry?: OpenRouterRetryPolicy
+  readonly sleep?: (milliseconds: number, signal?: AbortSignal) => Promise<void>
 }
 
 export class OpenRouterRequestError extends Error {}
@@ -257,6 +275,9 @@ export class OpenRouterModelAdapter implements ModelAdapter {
   readonly #appTitle: string | undefined
   readonly #fetch: typeof globalThis.fetch
   readonly #onDiagnostics: ((diagnostics: OpenRouterDiagnostics) => void) | undefined
+  readonly #routing: OpenRouterRoutingPolicy
+  readonly #retry: OpenRouterRetryPolicy
+  readonly #sleep: (milliseconds: number, signal?: AbortSignal) => Promise<void>
   #resolvedInfo: ModelInfo | undefined
 
   constructor(options: OpenRouterAdapterOptions) {
@@ -269,6 +290,50 @@ export class OpenRouterModelAdapter implements ModelAdapter {
     this.#appTitle = options.appTitle
     this.#fetch = options.fetch ?? globalThis.fetch
     this.#onDiagnostics = options.onDiagnostics
+    this.#routing = Object.freeze({
+      ...(options.routing ?? {
+        allowFallbacks: true,
+        requireParameters: true,
+        dataCollection: 'allow',
+        sort: 'throughput',
+      }),
+    })
+    if (
+      typeof this.#routing.allowFallbacks !== 'boolean' ||
+      typeof this.#routing.requireParameters !== 'boolean' ||
+      (this.#routing.dataCollection !== 'allow' && this.#routing.dataCollection !== 'deny') ||
+      !['price', 'throughput', 'latency'].includes(this.#routing.sort)
+    ) {
+      throw new OpenRouterRequestError('OpenRouter routing policy is invalid')
+    }
+    this.#retry = Object.freeze({
+      ...(options.retry ?? { maxRetries: 2, initialDelayMs: 250, maxDelayMs: 5_000 }),
+    })
+    this.#sleep =
+      options.sleep ??
+      (async (milliseconds, signal) => {
+        await delay(milliseconds, undefined, signal ? { signal } : {})
+      })
+    if (
+      !Number.isInteger(this.#retry.maxRetries) ||
+      this.#retry.maxRetries < 0 ||
+      this.#retry.maxRetries > 5
+    ) {
+      throw new OpenRouterRequestError(
+        'OpenRouter maxRetries must be a non-negative integer no greater than 5',
+      )
+    }
+    for (const [name, value] of [
+      ['initialDelayMs', this.#retry.initialDelayMs],
+      ['maxDelayMs', this.#retry.maxDelayMs],
+    ] as const) {
+      if (!Number.isInteger(value) || value < 1 || value > 60_000) {
+        throw new OpenRouterRequestError(`OpenRouter ${name} must be a positive integer`)
+      }
+    }
+    if (this.#retry.initialDelayMs > this.#retry.maxDelayMs) {
+      throw new OpenRouterRequestError('OpenRouter initialDelayMs must not exceed maxDelayMs')
+    }
     if (
       options.contextWindow !== undefined &&
       (!Number.isInteger(options.contextWindow) || options.contextWindow < 1)
@@ -362,6 +427,12 @@ export class OpenRouterModelAdapter implements ModelAdapter {
         ...request.messages.map(toWireMessage),
       ],
       session_id: request.sessionId,
+      provider: {
+        allow_fallbacks: this.#routing.allowFallbacks,
+        require_parameters: this.#routing.requireParameters,
+        data_collection: this.#routing.dataCollection,
+        sort: this.#routing.sort,
+      },
       ...(stream ? { stream: true, stream_options: { include_usage: true } } : {}),
       ...(wireTools.length === 0
         ? {}
@@ -378,35 +449,74 @@ export class OpenRouterModelAdapter implements ModelAdapter {
     request: ModelRequest,
     stream: boolean,
     signal?: AbortSignal,
-  ): Promise<Response> {
-    signal?.throwIfAborted()
-    let response: Response
-    try {
-      response = await this.#fetch(this.#endpoint, {
-        method: 'POST',
-        headers: this.#headers(),
-        body: JSON.stringify(this.#body(request, stream)),
-        ...(signal ? { signal } : {}),
-      })
-    } catch (error) {
+  ): Promise<{ readonly response: Response; readonly attempts: number }> {
+    const retryableStatuses = new Set([408, 429, 500, 502, 503, 504])
+    for (let attempt = 1; attempt <= this.#retry.maxRetries + 1; attempt += 1) {
       signal?.throwIfAborted()
-      const message = error instanceof Error ? error.message : String(error)
-      throw new OpenRouterRequestError(`OpenRouter network request failed: ${message}`, {
-        cause: error,
-      })
-    }
+      let response: Response
+      try {
+        response = await this.#fetch(this.#endpoint, {
+          method: 'POST',
+          headers: this.#headers(),
+          body: JSON.stringify(this.#body(request, stream)),
+          ...(signal ? { signal } : {}),
+        })
+      } catch (error) {
+        signal?.throwIfAborted()
+        if (attempt <= this.#retry.maxRetries) {
+          await this.#waitBeforeRetry(attempt, undefined, signal)
+          continue
+        }
+        const message = error instanceof Error ? error.message : String(error)
+        throw new OpenRouterRequestError(`OpenRouter network request failed: ${message}`, {
+          cause: error,
+        })
+      }
 
-    if (!response.ok) {
+      if (response.ok) return { response, attempts: attempt }
       const detail = (await response.text()).slice(0, 1_000)
       if (isContextOverflow(response.status, detail)) {
         throw new ModelContextOverflowError(detail || 'OpenRouter context window exceeded')
       }
-      throw new OpenRouterHttpError(response.status, detail || response.statusText)
+      const failure = new OpenRouterHttpError(response.status, detail || response.statusText)
+      if (!retryableStatuses.has(response.status) || attempt > this.#retry.maxRetries) throw failure
+      await this.#waitBeforeRetry(attempt, response.headers.get('retry-after'), signal, failure)
     }
-    return response
+    throw new OpenRouterRequestError('OpenRouter retry policy exhausted')
   }
 
-  #emitDiagnostics(payload: Record<string, unknown>): void {
+  async #waitBeforeRetry(
+    attempt: number,
+    retryAfter: string | null | undefined,
+    signal: AbortSignal | undefined,
+    failure?: OpenRouterHttpError,
+  ): Promise<void> {
+    let milliseconds = Math.min(
+      this.#retry.initialDelayMs * 2 ** (attempt - 1),
+      this.#retry.maxDelayMs,
+    )
+    if (retryAfter) {
+      const seconds = Number(retryAfter)
+      const parsed = Number.isFinite(seconds)
+        ? seconds * 1_000
+        : Date.parse(retryAfter) - Date.now()
+      if (Number.isFinite(parsed) && parsed >= 0) milliseconds = Math.ceil(parsed)
+    }
+    if (milliseconds > this.#retry.maxDelayMs) {
+      if (failure) throw failure
+      milliseconds = this.#retry.maxDelayMs
+    }
+    signal?.throwIfAborted()
+    try {
+      await this.#sleep(milliseconds, signal)
+    } catch (error) {
+      signal?.throwIfAborted()
+      throw error
+    }
+    signal?.throwIfAborted()
+  }
+
+  #emitDiagnostics(payload: Record<string, unknown>, attempts: number): void {
     const usage = isRecord(payload.usage) ? payload.usage : {}
     const promptTokens = optionalNumber(usage, 'prompt_tokens')
     const completionTokens = optionalNumber(usage, 'completion_tokens')
@@ -417,6 +527,7 @@ export class OpenRouterModelAdapter implements ModelAdapter {
     this.#onDiagnostics?.(
       snapshot({
         requestedModel: this.#model,
+        attempts,
         ...(typeof payload.model === 'string' ? { selectedModel: payload.model } : {}),
         ...(promptTokens === undefined ? {} : { promptTokens }),
         ...(completionTokens === undefined ? {} : { completionTokens }),
@@ -431,7 +542,7 @@ export class OpenRouterModelAdapter implements ModelAdapter {
     options: ModelCompletionOptions = {},
   ): Promise<ModelResponse> {
     if (options.onTextDelta) return completeModel(this, request, options)
-    const response = await this.#fetchResponse(request, false, options.signal)
+    const { response, attempts } = await this.#fetchResponse(request, false, options.signal)
     let payload: unknown
     try {
       payload = await response.json()
@@ -447,7 +558,7 @@ export class OpenRouterModelAdapter implements ModelAdapter {
     }
     const message = choice.message
 
-    this.#emitDiagnostics(payload)
+    this.#emitDiagnostics(payload, attempts)
 
     if (Array.isArray(message.tool_calls) && message.tool_calls.length > 0) {
       return snapshot({ type: 'tool_calls', calls: message.tool_calls.map(readToolCall) })
@@ -467,7 +578,7 @@ export class OpenRouterModelAdapter implements ModelAdapter {
     let diagnostics: Record<string, unknown> = {}
     let sawChoice = false
     try {
-      const response = await this.#fetchResponse(request, true, options.signal)
+      const { response, attempts } = await this.#fetchResponse(request, true, options.signal)
       if (!response.body) throw new OpenRouterResponseError('OpenRouter stream has no body')
 
       for await (const value of readSsePayloads(response.body)) {
@@ -519,7 +630,7 @@ export class OpenRouterModelAdapter implements ModelAdapter {
       if (!sawChoice) {
         throw new OpenRouterResponseError('OpenRouter stream contained no completion choice')
       }
-      this.#emitDiagnostics(diagnostics)
+      this.#emitDiagnostics(diagnostics, attempts)
       const usage = readModelUsage(diagnostics)
       if (toolCalls.size > 0) {
         const calls = [...toolCalls.entries()]

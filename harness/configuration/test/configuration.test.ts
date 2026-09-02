@@ -13,7 +13,17 @@ test('a minimal versioned profile expands to immutable explicit defaults', () =>
   const profile = validateHarnessProfile({ schemaVersion: HARNESS_PROFILE_SCHEMA_VERSION })
 
   assert.deepEqual(profile, DEFAULT_HARNESS_PROFILE)
-  assert.deepEqual(profile.model, { provider: 'openrouter', id: 'openrouter/free' })
+  assert.deepEqual(profile.model, {
+    provider: 'openrouter',
+    id: 'openrouter/free',
+    retry: { maxRetries: 2, initialDelayMs: 250, maxDelayMs: 5_000 },
+    routing: {
+      allowFallbacks: true,
+      requireParameters: true,
+      dataCollection: 'allow',
+      sort: 'throughput',
+    },
+  })
   assert.deepEqual(profile.persistence, { kind: 'memory' })
   assert.deepEqual(profile.process, {
     backend: 'local',
@@ -107,6 +117,39 @@ test('all profile choices normalize without retaining caller-owned structures', 
   })
 })
 
+test('OpenRouter retry and routing policy normalize to immutable explicit choices', () => {
+  const profile = validateHarnessProfile({
+    schemaVersion: 1,
+    model: {
+      provider: 'openrouter',
+      id: 'provider/model',
+      retry: { maxRetries: 0, initialDelayMs: 10, maxDelayMs: 100 },
+      routing: {
+        allowFallbacks: false,
+        requireParameters: false,
+        dataCollection: 'deny',
+        sort: 'price',
+      },
+    },
+  })
+  assert.deepEqual(profile.model, {
+    provider: 'openrouter',
+    id: 'provider/model',
+    retry: { maxRetries: 0, initialDelayMs: 10, maxDelayMs: 100 },
+    routing: {
+      allowFallbacks: false,
+      requireParameters: false,
+      dataCollection: 'deny',
+      sort: 'price',
+    },
+  })
+  assert.equal(Object.isFrozen(profile.model), true)
+  assert.equal(
+    Object.isFrozen(profile.model.provider === 'openrouter' && profile.model.retry),
+    true,
+  )
+})
+
 test('JSON parsing reports source provenance without exposing document content', () => {
   assert.equal(parseHarnessProfile('{"schemaVersion":1}', 'coding.json').name, 'default')
   assert.throws(
@@ -171,6 +214,17 @@ test('bounds, booleans, tools, and policy vocabulary are validated', () => {
       /tmpfsBytes must not exceed process\.memoryBytes/,
     ],
     [{ model: { provider: 'openrouter', contextWindow: 1.5 } }, /model\.contextWindow/],
+    [{ model: { provider: 'replay', retry: {} } }, /not allowed for replay/],
+    [{ model: { provider: 'openrouter', retry: { maxRetries: 6 } } }, /must not exceed/],
+    [
+      { model: { provider: 'openrouter', retry: { initialDelayMs: 100, maxDelayMs: 99 } } },
+      /must not exceed/,
+    ],
+    [
+      { model: { provider: 'openrouter', routing: { dataCollection: 'sometimes' } } },
+      /dataCollection/,
+    ],
+    [{ model: { provider: 'openrouter', routing: { sort: 'random' } } }, /routing\.sort/],
     [{ tools: { enabled: 'add' } }, /tools\.enabled must be an array/],
     [{ tools: { enabled: ['unknown'] } }, /not a recognized tool id/],
     [{ tools: { enabled: ['add', 'add'] } }, /must not contain duplicates/],

@@ -142,6 +142,12 @@ test('the documented coding profile remains valid and complete', () => {
   assert.equal(configuration.contextWindow, 128_000)
   assert.equal(configuration.profile.tools.enabled.includes('workspace.edit'), true)
   assert.equal(configuration.profile.tools.enabled.includes('workspace.command'), true)
+  assert.deepEqual(
+    configuration.profile.model.provider === 'openrouter'
+      ? configuration.profile.model.retry
+      : undefined,
+    { maxRetries: 2, initialDelayMs: 250, maxDelayMs: 5_000 },
+  )
   assert.deepEqual(configuration.profile.process.allowedPrograms, [
     'git',
     'node',
@@ -160,7 +166,18 @@ test('a profile controls the exact model, tools, and assembled prompt', async (t
   const filename = writeProfile(directory, {
     schemaVersion: 1,
     name: 'minimal-persona',
-    model: { provider: 'openrouter', id: 'profile/model', contextWindow: 64_000 },
+    model: {
+      provider: 'openrouter',
+      id: 'profile/model',
+      contextWindow: 64_000,
+      retry: { maxRetries: 0, initialDelayMs: 10, maxDelayMs: 20 },
+      routing: {
+        allowFallbacks: false,
+        requireParameters: true,
+        dataCollection: 'deny',
+        sort: 'price',
+      },
+    },
     workspace: { root: './does-not-exist' },
     tools: { enabled: [] },
     prompt: {
@@ -193,6 +210,12 @@ test('a profile controls the exact model, tools, and assembled prompt', async (t
   assert.equal(result.content, 'Verified.')
   assert.equal(body?.model, 'profile/model')
   assert.equal(body?.tools, undefined)
+  assert.deepEqual(body?.provider, {
+    allow_fallbacks: false,
+    require_parameters: true,
+    data_collection: 'deny',
+    sort: 'price',
+  })
   assert.deepEqual(body?.messages, [
     { role: 'system', content: 'Answer with verified facts only.' },
     { role: 'user', content: 'answer this' },

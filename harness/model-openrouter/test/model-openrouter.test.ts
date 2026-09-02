@@ -143,12 +143,19 @@ test('maps complete history, tools, calls, attribution, usage, and routing metad
   ])
   assert.equal(body.tool_choice, 'auto')
   assert.equal(body.parallel_tool_calls, false)
+  assert.deepEqual(body.provider, {
+    allow_fallbacks: true,
+    require_parameters: true,
+    data_collection: 'allow',
+    sort: 'throughput',
+  })
   assert.deepEqual(result, {
     type: 'tool_calls',
     calls: [{ id: 'next-call', name: 'add', arguments: { a: 20, b: 22 } }],
   })
   assert.deepEqual(diagnostics, {
     requestedModel: 'openrouter/free',
+    attempts: 1,
     selectedModel: 'provider/selected-model',
     promptTokens: 10,
     completionTokens: 5,
@@ -228,6 +235,7 @@ test('streams split SSE text, reports terminal diagnostics, and forwards cancell
   assert.equal(signals[0], controller.signal)
   assert.deepEqual(diagnostics, {
     requestedModel: 'openrouter/free',
+    attempts: 1,
     selectedModel: 'provider/stream',
     promptTokens: 2,
     completionTokens: 2,
@@ -308,6 +316,7 @@ test('rejects malformed streaming envelopes and tool-call fragments', async () =
 })
 
 test('normalizes missing keys, network failures, and HTTP failures without leaking secrets', async () => {
+  const retry = { maxRetries: 0, initialDelayMs: 1, maxDelayMs: 1 } as const
   assert.throws(
     () => new OpenRouterModelAdapter({ apiKey: '' }),
     (error) => error instanceof OpenRouterRequestError && /API key is required/.test(error.message),
@@ -315,6 +324,7 @@ test('normalizes missing keys, network failures, and HTTP failures without leaki
 
   const networkAdapter = new OpenRouterModelAdapter({
     apiKey: 'network-secret',
+    retry,
     fetch: (async () => {
       throw new Error('socket closed')
     }) as typeof fetch,
@@ -333,7 +343,9 @@ test('normalizes missing keys, network failures, and HTTP failures without leaki
       statusText: 'Too Many Requests',
     })) as typeof fetch
   await assert.rejects(
-    new OpenRouterModelAdapter({ apiKey: 'http-secret', fetch: failedFetch }).complete(request),
+    new OpenRouterModelAdapter({ apiKey: 'http-secret', fetch: failedFetch, retry }).complete(
+      request,
+    ),
     (error) =>
       error instanceof OpenRouterHttpError &&
       error.status === 429 &&
@@ -347,9 +359,142 @@ test('normalizes missing keys, network failures, and HTTP failures without leaki
       statusText: 'Unavailable',
     })) as typeof fetch
   await assert.rejects(
-    new OpenRouterModelAdapter({ apiKey: 'test', fetch: emptyFailure }).complete(request),
+    new OpenRouterModelAdapter({ apiKey: 'test', fetch: emptyFailure, retry }).complete(request),
     /OpenRouter request failed \(503\): Unavailable/,
   )
+})
+
+test('retries only transient pre-stream failures within bounded backoff policy', async () => {
+  const delays: number[] = []
+  let calls = 0
+  let diagnostics: OpenRouterDiagnostics | undefined
+  const adapter = new OpenRouterModelAdapter({
+    apiKey: 'test',
+    retry: { maxRetries: 2, initialDelayMs: 10, maxDelayMs: 50 },
+    routing: {
+      allowFallbacks: false,
+      requireParameters: true,
+      dataCollection: 'deny',
+      sort: 'price',
+    },
+    sleep: async (milliseconds) => {
+      delays.push(milliseconds)
+    },
+    onDiagnostics: (value) => {
+      diagnostics = value
+    },
+    fetch: (async (_input, init) => {
+      calls += 1
+      const body = JSON.parse(String(init?.body))
+      assert.deepEqual(body.provider, {
+        allow_fallbacks: false,
+        require_parameters: true,
+        data_collection: 'deny',
+        sort: 'price',
+      })
+      if (calls === 1) {
+        return new Response('busy', { status: 429, headers: { 'Retry-After': '0.01' } })
+      }
+      if (calls === 2) return new Response('unavailable', { status: 503 })
+      return new Response(
+        JSON.stringify({
+          model: 'provider/final',
+          choices: [{ message: { content: 'recovered' } }],
+        }),
+        { status: 200 },
+      )
+    }) as typeof fetch,
+  })
+
+  assert.deepEqual(await adapter.complete(request), { type: 'message', content: 'recovered' })
+  assert.deepEqual(delays, [10, 20])
+  assert.equal(calls, 3)
+  assert.equal(diagnostics?.attempts, 3)
+})
+
+test('does not retry permanent failures or exceed server-directed delay budget', async () => {
+  let calls = 0
+  const permanent = new OpenRouterModelAdapter({
+    apiKey: 'test',
+    retry: { maxRetries: 2, initialDelayMs: 1, maxDelayMs: 10 },
+    sleep: async () => assert.fail('permanent failure must not sleep'),
+    fetch: (async () => {
+      calls += 1
+      return new Response('unauthorized', { status: 401 })
+    }) as typeof fetch,
+  })
+  await assert.rejects(permanent.complete(request), /\(401\)/)
+  assert.equal(calls, 1)
+
+  const overBudget = new OpenRouterModelAdapter({
+    apiKey: 'test',
+    retry: { maxRetries: 2, initialDelayMs: 1, maxDelayMs: 10 },
+    sleep: async () => assert.fail('over-budget Retry-After must not sleep'),
+    fetch: (async () =>
+      new Response('later', { status: 429, headers: { 'Retry-After': '30' } })) as typeof fetch,
+  })
+  await assert.rejects(overBudget.complete(request), /\(429\)/)
+})
+
+test('retries before a stream starts but never replays a started stream', async () => {
+  let calls = 0
+  const recovered = new OpenRouterModelAdapter({
+    apiKey: 'test',
+    retry: { maxRetries: 1, initialDelayMs: 1, maxDelayMs: 1 },
+    sleep: async () => undefined,
+    fetch: (async () => {
+      calls += 1
+      return calls === 1
+        ? new Response('unavailable', { status: 503 })
+        : streamedResponse(['data: {"choices":[{"delta":{"content":"ok"}}]}\n\n'])
+    }) as typeof fetch,
+  })
+  assert.deepEqual(await recovered.complete(request, { onTextDelta: () => undefined }), {
+    type: 'message',
+    content: 'ok',
+  })
+  assert.equal(calls, 2)
+
+  calls = 0
+  const started = new OpenRouterModelAdapter({
+    apiKey: 'test',
+    retry: { maxRetries: 2, initialDelayMs: 1, maxDelayMs: 2 },
+    sleep: async () => assert.fail('started streams must not enter retry backoff'),
+    fetch: (async () => {
+      calls += 1
+      return streamedResponse([
+        'data: {"choices":[{"delta":{"content":"partial"}}]}\n\n',
+        'data: {broken}\n\n',
+      ])
+    }) as typeof fetch,
+  })
+  await assert.rejects(
+    started.complete(request, { onTextDelta: () => undefined }),
+    /invalid streaming JSON/,
+  )
+  assert.equal(calls, 1)
+})
+
+test('cancellation interrupts retry backoff without another request', async () => {
+  const controller = new AbortController()
+  let calls = 0
+  const adapter = new OpenRouterModelAdapter({
+    apiKey: 'test',
+    retry: { maxRetries: 2, initialDelayMs: 1, maxDelayMs: 2 },
+    sleep: async (_milliseconds, signal) => {
+      controller.abort('stop')
+      signal?.throwIfAborted()
+    },
+    fetch: (async () => {
+      calls += 1
+      return new Response('busy', { status: 429 })
+    }) as typeof fetch,
+  })
+  await assert.rejects(
+    adapter.complete(request, { signal: controller.signal, onTextDelta: () => undefined }),
+    /model stream aborted/,
+  )
+  assert.equal(calls, 1)
 })
 
 test('normalizes HTTP and streamed context-limit failures for policy recovery', async () => {
@@ -390,6 +535,27 @@ test('normalizes HTTP and streamed context-limit failures for policy recovery', 
   assert.throws(
     () => new OpenRouterModelAdapter({ apiKey: 'test', contextWindow: 0 }),
     /context window must be a positive integer/,
+  )
+  assert.throws(
+    () =>
+      new OpenRouterModelAdapter({
+        apiKey: 'test',
+        retry: { maxRetries: 6, initialDelayMs: 1, maxDelayMs: 1 },
+      }),
+    /no greater than 5/,
+  )
+  assert.throws(
+    () =>
+      new OpenRouterModelAdapter({
+        apiKey: 'test',
+        routing: {
+          allowFallbacks: true,
+          requireParameters: true,
+          dataCollection: 'allow',
+          sort: 'unknown' as 'price',
+        },
+      }),
+    /routing policy is invalid/,
   )
 })
 
@@ -552,9 +718,13 @@ test('rejects malformed tool-call envelopes, functions, and arguments', async ()
 test('optional live completion returns text when explicitly enabled', {
   skip: process.env.OPENROUTER_LIVE_TEST !== '1' || !process.env.OPENROUTER_API_KEY,
 }, async () => {
+  let diagnostics: OpenRouterDiagnostics | undefined
   const adapter = new OpenRouterModelAdapter({
     apiKey: process.env.OPENROUTER_API_KEY!,
     ...(process.env.OPENROUTER_MODEL ? { model: process.env.OPENROUTER_MODEL } : {}),
+    onDiagnostics: (value) => {
+      diagnostics = value
+    },
   })
   const deltas: string[] = []
   const response = await adapter.complete(
@@ -574,4 +744,6 @@ test('optional live completion returns text when explicitly enabled', {
   assert.equal(response.type, 'message')
   assert.ok(response.type === 'message' && response.content.length > 0)
   assert.equal(deltas.join(''), response.type === 'message' ? response.content : '')
+  assert.ok((diagnostics?.attempts ?? 0) >= 1)
+  assert.equal(typeof diagnostics?.selectedModel, 'string')
 })

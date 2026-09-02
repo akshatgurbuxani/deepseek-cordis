@@ -3,7 +3,7 @@
 This is the maintained forward-looking plan. Accepted feature history and its
 architecture evidence remain in [`../harness/README.md`](../harness/README.md).
 
-## Completed foundation: Features 23–25
+## Completed foundation: Features 23–26
 
 Session persistence is bounded and recovers completed local locks. Command
 execution now has explicit local/partial and Docker/full backends with
@@ -11,11 +11,13 @@ fail-closed daemon/image preflight and a documented Docker trust boundary.
 Coding workspace operations now include bounded recursive discovery,
 reviewable versioned patches, atomic multi-hunk publication, and guarded
 non-overwriting move/delete.
+OpenRouter calls now use explicit provider-routing preferences and bounded,
+cancellable pre-stream retries with opt-in live qualification.
 
-## Current milestone: Feature 26
+## Current milestone: Feature 27
 
-Add bounded provider retries, explicit rate-limit handling and routing policy,
-then qualify the real OpenRouter path with opt-in live integration evidence.
+Package an installable CLI with profile initialization, session discovery and
+resume, quiet output, and actionable conflict recovery.
 
 ## Coding-harness v1 sequence
 

@@ -1478,12 +1478,42 @@ provider's `partial` claim rather than implying a kernel capability.
 - Stale move/delete observations fail without overwriting unrelated content.
 - Every new operation travels through approval, sandbox, and durable audit.
 
+## Feature 26 — provider reliability and routing policy
+
+Feature 26 makes the OpenRouter transport policy explicit and bounded. Schema
+V1 OpenRouter profiles now expand retry count, initial/max delay, router
+fallbacks, required parameter support, provider data collection, and provider
+sorting into immutable values. The CLI passes those exact choices into every
+completion request rather than inheriting mutable routing defaults.
+
+The adapter retries network failures and transient 408, 429, 500, 502, 503,
+and 504 responses only before accepting a response stream. Backoff is
+exponential and capped; `Retry-After` is honored only inside that cap; abort
+signals interrupt both fetch and waiting. Context overflow, permanent HTTP
+errors, invalid responses, and any failure after streaming begins are never
+replayed. Successful diagnostics record how many HTTP attempts were used.
+
+The required suite injects fetch and sleep for deterministic transient,
+permanent, over-budget, cancellation, and started-stream behavior. The opt-in
+live test verifies a real streamed completion, selected route, attempt count,
+and terminal output when `OPENROUTER_LIVE_TEST=1` and an API key are present.
+This qualification proves the configured API seam, not provider uptime or
+model quality.
+
+### PR 26 exit condition
+
+- Retry count and delays have configuration and adapter-level hard ceilings.
+- 429 and transient server failures retry only before output can escape.
+- Permanent, context, protocol, and started-stream failures are never replayed.
+- Every request carries an exact validated provider-routing policy.
+- The real integration path remains explicit, opt-in, and credential-safe.
+
 ### Later milestones
 
-With safe coding workspace operations available, the next milestone is bounded
-provider retries, rate-limit handling, routing policy, and live integration
-qualification. Attachments can later add useful input without changing loop
-ordering, while parallel tools
+With the model transport policy explicit, the next milestone is an installable
+CLI with profile initialization, session discovery/resume, quiet output, and
+actionable conflict recovery. Attachments can later add useful input without
+changing loop ordering, while parallel tools
 need a durable batch and event-order contract before implementation. Subagents,
 scheduling, and UI remain later layers; automatic config watching can be added
 when it owns an exact-path watcher and disposal/drain contract.

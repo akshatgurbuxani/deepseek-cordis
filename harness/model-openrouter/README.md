@@ -16,19 +16,26 @@ or canonical slug, validates `context_length`, and caches the result.
 Recognized HTTP or streamed context-limit failures normalize to
 `ModelContextOverflowError`; status alone is insufficient, so an unrelated 413
 remains an ordinary HTTP failure.
+Profiles also supply an exact provider-routing object and bounded retry policy.
+The adapter sends fallback, parameter-support, data-collection, and
+price/throughput/latency preferences on every completion. It retries only
+network failures and transient 408/429/5xx responses before a stream starts,
+uses bounded exponential delay, honors `Retry-After` only within the configured
+ceiling, and never replays a response/protocol failure or a started stream.
+Successful diagnostics include the attempt count.
 Credentials exist only in a private field and the HTTP authorization header;
 they never enter model requests, session events, diagnostics, or errors.
 
 The exact request and streaming shapes are verified against current official
 OpenRouter docs.
 The endpoint and `fetch` implementation are injectable for deterministic tests.
-Reasoning-detail preservation, server tools, and provider routing policy are
-intentionally deferred.
+Reasoning-detail preservation and server tools are intentionally deferred.
 
 Current primary references:
 
 - [OpenRouter API quickstart](https://openrouter.ai/docs/quickstart)
 - [local tool calling](https://openrouter.ai/docs/guides/features/tool-calling)
 - [router metadata](https://openrouter.ai/docs/guides/features/router-metadata)
+- [provider routing](https://openrouter.ai/docs/guides/routing/provider-selection)
 - [`openrouter/free`](https://openrouter.ai/docs/guides/routing/routers/free-router)
 - [models and context lengths](https://openrouter.ai/docs/api/api-reference/models/get-models)

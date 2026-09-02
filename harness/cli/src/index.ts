@@ -286,12 +286,15 @@ const workspaceToolIds = new Map<string, HarnessToolId>([
 ])
 
 function openRouterModel(
-  configuration: CliConfiguration,
+  configuration: ResolvedCliConfiguration,
   env: Readonly<Record<string, string | undefined>>,
   options: RunCliOptions,
   trace: TraceSink,
   contextWindow: number | undefined,
 ): OpenRouterModelAdapter {
+  if (configuration.profile.model.provider !== 'openrouter') {
+    throw new Error('OpenRouter mode requires an OpenRouter model profile')
+  }
   return new OpenRouterModelAdapter({
     apiKey: env.OPENROUTER_API_KEY ?? '',
     model: configuration.model,
@@ -302,6 +305,8 @@ function openRouterModel(
         ? { appTitle: 'deepseek-cordis' }
         : {}),
     ...(options.fetch ? { fetch: options.fetch } : {}),
+    retry: configuration.profile.model.retry,
+    routing: configuration.profile.model.routing,
     onDiagnostics: (diagnostics) => trace('openrouter/diagnostics', diagnostics),
     ...(contextWindow === undefined ? {} : { contextWindow }),
   })

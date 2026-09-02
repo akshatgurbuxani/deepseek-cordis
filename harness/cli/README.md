@@ -220,6 +220,14 @@ No capacity or token count is guessed from a model name.
 Traces expose successful `model/info` resolution and safe `model/info-error`
 failures without including credentials.
 
+OpenRouter profiles also select bounded pre-stream retries and exact provider
+routing. The default permits two retries with 250 ms exponential delay capped
+at 5 seconds, allows router fallbacks, requires request-parameter support,
+allows provider data collection, and sorts for throughput. Set
+`model.routing.dataCollection` to `deny` when privacy is more important than
+endpoint availability. A server `Retry-After` value above the configured delay
+ceiling fails immediately instead of stalling the interactive harness.
+
 Automatic profile watching, touch-driven nested instruction scope after
 filesystem tool calls, parallel tool execution, and provider replacement during
 a running turn remain future work.

@@ -3,6 +3,11 @@ import { snapshot } from '@deepseek-cordis/protocol'
 export const HARNESS_PROFILE_SCHEMA_VERSION = 1
 export const DEFAULT_PROFILE_NAME = 'default'
 export const DEFAULT_OPENROUTER_MODEL = 'openrouter/free'
+export const DEFAULT_MODEL_MAX_RETRIES = 2
+export const DEFAULT_MODEL_INITIAL_RETRY_DELAY_MS = 250
+export const DEFAULT_MODEL_MAX_RETRY_DELAY_MS = 5_000
+export const MAX_MODEL_RETRIES = 5
+export const MAX_MODEL_RETRY_DELAY_MS = 60_000
 export const DEFAULT_WORKSPACE_MAX_FILE_BYTES = 1024 * 1024
 export const DEFAULT_ALLOWED_PROGRAMS = Object.freeze(['git', 'node', 'npm', 'npx', 'rg'] as const)
 export const DEFAULT_PROCESS_TIMEOUT_MS = 120_000
@@ -51,6 +56,21 @@ export interface OpenRouterProfileModel {
   readonly provider: 'openrouter'
   readonly id: string
   readonly contextWindow?: number
+  readonly retry: ModelRetryProfile
+  readonly routing: ModelRoutingProfile
+}
+
+export interface ModelRetryProfile {
+  readonly maxRetries: number
+  readonly initialDelayMs: number
+  readonly maxDelayMs: number
+}
+
+export interface ModelRoutingProfile {
+  readonly allowFallbacks: boolean
+  readonly requireParameters: boolean
+  readonly dataCollection: 'allow' | 'deny'
+  readonly sort: 'price' | 'throughput' | 'latency'
 }
 
 export interface ReplayProfileModel {
@@ -240,9 +260,16 @@ function pathComponents(
 }
 
 function model(value: unknown, source: string): ProfileModel {
-  if (value === undefined) return { provider: 'openrouter', id: DEFAULT_OPENROUTER_MODEL }
+  if (value === undefined) {
+    return {
+      provider: 'openrouter',
+      id: DEFAULT_OPENROUTER_MODEL,
+      retry: modelRetry(undefined, source),
+      routing: modelRouting(undefined, source),
+    }
+  }
   const candidate = object(value, source, 'model')
-  exactKeys(candidate, ['provider', 'id', 'contextWindow'], source, 'model')
+  exactKeys(candidate, ['provider', 'id', 'contextWindow', 'retry', 'routing'], source, 'model')
   const provider = candidate.provider
   if (provider !== 'openrouter' && provider !== 'replay') {
     fail(source, 'model.provider must be "openrouter" or "replay"')
@@ -253,6 +280,8 @@ function model(value: unknown, source: string): ProfileModel {
       : positiveInteger(candidate.contextWindow, 1, source, 'model.contextWindow')
   if (provider === 'replay') {
     if (candidate.id !== undefined) fail(source, 'model.id is not allowed for replay')
+    if (candidate.retry !== undefined) fail(source, 'model.retry is not allowed for replay')
+    if (candidate.routing !== undefined) fail(source, 'model.routing is not allowed for replay')
     return {
       provider,
       ...(contextWindow === undefined ? {} : { contextWindow }),
@@ -265,7 +294,92 @@ function model(value: unknown, source: string): ProfileModel {
   return {
     provider,
     id,
+    retry: modelRetry(candidate.retry, source),
+    routing: modelRouting(candidate.routing, source),
     ...(contextWindow === undefined ? {} : { contextWindow }),
+  }
+}
+
+function modelRetry(value: unknown, source: string): ModelRetryProfile {
+  if (value === undefined) {
+    return {
+      maxRetries: DEFAULT_MODEL_MAX_RETRIES,
+      initialDelayMs: DEFAULT_MODEL_INITIAL_RETRY_DELAY_MS,
+      maxDelayMs: DEFAULT_MODEL_MAX_RETRY_DELAY_MS,
+    }
+  }
+  const candidate = object(value, source, 'model.retry')
+  exactKeys(candidate, ['maxRetries', 'initialDelayMs', 'maxDelayMs'], source, 'model.retry')
+  const maxRetries = positiveInteger(
+    candidate.maxRetries,
+    DEFAULT_MODEL_MAX_RETRIES,
+    source,
+    'model.retry.maxRetries',
+    true,
+  )
+  const initialDelayMs = positiveInteger(
+    candidate.initialDelayMs,
+    DEFAULT_MODEL_INITIAL_RETRY_DELAY_MS,
+    source,
+    'model.retry.initialDelayMs',
+  )
+  const maxDelayMs = positiveInteger(
+    candidate.maxDelayMs,
+    DEFAULT_MODEL_MAX_RETRY_DELAY_MS,
+    source,
+    'model.retry.maxDelayMs',
+  )
+  if (maxRetries > MAX_MODEL_RETRIES) {
+    fail(source, `model.retry.maxRetries must not exceed ${MAX_MODEL_RETRIES}`)
+  }
+  if (maxDelayMs > MAX_MODEL_RETRY_DELAY_MS) {
+    fail(source, `model.retry.maxDelayMs must not exceed ${MAX_MODEL_RETRY_DELAY_MS}`)
+  }
+  if (initialDelayMs > maxDelayMs) {
+    fail(source, 'model.retry.initialDelayMs must not exceed model.retry.maxDelayMs')
+  }
+  return { maxRetries, initialDelayMs, maxDelayMs }
+}
+
+function modelRouting(value: unknown, source: string): ModelRoutingProfile {
+  if (value === undefined) {
+    return {
+      allowFallbacks: true,
+      requireParameters: true,
+      dataCollection: 'allow',
+      sort: 'throughput',
+    }
+  }
+  const candidate = object(value, source, 'model.routing')
+  exactKeys(
+    candidate,
+    ['allowFallbacks', 'requireParameters', 'dataCollection', 'sort'],
+    source,
+    'model.routing',
+  )
+  const dataCollection = candidate.dataCollection ?? 'allow'
+  if (dataCollection !== 'allow' && dataCollection !== 'deny') {
+    fail(source, 'model.routing.dataCollection must be "allow" or "deny"')
+  }
+  const sort = candidate.sort ?? 'throughput'
+  if (sort !== 'price' && sort !== 'throughput' && sort !== 'latency') {
+    fail(source, 'model.routing.sort must be "price", "throughput", or "latency"')
+  }
+  return {
+    allowFallbacks: optionalBoolean(
+      candidate.allowFallbacks,
+      true,
+      source,
+      'model.routing.allowFallbacks',
+    ),
+    requireParameters: optionalBoolean(
+      candidate.requireParameters,
+      true,
+      source,
+      'model.routing.requireParameters',
+    ),
+    dataCollection,
+    sort,
   }
 }
 
