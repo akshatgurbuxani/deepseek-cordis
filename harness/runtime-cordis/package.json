@@ -25,6 +25,6 @@
     "@deepseek-cordis/system-prompt": "0.0.0",
     "@deepseek-cordis/token-meter": "0.0.0",
     "@deepseek-cordis/tools": "0.0.0",
-    "cordis": "4.0.0-rc.8"
+    "cordis": "4.0.0-rc.10"
   }
 }
